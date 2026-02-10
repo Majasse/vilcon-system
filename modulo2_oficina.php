@@ -62,6 +62,11 @@ body{display:flex;height:100vh;background:var(--vilcon-black);overflow:hidden;}
 .container{padding:10px 40px 40px;}
 .white-card{background:#fff;border-radius:12px;padding:25px;border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,.03);}
 .inner-nav{display:flex;justify-content:space-between;margin-bottom:15px;border-bottom:1px dashed #ddd;padding-bottom:10px;}
+.list-tools{display:flex;align-items:center;gap:8px;}
+.search-group{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #ddd;border-radius:20px;padding:6px 10px;}
+.search-group i{color:#999;font-size:12px;}
+.search-input{border:none;outline:none;font-size:12px;padding:2px 4px;background:transparent;min-width:180px;}
+.filter-select{border:1px solid #ddd;border-radius:20px;padding:6px 10px;font-size:12px;background:#fff;}
 .btn-mode{padding:6px 14px;border-radius:20px;font-size:11px;border:1px solid #ddd;text-decoration:none;color:#666;font-weight:700;}
 .btn-mode.active{background:var(--vilcon-black);color:#fff;border-color:var(--vilcon-black);}
 .form-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;}
@@ -125,6 +130,27 @@ input,select,textarea{padding:10px;border:1px solid #ccc;border-radius:6px;font-
                     <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=list" class="btn-mode <?= $mode == 'list' ? 'active' : '' ?>"><i class="fas fa-list"></i> Ver Lista</a>
                     <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-mode <?= $mode == 'form' ? 'active' : '' ?>"><i class="fas fa-plus"></i> Adicionar Novo</a>
                 </div>
+    <?php if($mode=='list'): ?>
+    <div class="list-tools">
+        <div class="search-group">
+            <i class="fas fa-search"></i>
+            <input class="search-input" type="text" placeholder="Pesquisar...">
+        </div>
+        <select class="filter-select">
+            <?php if($view=='pedidos_reparacao'): ?>
+                <option value="">Filtrar por status</option>
+                <option>Pendente</option>
+                <option>Em andamento</option>
+                <option>Resolvido</option>
+            <?php else: ?>
+                <option value="">Filtrar por status</option>
+                <option>Aberto</option>
+                <option>Em andamento</option>
+                <option>Fechado</option>
+            <?php endif; ?>
+        </select>
+    </div>
+    <?php endif; ?>
 </div>
 
 <?php if($mode=='form'): ?>
@@ -236,7 +262,7 @@ input,select,textarea{padding:10px;border:1px solid #ccc;border-radius:6px;font-
 <th>ID</th><th>Solicitante</th><th>Equipamento</th><th>Data</th><th>Prioridade</th><th>Status</th>
 </tr>
 <tr>
-<td>1</td><td>Eng. João</td><td>Escavadora CAT</td><td><?= date('d/m/Y') ?></td><td>Alta</td><td>Pendente</td>
+<td colspan="6" style="text-align:center;color:#666;padding:12px;">Sem registos para mostrar.</td>
 </tr>
 </table>
 
@@ -247,7 +273,7 @@ input,select,textarea{padding:10px;border:1px solid #ccc;border-radius:6px;font-
 <th>ID</th><th>Equipamento</th><th>Data</th><th>Status</th>
 </tr>
 <tr>
-<td>1</td><td>Escavadora CAT</td><td><?= date('d/m/Y') ?></td><td>Aberto</td>
+<td colspan="4" style="text-align:center;color:#666;padding:12px;">Sem registos para mostrar.</td>
 </tr>
 </table>
 <?php endif; ?>
@@ -260,3 +286,5 @@ input,select,textarea{padding:10px;border:1px solid #ccc;border-radius:6px;font-
 
 </body>
 </html>
+
+
