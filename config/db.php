@@ -2,8 +2,8 @@
 // config/db.php - O "Cérebro" do SIOV
 $host = 'localhost';
 $db = 'vilcon_vrp';
-$user = 'Ronaldo';
-$pass = 'admin2022*';
+$user = 'root';
+$pass = '';
 
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$db;charset=utf8mb4", $user, $pass);

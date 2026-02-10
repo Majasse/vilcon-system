@@ -61,6 +61,7 @@ $proximo_id_os = "OS-" . date('Y') . "-0042";
             <a href="?tab=transporte" class="tab-btn active"><i class="fas fa-route"></i> Transporte</a>
             <a href="?tab=gestao_frota" class="tab-btn"><i class="fas fa-shuttle-van"></i> Frota</a>
         </div>
+        
     </div>
 
     <div class="sub-tab-container">
