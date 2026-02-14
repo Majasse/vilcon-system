@@ -38,6 +38,17 @@ $pagina_atual = $_SERVER['PHP_SELF'];
                 <i class="fa-solid fa-truck-ramp-box"></i> Transporte
             </a>
 
+            
+            <a href="/vilcon-systemon/app/modules/rh/index.php"
+               class="nav-link sub <?= (strpos($pagina_atual, '/rh/') !== false) ? 'active' : '' ?>">
+                <i class="fa-solid fa-users-gear"></i> RH
+            </a>
+
+            <a href="/vilcon-systemon/app/modules/seguranca/index.php"
+               class="nav-link sub <?= (strpos($pagina_atual, '/seguranca/') !== false) ? 'active' : '' ?>">
+                <i class="fa-solid fa-shield-halved"></i> Seguranca
+            </a>
+
             <a href="/vilcon-systemon/app/modules/logistica/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/logistica/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-boxes-packing"></i> Logística

@@ -259,12 +259,39 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
             URL.revokeObjectURL(url);
         }
 
+        function tabelaPdfSemAcoes(tabela) {
+            var clone = tabela.cloneNode(true);
+            var headerCells = clone.querySelectorAll('thead th');
+            var indicesAcoes = [];
+
+            headerCells.forEach(function(th, idx) {
+                var texto = String(th.textContent || '')
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .trim();
+                if (texto === 'acoes' || texto === 'acao') {
+                    indicesAcoes.push(idx);
+                }
+            });
+
+            indicesAcoes.reverse().forEach(function(colIdx) {
+                clone.querySelectorAll('tr').forEach(function(tr) {
+                    if (tr.children[colIdx]) {
+                        tr.removeChild(tr.children[colIdx]);
+                    }
+                });
+            });
+
+            return clone.outerHTML;
+        }
+
         function exportarPdf(tabela, titulo) {
             var janela = window.open('', '_blank');
             if (!janela) return;
             var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
             var dataAtual = new Date().toLocaleString('pt-PT');
-            var tabelaHtml = tabela.outerHTML;
+            var tabelaHtml = tabelaPdfSemAcoes(tabela);
             var html = `
                 <html>
                 <head>

@@ -25,7 +25,8 @@ define('BASE_URL', '/vilcon-systemon/public');
     <meta charset="UTF-8">
     <title>SIOV | Vilcon Operations</title>
 
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+	<link rel="stylesheet" href="/vilcon-systemon/public/assets/css/vilcon-bias-theme.css">
 
     <style>
         :root {

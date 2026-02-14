@@ -31,7 +31,7 @@ function normalizarNivelSeguranca($dataValidade, $nivelBase = '') {
 }
 
 function classeNivelSeguranca($nivel) {
-    if ($nivel === 'critico') return 'warn';
+    if ($nivel === 'critico') return 'danger';
     if ($nivel === 'atencao') return 'warn';
     return 'ok';
 }
@@ -259,8 +259,67 @@ try {
 } catch (Throwable $e) {
     $erro_seguranca = 'Nao foi possivel processar a seguranca: ' . $e->getMessage();
 }
+
+$total_alertas = count($seguranca);
+$total_criticos = 0;
+$total_atencao = 0;
+$total_normais = 0;
+$total_automaticos = 0;
+$total_manuais = 0;
+foreach ($seguranca as $row) {
+    $nivel_row = strtolower((string)($row['nivel'] ?? 'normal'));
+    if ($nivel_row === 'critico') $total_criticos++;
+    elseif ($nivel_row === 'atencao') $total_atencao++;
+    else $total_normais++;
+
+    $origem_row = strtolower((string)($row['origem'] ?? 'manual'));
+    if ($origem_row === 'automatico') $total_automaticos++;
+    else $total_manuais++;
+}
 ?>
 <div data-mode-scope>
+    <style>
+        .seg-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .seg-kpi {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 10px;
+        }
+        .seg-kpi .k-title {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #64748b;
+            font-weight: 800;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .seg-kpi .k-value {
+            font-size: 20px;
+            font-weight: 800;
+            margin-top: 6px;
+            color: #0f172a;
+        }
+        .seg-kpi.critico { background: #fef2f2; border-color: #fecaca; }
+        .seg-kpi.atencao { background: #fff7ed; border-color: #fed7aa; }
+        .seg-kpi.auto { background: #eff6ff; border-color: #bfdbfe; }
+        .seg-kpi.manual { background: #f8fafc; border-color: #cbd5e1; }
+        .seg-row-critico { background: #fff1f2; }
+        .seg-row-atencao { background: #fff7ed; }
+        .pill.danger { background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; }
+        .pill.warn { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; }
+        .pill.ok { background:#ecfdf3; color:#15803d; border:1px solid #bbf7d0; }
+        .pill.info { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+        @media (max-width: 1100px) {
+            .seg-kpi-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+        }
+    </style>
     <div class="tool-header">
         <div class="tool-title">
             <h3><i class="fas fa-shield-halved"></i> Seguranca</h3>
@@ -269,6 +328,29 @@ try {
         <div class="tool-actions">
             <button type="button" class="btn-mode active" data-target="seguranca-lista"><i class="fas fa-list"></i> Ver lista</button>
             <button type="button" class="btn-mode" data-target="seguranca-form"><i class="fas fa-plus"></i> Adicionar</button>
+        </div>
+    </div>
+
+    <div class="seg-kpi-grid">
+        <div class="seg-kpi">
+            <div class="k-title"><i class="fa-solid fa-list-check"></i> Total alertas</div>
+            <div class="k-value"><?= (int)$total_alertas ?></div>
+        </div>
+        <div class="seg-kpi critico">
+            <div class="k-title"><i class="fa-solid fa-triangle-exclamation"></i> Criticos</div>
+            <div class="k-value"><?= (int)$total_criticos ?></div>
+        </div>
+        <div class="seg-kpi atencao">
+            <div class="k-title"><i class="fa-solid fa-bell"></i> Atencao</div>
+            <div class="k-value"><?= (int)$total_atencao ?></div>
+        </div>
+        <div class="seg-kpi auto">
+            <div class="k-title"><i class="fa-solid fa-robot"></i> Automaticos</div>
+            <div class="k-value"><?= (int)$total_automaticos ?></div>
+        </div>
+        <div class="seg-kpi manual">
+            <div class="k-title"><i class="fa-solid fa-user-pen"></i> Manuais</div>
+            <div class="k-value"><?= (int)$total_manuais ?></div>
         </div>
     </div>
 
@@ -322,6 +404,7 @@ try {
                     <th>Item</th>
                     <th>Tipo</th>
                     <th>Validade</th>
+                    <th>Prazo</th>
                     <th>Nivel</th>
                     <th>Aviso</th>
                     <th>Criado em</th>
@@ -330,7 +413,7 @@ try {
             <tbody>
                 <?php if (empty($seguranca)): ?>
                     <tr>
-                        <td colspan="8">Sem alertas de seguranca para os filtros aplicados.</td>
+                        <td colspan="9">Sem alertas de seguranca para os filtros aplicados.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($seguranca as $row): ?>
@@ -339,14 +422,33 @@ try {
                         $classe = classeNivelSeguranca($nivel);
                         $isCritico = $nivel === 'critico';
                         ?>
-                        <tr>
+                        <tr class="<?= $nivel === 'critico' ? 'seg-row-critico' : ($nivel === 'atencao' ? 'seg-row-atencao' : '') ?>">
                             <td><?= htmlspecialchars((string)($row['id'] ?? '-')) ?></td>
-                            <td><?= htmlspecialchars((string)($row['origem'] ?? '-')) ?></td>
+                            <td><span class="pill info"><?= htmlspecialchars((string)($row['origem'] ?? '-')) ?></span></td>
                             <td><strong><?= htmlspecialchars((string)($row['item'] ?? '-')) ?></strong></td>
                             <td><?= htmlspecialchars((string)($row['tipo_alerta'] ?? '-')) ?></td>
                             <td><?= htmlspecialchars((string)($row['data_validade'] ?? '-')) ?></td>
+                            <td>
+                                <?php
+                                    $dias = (int)($row['dias_restantes'] ?? 9999);
+                                    if ($dias === 9999) {
+                                        echo '-';
+                                    } elseif ($dias < 0) {
+                                        echo '<span class="pill danger">vencido ha ' . abs($dias) . 'd</span>';
+                                    } elseif ($dias === 0) {
+                                        echo '<span class="pill danger">vence hoje</span>';
+                                    } elseif ($dias <= 30) {
+                                        echo '<span class="pill warn">' . $dias . ' dias</span>';
+                                    } else {
+                                        echo '<span class="pill ok">' . $dias . ' dias</span>';
+                                    }
+                                ?>
+                            </td>
                             <td><span class="pill <?= htmlspecialchars($classe) ?>"><?= htmlspecialchars(ucfirst($nivel)) ?></span></td>
-                            <td style="font-weight:700; color:<?= $isCritico ? '#b91c1c' : '#92400e' ?>;"><?= htmlspecialchars((string)($row['observacoes'] ?? '-')) ?></td>
+                            <td style="font-weight:700; color:<?= $isCritico ? '#b91c1c' : '#92400e' ?>;">
+                                <i class="fa-solid <?= $isCritico ? 'fa-triangle-exclamation' : 'fa-circle-info' ?>" style="margin-right:6px;"></i>
+                                <?= htmlspecialchars((string)($row['observacoes'] ?? '-')) ?>
+                            </td>
                             <td><?= htmlspecialchars((string)($row['created_at'] ?? '-')) ?></td>
                         </tr>
                     <?php endforeach; ?>

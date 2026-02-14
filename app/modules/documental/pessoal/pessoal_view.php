@@ -2,8 +2,102 @@
 $pessoal_lista = [];
 $erro_pessoal = null;
 $tipos_documento = [];
+
 $pesquisa = trim((string)($_GET['q'] ?? ''));
-$tipo_documento_filtro = trim((string)($_GET['tipo_documento'] ?? ''));
+$tipo_documento_filtro = trim((string)($_GET['tipo_documento'] ?? 'todos'));
+$perfil_filtro = trim((string)($_GET['perfil'] ?? 'todos'));
+$subfiltro_filtro = trim((string)($_GET['subfiltro'] ?? 'todos'));
+
+$subfiltros_por_perfil = [
+    'todos' => ['todos' => 'Todos'],
+    'motorista' => [
+        'todos' => 'Todos',
+        'c_carta' => 'C. Carta (Conducao)',
+        'c_profissional' => 'C. Profissional',
+        'c_pesado' => 'C. Pesado',
+        'c_mercadorias' => 'C. Mercadorias',
+    ],
+    'mecanico' => [
+        'todos' => 'Todos',
+        'c_formacao' => 'C. Formacao Tecnica',
+        'c_certificacao' => 'C. Certificacao',
+        'c_seguranca' => 'C. Seguranca',
+    ],
+    'operador' => [
+        'todos' => 'Todos',
+        'c_maquinas' => 'C. Maquinas/Equipamentos',
+        'c_elevacao' => 'C. Elevacao',
+        'c_grua' => 'C. Grua/Guindaste',
+    ],
+];
+
+function normalizarTextoPessoal($texto) {
+    $v = strtolower(trim((string)$texto));
+    $de = ['á','à','ã','â','ä','é','è','ê','ë','í','ì','î','ï','ó','ò','õ','ô','ö','ú','ù','û','ü','ç'];
+    $para = ['a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','u','u','u','u','c'];
+    return str_replace($de, $para, $v);
+}
+
+function classificarPerfilPessoal($cargoId, $tipoDocumento) {
+    $base = normalizarTextoPessoal((string)$cargoId . ' ' . (string)$tipoDocumento);
+
+    if (strpos($base, 'motor') !== false || strpos($base, 'conduc') !== false || strpos($base, 'carta') !== false) {
+        return 'motorista';
+    }
+    if (strpos($base, 'mecan') !== false) {
+        return 'mecanico';
+    }
+    if (
+        strpos($base, 'operador') !== false ||
+        strpos($base, 'maquina') !== false ||
+        strpos($base, 'escav') !== false ||
+        strpos($base, 'grua') !== false ||
+        strpos($base, 'guindaste') !== false
+    ) {
+        return 'operador';
+    }
+
+    return 'outros';
+}
+
+function correspondeSubfiltroPessoal($perfil, $subfiltro, $tipoDocumento) {
+    if ($subfiltro === '' || $subfiltro === 'todos') {
+        return true;
+    }
+
+    $doc = normalizarTextoPessoal($tipoDocumento);
+
+    if ($perfil === 'motorista') {
+        if ($subfiltro === 'c_carta') return strpos($doc, 'carta') !== false || strpos($doc, 'conduc') !== false;
+        if ($subfiltro === 'c_profissional') return strpos($doc, 'profissional') !== false;
+        if ($subfiltro === 'c_pesado') return strpos($doc, 'pesado') !== false;
+        if ($subfiltro === 'c_mercadorias') return strpos($doc, 'mercadoria') !== false || strpos($doc, 'cargas') !== false;
+        return true;
+    }
+
+    if ($perfil === 'mecanico') {
+        if ($subfiltro === 'c_formacao') return strpos($doc, 'formacao') !== false || strpos($doc, 'treinamento') !== false;
+        if ($subfiltro === 'c_certificacao') return strpos($doc, 'certific') !== false || strpos($doc, 'qualific') !== false;
+        if ($subfiltro === 'c_seguranca') return strpos($doc, 'seguranca') !== false || strpos($doc, 'hse') !== false;
+        return true;
+    }
+
+    if ($perfil === 'operador') {
+        if ($subfiltro === 'c_maquinas') return strpos($doc, 'maquina') !== false || strpos($doc, 'equipamento') !== false || strpos($doc, 'operador') !== false;
+        if ($subfiltro === 'c_elevacao') return strpos($doc, 'elevacao') !== false || strpos($doc, 'plataforma') !== false;
+        if ($subfiltro === 'c_grua') return strpos($doc, 'grua') !== false || strpos($doc, 'guindaste') !== false || strpos($doc, 'ponte rolante') !== false;
+        return true;
+    }
+
+    return true;
+}
+
+if (!isset($subfiltros_por_perfil[$perfil_filtro])) {
+    $perfil_filtro = 'todos';
+}
+if (!isset($subfiltros_por_perfil[$perfil_filtro][$subfiltro_filtro])) {
+    $subfiltro_filtro = 'todos';
+}
 
 try {
     $sqlTipos = "
@@ -20,7 +114,7 @@ try {
     $params = [];
 
     if ($pesquisa !== '') {
-        $where[] = "(p.nome LIKE :pesquisa OR CAST(p.numero AS CHAR) LIKE :pesquisa OR pd.tipo_documento LIKE :pesquisa)";
+        $where[] = "(p.nome LIKE :pesquisa OR CAST(p.numero AS CHAR) LIKE :pesquisa OR CAST(p.cargo_id AS CHAR) LIKE :pesquisa OR pd.tipo_documento LIKE :pesquisa)";
         $params[':pesquisa'] = '%' . $pesquisa . '%';
     }
 
@@ -49,26 +143,47 @@ try {
         $sql .= " WHERE " . implode(" AND ", $where);
     }
 
-    $sql .= "
-        ORDER BY p.id ASC, pd.id ASC
-    ";
+    $sql .= " ORDER BY p.id ASC, pd.id ASC";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $pessoal_lista = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $resultado = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($resultado as $item) {
+        $perfilLinha = classificarPerfilPessoal($item['cargo_id'] ?? '', $item['tipo_documento'] ?? '');
+
+        if ($perfil_filtro !== 'todos' && $perfilLinha !== $perfil_filtro) {
+            continue;
+        }
+
+        if (!correspondeSubfiltroPessoal($perfil_filtro, $subfiltro_filtro, (string)($item['tipo_documento'] ?? ''))) {
+            continue;
+        }
+
+        $item['perfil_classificado'] = $perfilLinha;
+        $pessoal_lista[] = $item;
+    }
 } catch (Throwable $e) {
     $erro_pessoal = 'Nao foi possivel carregar os funcionarios.';
+}
+
+function labelPerfilPessoal($perfil) {
+    if ($perfil === 'motorista') return 'Motorista';
+    if ($perfil === 'mecanico') return 'Mecanico';
+    if ($perfil === 'operador') return 'Operador';
+    return 'Outros';
 }
 ?>
 <div data-mode-scope>
     <div class="tool-header">
         <div class="tool-title">
             <h3><i class="fas fa-users"></i> Pessoal</h3>
-            <p>Veja a lista de motoristas e operadores ou adicione novo cadastro.</p>
+            <p>O cadastro de pessoas e feito no modulo RH. Nesta area documental, apenas consultamos e filtramos documentos.</p>
         </div>
         <div class="tool-actions">
-            <button type="button" class="btn-mode active" data-target="pessoal-lista"><i class="fas fa-list"></i> Ver lista</button>
-            <button type="button" class="btn-mode" data-target="pessoal-form"><i class="fas fa-user-plus"></i> Adicionar</button>
+            <a href="/vilcon-systemon/app/modules/rh/index.php" class="btn-mode" style="text-decoration:none;display:inline-flex;align-items:center;">
+                <i class="fas fa-arrow-up-right-from-square"></i> Ir para RH
+            </a>
         </div>
     </div>
 
@@ -76,7 +191,26 @@ try {
         <input type="hidden" name="view" value="pessoal">
         <div class="form-group" style="flex:1;">
             <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
-            <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Nome, numero, tipo documento...">
+            <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Nome, numero, cargo, tipo documento...">
+        </div>
+        <div class="form-group">
+            <label><i class="fas fa-users"></i> Perfil</label>
+            <select name="perfil">
+                <option value="todos" <?= $perfil_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                <option value="mecanico" <?= $perfil_filtro === 'mecanico' ? 'selected' : '' ?>>Mecanicos</option>
+                <option value="motorista" <?= $perfil_filtro === 'motorista' ? 'selected' : '' ?>>Motoristas</option>
+                <option value="operador" <?= $perfil_filtro === 'operador' ? 'selected' : '' ?>>Operadores</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label><i class="fas fa-layer-group"></i> Subfiltro Perfil</label>
+            <select name="subfiltro">
+                <?php foreach (($subfiltros_por_perfil[$perfil_filtro] ?? ['todos' => 'Todos']) as $k => $label): ?>
+                    <option value="<?= htmlspecialchars((string)$k) ?>" <?= $subfiltro_filtro === (string)$k ? 'selected' : '' ?>>
+                        <?= htmlspecialchars((string)$label) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
         </div>
         <div class="form-group">
             <label><i class="fas fa-filter"></i> Filtrar documento</label>
@@ -99,6 +233,7 @@ try {
                 <tr>
                     <th>Numero</th>
                     <th>Nome</th>
+                    <th>Perfil</th>
                     <th>Tipo Documento</th>
                     <th>Data Emissao</th>
                     <th>Data Vencimento</th>
@@ -108,11 +243,11 @@ try {
             <tbody>
                 <?php if ($erro_pessoal !== null): ?>
                     <tr>
-                        <td colspan="6"><?= htmlspecialchars($erro_pessoal) ?></td>
+                        <td colspan="7"><?= htmlspecialchars($erro_pessoal) ?></td>
                     </tr>
                 <?php elseif (empty($pessoal_lista)): ?>
                     <tr>
-                        <td colspan="6">Sem registos nas tabelas pessoal/pessoal_documentos.</td>
+                        <td colspan="7">Sem registos para os filtros aplicados.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($pessoal_lista as $item): ?>
@@ -120,10 +255,12 @@ try {
                         $emissao = trim((string)($item['data_emissao'] ?? ''));
                         $vencimento = trim((string)($item['data_vencimento'] ?? ''));
                         $criadoEm = trim((string)($item['documento_created_at'] ?? ''));
+                        $perfilLinha = (string)($item['perfil_classificado'] ?? 'outros');
                         ?>
                         <tr>
                             <td><?= htmlspecialchars((string)($item['numero'] ?? '-')) ?></td>
                             <td><?= htmlspecialchars((string)($item['nome'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars(labelPerfilPessoal($perfilLinha)) ?></td>
                             <td><?= htmlspecialchars((string)($item['tipo_documento'] ?? '-')) ?></td>
                             <td><?= htmlspecialchars($emissao !== '' ? $emissao : '-') ?></td>
                             <td><?= htmlspecialchars($vencimento !== '' ? $vencimento : '-') ?></td>
@@ -134,41 +271,4 @@ try {
             </tbody>
         </table>
     </div>
-
-    <div id="pessoal-form" class="panel-view hidden">
-        <form class="form-grid">
-            <div class="section-title">Cadastro e Destino Operacional</div>
-            <div class="form-group"><label>Nome Completo</label><input type="text"></div>
-
-            <div class="form-group">
-                <label>Projeto / Destino de Trabalho</label>
-                <select>
-                    <option>TRABALHO INTERNO (SEDE/LOGISTICA)</option>
-                    <option>PROJETO X (EXEMPLO)</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label>Atividade Designada</label>
-                <input type="text" placeholder="Ex: Operador de Escavadora">
-            </div>
-
-            <div class="form-group">
-                <label>Categoria</label>
-                <select><option>Motorista</option><option>Operador de Maquina</option></select>
-            </div>
-            <div class="form-group">
-                <label>Tipo de Carta</label>
-                <select><option>Profissional</option><option>Pesado</option><option>Ligeiro</option><option>Outra</option></select>
-            </div>
-            <div class="form-group"><label>Validade BI</label><div class="doc-control"><input type="date"><label class="btn-upload">Anexo <input type="file" style="display:none"></label></div></div>
-            <div class="form-group"><label>Validade Carta</label><div class="doc-control"><input type="date"><label class="btn-upload">Anexo <input type="file" style="display:none"></label></div></div>
-            <div class="form-group">
-                <label>Exame Medico / Medical (Validade)</label>
-                <div class="doc-control"><input type="date"><label class="btn-upload">Anexo <input type="file" style="display:none"></label></div>
-            </div>
-            <div style="grid-column: span 3;"><button class="btn-save">Gravar Pessoal</button></div>
-        </form>
-    </div>
 </div>
-
