@@ -6,6 +6,7 @@ $msg_seguranca = null;
 $pesquisa = trim((string)($_GET['q'] ?? ''));
 $nivel_filtro = trim((string)($_GET['nivel'] ?? 'todos'));
 $tipo_filtro = trim((string)($_GET['tipo'] ?? 'todos'));
+$aplicar_filtro = isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1';
 $tipos_alerta = [];
 
 function normalizarNivelSeguranca($dataValidade, $nivelBase = '') {
@@ -325,11 +326,18 @@ foreach ($seguranca as $row) {
             <h3><i class="fas fa-shield-halved"></i> Seguranca</h3>
             <p>Acompanhe alertas e adicione novos registos de seguranca.</p>
         </div>
-        <div class="tool-actions">
-            <button type="button" class="btn-mode active" data-target="seguranca-lista"><i class="fas fa-list"></i> Ver lista</button>
-            <button type="button" class="btn-mode" data-target="seguranca-form"><i class="fas fa-plus"></i> Adicionar</button>
-        </div>
     </div>
+
+    <div class="module-entry">
+        <button type="button" class="module-entry-btn lista" data-open-module-modal="seguranca-modal-lista"><i class="fas fa-list"></i> Lista</button>
+        <button type="button" class="module-entry-btn form" data-open-module-modal="seguranca-modal-form"><i class="fas fa-plus"></i> Adicionar</button>
+    </div>
+
+    <?php if (!$aplicar_filtro): ?>
+        <div class="filter-container" style="margin-top:8px;">
+            <span style="font-size:12px; color:#6b7280;">A lista de seguranca so aparece apos aplicar os filtros.</span>
+        </div>
+    <?php endif; ?>
 
     <div class="seg-kpi-grid">
         <div class="seg-kpi">
@@ -365,38 +373,54 @@ foreach ($seguranca as $row) {
         </div>
     <?php endif; ?>
 
-    <form class="filter-container" method="get" action="">
-        <input type="hidden" name="view" value="seguranca">
-        <div class="form-group" style="flex:1;">
-            <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
-            <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Documento, ativo, alerta...">
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-filter"></i> Filtrar nivel</label>
-            <select name="nivel">
-                <option value="todos" <?= $nivel_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
-                <option value="critico" <?= $nivel_filtro === 'critico' ? 'selected' : '' ?>>Critico</option>
-                <option value="atencao" <?= $nivel_filtro === 'atencao' ? 'selected' : '' ?>>Atencao</option>
-                <option value="normal" <?= $nivel_filtro === 'normal' ? 'selected' : '' ?>>Normal</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-filter"></i> Filtrar tipo</label>
-            <select name="tipo">
-                <option value="todos" <?= $tipo_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
-                <?php foreach ($tipos_alerta as $tipo): ?>
-                    <option value="<?= htmlspecialchars((string)$tipo) ?>" <?= $tipo_filtro === (string)$tipo ? 'selected' : '' ?>>
-                        <?= htmlspecialchars((string)$tipo) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <button type="submit" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
-        <a href="?view=seguranca" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;"><i class="fas fa-rotate-left" style="margin-right:6px;"></i> Limpar</a>
-    </form>
+    <div class="module-modal <?= $aplicar_filtro ? 'open' : '' ?>" id="seguranca-modal-lista">
+        <div class="module-modal-window">
+            <div class="module-modal-header">
+                <h4>Seguranca - Lista e Filtros</h4>
+                <div class="module-modal-actions">
+                    <button type="button" class="module-modal-btn" data-minimizar-modal>Minimizar</button>
+                    <button type="button" class="module-modal-btn" data-fechar-modal>Fechar</button>
+                </div>
+            </div>
+            <div class="module-modal-body">
+                <form class="filter-container" method="get" action="">
+                    <input type="hidden" name="view" value="seguranca">
+                    <input type="hidden" name="aplicar" value="1">
+                    <div class="form-group" style="flex:1;">
+                        <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
+                        <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Documento, ativo, alerta...">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-filter"></i> Filtrar nivel</label>
+                        <select name="nivel">
+                            <option value="todos" <?= $nivel_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                            <option value="critico" <?= $nivel_filtro === 'critico' ? 'selected' : '' ?>>Critico</option>
+                            <option value="atencao" <?= $nivel_filtro === 'atencao' ? 'selected' : '' ?>>Atencao</option>
+                            <option value="normal" <?= $nivel_filtro === 'normal' ? 'selected' : '' ?>>Normal</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-filter"></i> Filtrar tipo</label>
+                        <select name="tipo">
+                            <option value="todos" <?= $tipo_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                            <?php foreach ($tipos_alerta as $tipo): ?>
+                                <option value="<?= htmlspecialchars((string)$tipo) ?>" <?= $tipo_filtro === (string)$tipo ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars((string)$tipo) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
+                    <a href="?view=seguranca" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;"><i class="fas fa-rotate-left" style="margin-right:6px;"></i> Limpar</a>
+                </form>
 
-    <div id="seguranca-lista" class="panel-view">
-        <table class="list-table">
+                <div class="module-tools">
+                    <button type="button" class="btn-export" data-export-format="excel"><i class="fas fa-file-excel"></i> Baixar Excel</button>
+                    <button type="button" class="btn-export" data-export-format="pdf"><i class="fas fa-file-pdf"></i> Baixar PDF</button>
+                </div>
+
+                <div id="seguranca-lista" class="panel-view <?= $aplicar_filtro ? '' : 'hidden' ?>">
+                <table class="list-table">
             <thead>
                 <tr>
                     <th>ID</th>
@@ -454,11 +478,23 @@ foreach ($seguranca as $row) {
                     <?php endforeach; ?>
                 <?php endif; ?>
             </tbody>
-        </table>
+                </table>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div id="seguranca-form" class="panel-view hidden">
-        <form class="form-grid" method="post" action="">
+    <div class="module-modal" id="seguranca-modal-form">
+        <div class="module-modal-window">
+            <div class="module-modal-header">
+                <h4>Seguranca - Adicionar</h4>
+                <div class="module-modal-actions">
+                    <button type="button" class="module-modal-btn" data-minimizar-modal>Minimizar</button>
+                    <button type="button" class="module-modal-btn" data-fechar-modal>Fechar</button>
+                </div>
+            </div>
+            <div class="module-modal-body">
+                <form class="form-grid" method="post" action="">
             <input type="hidden" name="acao" value="guardar_alerta">
             <div class="section-title">Novo Alerta de Seguranca</div>
             <div class="form-group"><label>Ativo/Pessoa</label><input type="text" name="item" placeholder="Ex: ABC-123-MC" required></div>
@@ -477,6 +513,8 @@ foreach ($seguranca as $row) {
             <div class="form-group"><label>Nivel</label><select name="nivel"><option value="">Automatico</option><option value="critico">Critico</option><option value="atencao">Atencao</option><option value="normal">Normal</option></select></div>
             <div class="form-group" style="grid-column: span 4;"><label>Observacoes</label><textarea name="observacoes" rows="3" placeholder="Detalhes do alerta"></textarea></div>
             <div style="grid-column: span 3;"><button class="btn-save" type="submit">Guardar Alerta</button></div>
-        </form>
+                </form>
+            </div>
+        </div>
     </div>
 </div>

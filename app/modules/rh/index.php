@@ -12,6 +12,11 @@ if (!isset($_SESSION['usuario_id'])) {
 
 $page_title = 'RH | Vilcon System';
 $view = $_GET['view'] ?? 'colaboradores';
+$mode = $_GET['mode'] ?? 'home';
+if (!in_array($mode, ['home', 'list'], true)) {
+    $mode = 'home';
+}
+$aplicar_lista = isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1';
 $q = trim((string)($_GET['q'] ?? ''));
 $cargo_id = isset($_GET['cargo_id']) ? (int)$_GET['cargo_id'] : 0;
 $funcionario_id = isset($_GET['funcionario_id']) ? (int)$_GET['funcionario_id'] : 0;
@@ -369,6 +374,65 @@ if ($view === 'avaliacao' && $erro === null) {
                 min-height:36px;
             }
             .btn-export i { margin-right:6px; }
+            .module-entry {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin-bottom: 14px;
+            }
+            .module-entry-btn {
+                border: 1px solid #d1d5db;
+                background: #dbeafe;
+                color: #1e3a8a;
+                padding: 9px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 700;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .module-modal {
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                background: #ffffff;
+                overflow: hidden;
+            }
+            .module-modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 12px 14px;
+                background: #111827;
+                border-bottom: 1px solid #0f172a;
+            }
+            .module-modal-header h4 {
+                margin: 0;
+                color: #ffffff;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: .2px;
+            }
+            .module-modal-actions { display: flex; gap: 8px; }
+            .module-modal-btn {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                padding: 7px 10px;
+                border-radius: 7px;
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+            }
+            .module-modal-btn.min { background: #fef3c7; border-color: #fbbf24; color: #92400e; }
+            .module-modal-btn.close { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+            .module-modal-body { padding: 12px; }
+            .module-modal.minimized .module-modal-body { display: none; }
             .avaliacao-head {
                 display:flex;
                 justify-content:space-between;
@@ -442,20 +506,50 @@ if ($view === 'avaliacao' && $erro === null) {
         </style>
 
         <div class="tabs">
-            <a class="tab <?= $view === 'colaboradores' ? 'active' : '' ?>" href="?view=colaboradores">Colaboradores</a>
-            <a class="tab <?= $view === 'assiduidade' ? 'active' : '' ?>" href="?view=assiduidade">Assiduidade</a>
-            <a class="tab <?= $view === 'recrutamento' ? 'active' : '' ?>" href="?view=recrutamento">Recrutamento</a>
-            <a class="tab <?= $view === 'ferias' ? 'active' : '' ?>" href="?view=ferias">Ferias</a>
-            <a class="tab <?= $view === 'avaliacao' ? 'active' : '' ?>" href="?view=avaliacao">Avaliacao</a>
+            <a class="tab <?= $view === 'colaboradores' ? 'active' : '' ?>" href="?view=colaboradores&mode=home">Colaboradores</a>
+            <a class="tab <?= $view === 'assiduidade' ? 'active' : '' ?>" href="?view=assiduidade&mode=home">Assiduidade</a>
+            <a class="tab <?= $view === 'recrutamento' ? 'active' : '' ?>" href="?view=recrutamento&mode=home">Recrutamento</a>
+            <a class="tab <?= $view === 'ferias' ? 'active' : '' ?>" href="?view=ferias&mode=home">Ferias</a>
+            <a class="tab <?= $view === 'avaliacao' ? 'active' : '' ?>" href="?view=avaliacao&mode=home">Avaliacao</a>
         </div>
 
         <div class="card">
+            <div class="module-entry">
+                <a href="?view=<?= urlencode((string)$view) ?>&mode=list" class="module-entry-btn"><i class="fas fa-list"></i> Abrir tela</a>
+            </div>
+
+            <?php if ($mode === 'home'): ?>
+                <div style="border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb; font-size:12px; color:#6b7280;">
+                    A lista do RH so aparece apos abrir a tela e aplicar os filtros.
+                </div>
+            <?php else: ?>
+                <div class="module-modal" id="rh-main-modal">
+                    <div class="module-modal-header">
+                        <h4>RH - <?= htmlspecialchars((string)$view) ?></h4>
+                        <div class="module-modal-actions">
+                            <button type="button" class="module-modal-btn min" id="btn-min-rh">Minimizar</button>
+                            <a href="?view=<?= urlencode((string)$view) ?>&mode=home" class="module-modal-btn close">Fechar</a>
+                        </div>
+                    </div>
+                    <div class="module-modal-body" id="rh-main-body">
+                        <?php if (!$aplicar_lista): ?>
+                            <div style="border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb; margin-bottom:12px;">
+                                <form method="GET" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                                    <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
+                                    <input type="hidden" name="mode" value="list">
+                                    <input type="hidden" name="aplicar" value="1">
+                                    <button type="submit" class="btn-export" style="background:#111827;color:#fff;border-color:#111827;">Aplicar filtro</button>
+                                </form>
+                            </div>
+                        <?php else: ?>
             <?php if ($erro !== null): ?>
                 <p class="muted"><?= htmlspecialchars($erro) ?></p>
             <?php elseif ($view === 'colaboradores'): ?>
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
                     <form method="GET" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                         <input type="hidden" name="view" value="colaboradores">
+                        <input type="hidden" name="mode" value="list">
+                        <input type="hidden" name="aplicar" value="1">
                         <div style="display:flex; align-items:center; gap:8px; background:#fff; border:1px solid #e5e7eb; padding:8px 12px; border-radius:999px;">
                             <i class="fa-solid fa-magnifying-glass" style="color:#9ca3af;"></i>
                             <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="Pesquisar nome, numero ou cargo..." style="background:transparent; border:none; outline:none; color:#111827; font-size:12px; width:240px;">
@@ -470,7 +564,7 @@ if ($view === 'avaliacao' && $erro === null) {
                         </select>
                         <button type="submit" style="background:#111827; color:#fff; border:none; padding:8px 12px; border-radius:8px; font-size:11px; font-weight:700;">Filtrar por cargo</button>
                         <?php if ($q !== '' || $cargo_id > 0): ?>
-                            <a href="index.php?view=colaboradores" style="color:#6b7280; font-size:11px; text-decoration:none;">Limpar</a>
+                            <a href="index.php?view=colaboradores&mode=list&aplicar=1" style="color:#6b7280; font-size:11px; text-decoration:none;">Limpar</a>
                         <?php endif; ?>
                     </form>
                     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
@@ -505,7 +599,7 @@ if ($view === 'avaliacao' && $erro === null) {
                                 <tr>
                                     <td><?= htmlspecialchars((string)($f['numero'] ?? '-')) ?></td>
                                     <td>
-                                        <a href="?view=colaboradores&funcionario_id=<?= (int)$f['id'] ?>&cargo_id=<?= (int)$cargo_id ?>&q=<?= urlencode($q) ?>" style="color:#0f172a; font-weight:700; text-decoration:none;">
+                                        <a href="?view=colaboradores&mode=list&aplicar=1&funcionario_id=<?= (int)$f['id'] ?>&cargo_id=<?= (int)$cargo_id ?>&q=<?= urlencode($q) ?>" style="color:#0f172a; font-weight:700; text-decoration:none;">
                                             <?= htmlspecialchars((string)($f['nome'] ?? '-')) ?>
                                         </a>
                                     </td>
@@ -583,6 +677,8 @@ if ($view === 'avaliacao' && $erro === null) {
 
                 <form method="GET" class="avaliacao-filtros">
                     <input type="hidden" name="view" value="avaliacao">
+                    <input type="hidden" name="mode" value="list">
+                    <input type="hidden" name="aplicar" value="1">
                     <div>
                         <label style="display:block; font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:5px;">Inicio</label>
                         <input type="date" name="avaliacao_inicio" value="<?= htmlspecialchars($avaliacao_inicio) ?>">
@@ -689,6 +785,8 @@ if ($view === 'avaliacao' && $erro === null) {
             <?php elseif ($view === 'assiduidade'): ?>
                 <form method="GET" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
                     <input type="hidden" name="view" value="assiduidade">
+                    <input type="hidden" name="mode" value="list">
+                    <input type="hidden" name="aplicar" value="1">
                     <div>
                         <label style="display:block; font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:5px;">Data</label>
                         <input type="date" name="data_assiduidade" value="<?= htmlspecialchars($data_assiduidade) ?>" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:8px;">
@@ -735,12 +833,27 @@ if ($view === 'avaliacao' && $erro === null) {
             <?php else: ?>
                 <p class="muted">Vista em desenvolvimento.</p>
             <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
 <script>
+(function() {
+    var btnMin = document.getElementById('btn-min-rh');
+    if (!btnMin) return;
+    btnMin.addEventListener('click', function() {
+        var modal = document.getElementById('rh-main-modal');
+        if (!modal) return;
+        modal.classList.toggle('minimized');
+        btnMin.textContent = modal.classList.contains('minimized') ? 'Restaurar' : 'Minimizar';
+    });
+})();
+
 function nomeArquivoRh(base, ext) {
     var data = new Date();
     var y = data.getFullYear();

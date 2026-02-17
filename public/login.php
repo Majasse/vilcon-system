@@ -54,7 +54,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         exit();
     } else {
         try {
-            registrarAcaoSistema($pdo, 'LOGIN FALHOU: ' . $email, 'auth', null);
+            $usuarioFalhouId = null;
+            if ($email !== '') {
+                $stmtUserEmail = $pdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
+                $stmtUserEmail->execute(['email' => $email]);
+                $usuarioFalhouId = (int)($stmtUserEmail->fetchColumn() ?: 0);
+                if ($usuarioFalhouId <= 0) {
+                    $usuarioFalhouId = null;
+                }
+            }
+            registrarAcaoSistema($pdo, 'LOGIN FALHOU: ' . $email, 'auth', $usuarioFalhouId);
         } catch (Throwable $e) {
             // Nao bloquear fluxo em falha de auditoria.
         }

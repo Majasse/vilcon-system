@@ -1,7 +1,7 @@
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
     <div>
-        <h3>HistÃ³rico Geral de Consultas</h3>
-        <p style="font-size:12px; color:#6b7280; margin-top:4px;">Registos consolidados de ativos, projetos, pessoal e seguranÃ§a.</p>
+        <h3>Histórico Geral de Consultas</h3>
+        <p style="font-size:12px; color:#6b7280; margin-top:4px;">Registos consolidados de ativos, projetos, pessoal e segurança.</p>
     </div>
     <div class="pill info">Atualizado hoje</div>
 </div>
@@ -9,7 +9,7 @@
 <div class="filter-container">
     <div class="form-group" style="flex:1;">
         <label>Pesquisa Global</label>
-        <input type="text" placeholder="MatrÃ­cula, Nome, Chassi ou SÃ©rie...">
+        <input type="text" placeholder="Matrícula, Nome, Chassi ou Série...">
     </div>
     <div class="form-group" style="width:250px;">
         <label>Ver por Categoria</label>
@@ -18,9 +18,9 @@
             <option value="projetos">Projetos</option>
             <option value="ativos">Ativos</option>
             <option value="pessoal">Motoristas & Operadores</option>
-            <option value="elevacao">Equipamento de ElevaÃ§Ã£o</option>
+            <option value="elevacao">Equipamento de Elevação</option>
             <option value="financeiro">Compra & Venda</option>
-            <option value="alertas">SeguranÃ§a & Alertas</option>
+            <option value="alertas">Segurança & Alertas</option>
         </select>
     </div>
     <button class="tab-btn active" style="height:42px;"><i class="fas fa-search"></i> Filtrar</button>
@@ -29,11 +29,11 @@
 <table class="table-historico">
     <thead>
         <tr>
-            <th>IdentificaÃ§Ã£o / Nome</th>
+            <th>Identificação / Nome</th>
             <th>Categoria / Projeto</th>
             <th>Info Adicional</th>
             <th>Status / Data</th>
-            <th style="text-align:center;">AÃ§Ãµes</th>
+            <th style="text-align:center;">Ações</th>
         </tr>
     </thead>
     <tbody>
@@ -55,7 +55,7 @@
         </tr>
         <tr>
             <td><strong>RM-022-PE</strong></td>
-            <td><span class="pill warn">Alerta</span> / SeguranÃ§a</td>
+            <td><span class="pill warn">Alerta</span> / Segurança</td>
             <td>Documento: seguro vencido</td>
             <td>08/02/2026</td>
             <td class="action-icons">
@@ -72,7 +72,7 @@
         <tr>
             <td><strong>EMP-117</strong></td>
             <td><span class="pill info">Pessoal</span> / Motoristas</td>
-            <td>LicenÃ§a renovada</td>
+            <td>Licença renovada</td>
             <td>02/02/2026</td>
             <td class="action-icons">
                 <a href="gerar_pdf.php?id=3" class="icon-download" title="Baixar PDF"><i class="fas fa-file-pdf"></i></a>

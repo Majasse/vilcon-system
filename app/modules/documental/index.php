@@ -22,6 +22,16 @@ $views = [
     'compra_venda' => 'compra_venda/compra_venda_view.php',
 ];
 
+$tema_por_view = [
+    'ativos' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'projetos' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'pessoal' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'seguranca' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'elevacao' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'compra_venda' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+];
+$tema_atual = $tema_por_view[$view] ?? ['primary' => '#1f2937', 'soft' => '#e5e7eb'];
+
 $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
 ?>
 <?php require_once __DIR__ . '/../../includes/header.php'; ?>
@@ -36,7 +46,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
         </div>
     </div>
 
-    <div class="dashboard-container">
+    <div class="dashboard-container" style="--doc-primary: <?= htmlspecialchars($tema_atual['primary'], ENT_QUOTES, 'UTF-8') ?>; --doc-soft: <?= htmlspecialchars($tema_atual['soft'], ENT_QUOTES, 'UTF-8') ?>;">
         <style>
             body { background: #f4f7f6; color: #111827; }
             .main-content { background: #f4f7f6; margin-left: 0; }
@@ -61,23 +71,23 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                 border: 1px solid #e5e7eb;
             }
             .tab.active {
-                background: #f59e0b;
+                background: var(--doc-primary);
                 color: #fff;
-                border-color: #f59e0b;
+                border-color: var(--doc-primary);
             }
             .card {
                 background: #ffffff;
                 border-radius: 12px;
                 padding: 20px;
                 box-shadow: 0 6px 16px rgba(17,24,39,0.08);
-                border: 1px solid #e5e7eb;
+                border: 1px solid var(--doc-soft);
             }
             .form-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-            .section-title { grid-column: span 4; background:#f8fafc; padding:10px; font-size:11px; font-weight:800; border-left:5px solid #f59e0b; text-transform:uppercase; }
+            .section-title { grid-column: span 4; background:#f8fafc; padding:10px; font-size:11px; font-weight:800; border-left:5px solid var(--doc-primary); text-transform:uppercase; }
             .form-group { display:flex; flex-direction:column; }
             label { font-size:10px; font-weight:800; color:#6b7280; margin-bottom:5px; text-transform:uppercase; }
             input, select, textarea { padding:10px; border:1px solid #d1d5db; border-radius:6px; font-size:13px; background:#ffffff; color:#111827; }
-            .btn-save { padding:10px 14px; border-radius:6px; font-weight:700; font-size:11px; border:none; color:#fff; background:#111827; cursor:pointer; }
+            .btn-save { padding:10px 14px; border-radius:6px; font-weight:700; font-size:11px; border:none; color:#fff; background:var(--doc-primary); cursor:pointer; }
             .btn-upload { background:#f3f4f6; border:1px solid #e5e7eb; padding:8px 10px; border-radius:6px; font-size:11px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; color:#111827; }
             .doc-control { display:flex; align-items:center; gap:8px; }
             .input-novo { margin-top:6px; display:none; }
@@ -107,7 +117,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                 min-height:36px;
             }
             .btn-mode i { margin-right:6px; }
-            .btn-mode.active { background:#111827; color:#ffffff; border-color:#111827; }
+            .btn-mode.active { background:var(--doc-primary); color:#ffffff; border-color:var(--doc-primary); }
 
             .filter-container {
                 display:flex;
@@ -119,7 +129,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                 padding:14px;
                 border:1px solid #e5e7eb;
                 border-radius:10px;
-                background:#f9fafb;
+                background:var(--doc-soft);
             }
             .filter-container .form-group { min-width:220px; margin:0; }
             .filter-container .btn-save { min-height:38px; white-space:nowrap; }
@@ -129,16 +139,16 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
             .list-table td { padding:10px; border-bottom:1px solid #f1f5f9; }
             .list-table tr:hover { background:#f8fafc; }
             .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; }
-            .pill.ok { background:#ecfdf3; color:#16a34a; border:1px solid #bbf7d0; }
-            .pill.warn { background:#fff7ed; color:#c2410c; border:1px solid #fed7aa; }
-            .pill.info { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+            .pill.ok { background:#f3f4f6; color:#374151; border:1px solid #d1d5db; }
+            .pill.warn { background:#f3f4f6; color:#374151; border:1px solid #d1d5db; }
+            .pill.info { background:#eef2ff; color:#334155; border:1px solid #cbd5e1; }
             .card-tools {
                 display: flex;
                 justify-content: flex-end;
                 gap: 8px;
                 margin-bottom: 18px;
                 padding-bottom: 12px;
-                border-bottom: 1px solid #eef2f7;
+                border-bottom: 1px solid var(--doc-soft);
                 flex-wrap: wrap;
             }
             .btn-export {
@@ -153,11 +163,146 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                 min-height: 36px;
             }
             .btn-export i { margin-right: 6px; }
+            .card-tools .btn-export[data-export-format="excel"] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .card-tools .btn-export[data-export-format="pdf"] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-entry {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin-bottom: 16px;
+            }
+            .module-entry-btn {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                padding: 9px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+                min-height: 36px;
+            }
+            .module-entry-btn.lista {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-entry-btn.form {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-modal {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                z-index: 1100;
+                padding: 22px;
+                overflow: auto;
+            }
+            .module-modal.open {
+                display: block;
+            }
+            .module-modal-window {
+                max-width: 1240px;
+                margin: 0 auto;
+                background: #ffffff;
+                border-radius: 12px;
+                border: 1px solid #e5e7eb;
+                box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+                overflow: hidden;
+            }
+            .module-modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 14px 16px;
+                border-bottom: 1px solid #e5e7eb;
+                background: var(--doc-primary);
+            }
+            .module-modal-header h4 {
+                margin: 0;
+                font-size: 14px;
+                color: #ffffff;
+            }
+            .module-modal-actions {
+                display: flex;
+                gap: 8px;
+            }
+            .module-modal-btn {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                padding: 7px 10px;
+                border-radius: 7px;
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .module-modal-btn[data-minimizar-modal] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-modal-btn[data-fechar-modal] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-modal-body {
+                padding: 14px;
+            }
+            .module-modal.minimized .module-modal-body {
+                display: none;
+            }
+            .module-tools {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                margin-bottom: 12px;
+                flex-wrap: wrap;
+            }
+            .module-tools .btn-export[data-export-format="excel"] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+            .module-tools .btn-export[data-export-format="pdf"] {
+                background: #ffffff;
+                border-color: #d1d5db;
+                color: #111827;
+            }
+
+            .seg-kpi.critico,
+            .seg-kpi.atencao,
+            .seg-kpi.auto,
+            .seg-kpi.manual,
+            .seg-row-critico,
+            .seg-row-atencao {
+                background: #f8fafc !important;
+                border-color: #e5e7eb !important;
+            }
+            .pill.danger {
+                background:#f3f4f6 !important;
+                color:#374151 !important;
+                border:1px solid #d1d5db !important;
+            }
 
             @media (max-width: 900px) {
                 .tool-actions,
                 .card-tools { width: 100%; justify-content: flex-start; }
                 .filter-container .form-group { min-width: 100%; }
+                .module-modal { padding: 8px; }
             }
         </style>
 
@@ -171,14 +316,6 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
         </div>
 
         <div class="card">
-            <div class="card-tools">
-                <button type="button" class="btn-export" data-export-format="excel">
-                    <i class="fas fa-file-excel"></i> Baixar Excel
-                </button>
-                <button type="button" class="btn-export" data-export-format="pdf">
-                    <i class="fas fa-file-pdf"></i> Baixar PDF
-                </button>
-            </div>
             <?php
                 if (isset($views[$view])) {
                     include __DIR__ . '/' . $views[$view];
@@ -219,6 +356,43 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                 var target = document.getElementById(targetId);
                 if (target) {
                     target.classList.remove('hidden');
+                }
+            });
+        });
+
+        document.querySelectorAll('[data-open-module-modal]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var id = btn.getAttribute('data-open-module-modal');
+                var modal = document.getElementById(id);
+                if (modal) {
+                    modal.classList.add('open');
+                }
+            });
+        });
+
+        document.querySelectorAll('[data-fechar-modal]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var modal = btn.closest('.module-modal');
+                if (!modal) return;
+                modal.classList.remove('open');
+                modal.classList.remove('minimized');
+            });
+        });
+
+        document.querySelectorAll('[data-minimizar-modal]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var modal = btn.closest('.module-modal');
+                if (!modal) return;
+                modal.classList.toggle('minimized');
+                btn.textContent = modal.classList.contains('minimized') ? 'Restaurar' : 'Minimizar';
+            });
+        });
+
+        document.querySelectorAll('.module-modal').forEach(function(modal) {
+            modal.addEventListener('click', function(ev) {
+                if (ev.target === modal) {
+                    modal.classList.remove('open');
+                    modal.classList.remove('minimized');
                 }
             });
         });

@@ -105,6 +105,9 @@ function formatarAcaoAuditoria($acao, $tabela) {
     if (stripos($acaoTxt, 'LOGIN:') === 0) {
         return ['acao' => 'Login', 'contexto' => trim((string)substr($acaoTxt, 6))];
     }
+    if (stripos($acaoTxt, 'LOGIN FALHOU:') === 0) {
+        return ['acao' => 'Login falhou', 'contexto' => trim((string)substr($acaoTxt, 14))];
+    }
 
     $map = [
         'Inseriu pedido de reparacao' => 'Adicionou pedido de reparacao',
@@ -136,7 +139,7 @@ function classificarTipoAcao($acaoOriginal, $acaoFormatada) {
     if (strpos($orig, 'acesso:') === 0 || strpos($fmt, 'visualizou modulo') === 0) {
         return 'Acesso';
     }
-    if (strpos($orig, 'login:') === 0 || strpos($fmt, 'login') === 0) {
+    if (strpos($orig, 'login:') === 0 || strpos($orig, 'login falhou:') === 0 || strpos($fmt, 'login') === 0) {
         return 'Sessao';
     }
     return 'Operacao';
@@ -169,10 +172,16 @@ try {
         throw new RuntimeException('Utilizador nao encontrado.');
     }
 
+    $emailUtilizador = trim((string)($utilizador['email'] ?? ''));
     $sqlAcoes = 'SELECT acao, tabela_afetada, data_hora
          FROM auditoria
-         WHERE usuario_id = :id';
+         WHERE (usuario_id = :id';
     $params = ['id' => $usuarioId];
+    if ($emailUtilizador !== '') {
+        $sqlAcoes .= ' OR (usuario_id IS NULL AND acao LIKE :acao_login_email)';
+        $params['acao_login_email'] = '%LOGIN FALHOU: ' . $emailUtilizador . '%';
+    }
+    $sqlAcoes .= ')';
 
     if ($dataFiltro !== '') {
         $dt = DateTime::createFromFormat('Y-m-d', $dataFiltro);

@@ -3,8 +3,13 @@ $ativos = [];
 $erro_ativos = null;
 
 $ativo_id = isset($_GET['ativo_id']) ? (int)$_GET['ativo_id'] : 0;
+$aplicar_filtro = isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1';
+$pesquisa = trim((string)($_GET['q'] ?? ''));
+$tipo_filtro = trim((string)($_GET['tipo'] ?? 'todos'));
+$mostrar_lista = $aplicar_filtro || $ativo_id > 0;
 $ativo_detalhe = null;
 $ativo_docs = [];
+$ativos_filtrados = [];
 
 function ativoFotoUrl(array $ativo): ?string {
     $id = (int)($ativo['id'] ?? 0);
@@ -52,6 +57,22 @@ try {
     ";
     $stmt = $pdo->query($sql);
     $ativos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($mostrar_lista) {
+        foreach ($ativos as $a) {
+            $textoBusca = strtolower(
+                (string)($a['matricula'] ?? '') . ' ' .
+                (string)($a['quadro'] ?? '') . ' ' .
+                (string)($a['marca'] ?? '') . ' ' .
+                (string)($a['equipamento'] ?? '')
+            );
+            $okBusca = $pesquisa === '' || strpos($textoBusca, strtolower($pesquisa)) !== false;
+            $okTipo = $tipo_filtro === 'todos' || stripos((string)($a['equipamento'] ?? ''), $tipo_filtro) !== false;
+            if ($okBusca && $okTipo) {
+                $ativos_filtrados[] = $a;
+            }
+        }
+    }
 
     if ($ativo_id > 0) {
         $stmtAtivo = $pdo->prepare("SELECT * FROM activos WHERE id = :id LIMIT 1");
@@ -299,38 +320,63 @@ try {
             <h3><i class="fas fa-truck"></i> Gestao de Ativos</h3>
             <p>Clique num ativo para ver foto e detalhes completos.</p>
         </div>
-        <div class="tool-actions">
-            <button type="button" class="btn-mode active" data-target="ativos-lista"><i class="fas fa-list"></i> Ver lista</button>
-            <button type="button" class="btn-mode" data-target="ativos-form"><i class="fas fa-plus"></i> Adicionar</button>
-        </div>
     </div>
 
-    <div class="filter-container">
-        <div class="form-group" style="flex:1;">
-            <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
-            <input type="text" placeholder="Matricula, chassi, marca...">
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-filter"></i> Filtrar por tipo</label>
-            <select>
-                <option value="todos">Todos</option>
-                <option>Bulldozer</option>
-                <option>Escavadora</option>
-                <option>Retroescavadora</option>
-            </select>
-        </div>
-        <button type="button" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
+    <div class="module-entry">
+        <button type="button" class="module-entry-btn lista" data-open-module-modal="ativos-modal-lista"><i class="fas fa-list"></i> Lista</button>
+        <button type="button" class="module-entry-btn form" data-open-module-modal="ativos-modal-form"><i class="fas fa-plus"></i> Adicionar</button>
     </div>
 
-    <div id="ativos-lista" class="panel-view">
+    <?php if (!$mostrar_lista): ?>
+        <div class="filter-container" style="margin-top:8px;">
+            <span style="font-size:12px; color:#6b7280;">A lista de ativos so aparece apos aplicar os filtros.</span>
+        </div>
+    <?php endif; ?>
+
+    <div class="module-modal <?= $mostrar_lista ? 'open' : '' ?>" id="ativos-modal-lista">
+        <div class="module-modal-window">
+            <div class="module-modal-header">
+                <h4>Ativos - Lista e Filtros</h4>
+                <div class="module-modal-actions">
+                    <button type="button" class="module-modal-btn" data-minimizar-modal>Minimizar</button>
+                    <button type="button" class="module-modal-btn" data-fechar-modal>Fechar</button>
+                </div>
+            </div>
+            <div class="module-modal-body">
+                <form class="filter-container" method="get" action="">
+                    <input type="hidden" name="view" value="ativos">
+                    <input type="hidden" name="aplicar" value="1">
+                    <div class="form-group" style="flex:1;">
+                        <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
+                        <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Matricula, chassi, marca...">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-filter"></i> Filtrar por tipo</label>
+                        <select name="tipo">
+                            <option value="todos" <?= $tipo_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                            <option value="Bulldozer" <?= $tipo_filtro === 'Bulldozer' ? 'selected' : '' ?>>Bulldozer</option>
+                            <option value="Escavadora" <?= $tipo_filtro === 'Escavadora' ? 'selected' : '' ?>>Escavadora</option>
+                            <option value="Retroescavadora" <?= $tipo_filtro === 'Retroescavadora' ? 'selected' : '' ?>>Retroescavadora</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
+                    <a href="?view=ativos" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;"><i class="fas fa-rotate-left" style="margin-right:6px;"></i> Limpar</a>
+                </form>
+                <div class="module-tools">
+                    <button type="button" class="btn-export" data-export-format="excel"><i class="fas fa-file-excel"></i> Baixar Excel</button>
+                    <button type="button" class="btn-export" data-export-format="pdf"><i class="fas fa-file-pdf"></i> Baixar PDF</button>
+                </div>
+
+                <div id="ativos-lista" class="panel-view <?= $mostrar_lista ? '' : 'hidden' ?>">
         <?php if ($ativo_detalhe !== null): ?>
             <?php
                 $base = $ativo_detalhe['base'];
                 $extra = $ativo_detalhe['extra'];
                 $foto = $ativo_detalhe['foto_url'];
                 $sigla = strtoupper(substr((string)($base['equipamento'] ?? 'AT'), 0, 2));
+                $filtrosUrl = '&aplicar=1&q=' . urlencode($pesquisa) . '&tipo=' . urlencode($tipo_filtro);
             ?>
-            <a class="ativo-modal-backdrop" href="?view=ativos" aria-label="Fechar detalhe do ativo"></a>
+            <a class="ativo-modal-backdrop" href="?view=ativos<?= $filtrosUrl ?>" aria-label="Fechar detalhe do ativo"></a>
             <div class="ativo-detalhe-wrap ativo-modal">
                 <div class="ativo-modal-head">
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -341,7 +387,7 @@ try {
                         <button type="button" class="btn-detail warn" id="btn-minimizar-ativo">
                             <i class="fas fa-window-minimize"></i> Minimizar
                         </button>
-                        <a href="?view=ativos" class="btn-detail">
+                        <a href="?view=ativos<?= $filtrosUrl ?>" class="btn-detail">
                             <i class="fas fa-times"></i> Fechar tela
                         </a>
                     </div>
@@ -476,22 +522,22 @@ try {
                         <tr>
                             <td colspan="19"><?= htmlspecialchars($erro_ativos) ?></td>
                         </tr>
-                    <?php elseif (empty($ativos)): ?>
+                    <?php elseif (empty($ativos_filtrados)): ?>
                         <tr>
-                            <td colspan="19">Sem registos na tabela activos.</td>
+                            <td colspan="19">Sem registos para os filtros aplicados.</td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($ativos as $ativo): ?>
+                        <?php foreach ($ativos_filtrados as $ativo): ?>
                             <?php $idA = (int)($ativo['id'] ?? 0); ?>
                             <tr>
                                 <td><?= htmlspecialchars((string)($ativo['id'] ?? '-')) ?></td>
                                 <td>
-                                    <a class="ativo-link" href="?view=ativos&ativo_id=<?= $idA ?>">
+                                    <a class="ativo-link" href="?view=ativos&ativo_id=<?= $idA ?>&aplicar=1&q=<?= urlencode($pesquisa) ?>&tipo=<?= urlencode($tipo_filtro) ?>">
                                         <?= htmlspecialchars((string)($ativo['equipamento'] ?? '-')) ?>
                                     </a>
                                 </td>
                                 <td>
-                                    <a class="ativo-link" href="?view=ativos&ativo_id=<?= $idA ?>">
+                                    <a class="ativo-link" href="?view=ativos&ativo_id=<?= $idA ?>&aplicar=1&q=<?= urlencode($pesquisa) ?>&tipo=<?= urlencode($tipo_filtro) ?>">
                                         <?= htmlspecialchars((string)($ativo['matricula'] ?? '-')) ?>
                                     </a>
                                 </td>
@@ -517,10 +563,22 @@ try {
                 </tbody>
             </table>
         </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div id="ativos-form" class="panel-view hidden">
-        <form class="form-grid" enctype="multipart/form-data">
+    <div class="module-modal" id="ativos-modal-form">
+        <div class="module-modal-window">
+            <div class="module-modal-header">
+                <h4>Ativos - Adicionar</h4>
+                <div class="module-modal-actions">
+                    <button type="button" class="module-modal-btn" data-minimizar-modal>Minimizar</button>
+                    <button type="button" class="module-modal-btn" data-fechar-modal>Fechar</button>
+                </div>
+            </div>
+            <div class="module-modal-body">
+                <form class="form-grid" enctype="multipart/form-data">
             <div class="section-title">Informacao Base e Alocacao</div>
             <div class="form-group"><label>Matricula / Codigo Interno</label><input type="text" placeholder="Ex: ABC-123-MC"></div>
 
@@ -561,6 +619,8 @@ try {
             <div class="form-group"><label>Taxas de Radio</label><div class="doc-control"><input type="date"><label class="btn-upload"><i class="fas fa-paperclip"></i> Anexo <input type="file" style="display:none"></label></div></div>
             <div class="form-group"><label>Manifestos</label><div class="doc-control"><input type="date"><label class="btn-upload"><i class="fas fa-paperclip"></i> Anexo <input type="file" style="display:none"></label></div></div>
             <div style="grid-column: span 3;"><button class="btn-save">Salvar Registro</button></div>
-        </form>
+                </form>
+            </div>
+        </div>
     </div>
 </div>

@@ -1,274 +1,403 @@
 <?php
 $pessoal_lista = [];
 $erro_pessoal = null;
-$tipos_documento = [];
 
+$perfil_filtro = trim((string)($_GET['perfil'] ?? ''));
 $pesquisa = trim((string)($_GET['q'] ?? ''));
-$tipo_documento_filtro = trim((string)($_GET['tipo_documento'] ?? 'todos'));
-$perfil_filtro = trim((string)($_GET['perfil'] ?? 'todos'));
-$subfiltro_filtro = trim((string)($_GET['subfiltro'] ?? 'todos'));
+$cargo_filtro = trim((string)($_GET['cargo'] ?? 'todos'));
+$aplicar_filtro = isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1';
 
-$subfiltros_por_perfil = [
-    'todos' => ['todos' => 'Todos'],
-    'motorista' => [
-        'todos' => 'Todos',
-        'c_carta' => 'C. Carta (Conducao)',
-        'c_profissional' => 'C. Profissional',
-        'c_pesado' => 'C. Pesado',
-        'c_mercadorias' => 'C. Mercadorias',
+$cargos_por_perfil = [
+    'oficina' => [
+        'Electricista Auto',
+        'Pintor Auto',
+        'Mecanico',
+        'Ajudante Mecanico',
+        'Gestor da Oficina',
     ],
-    'mecanico' => [
-        'todos' => 'Todos',
-        'c_formacao' => 'C. Formacao Tecnica',
-        'c_certificacao' => 'C. Certificacao',
-        'c_seguranca' => 'C. Seguranca',
-    ],
-    'operador' => [
-        'todos' => 'Todos',
-        'c_maquinas' => 'C. Maquinas/Equipamentos',
-        'c_elevacao' => 'C. Elevacao',
-        'c_grua' => 'C. Grua/Guindaste',
+    'transporte' => [
+        'Motorista',
+        'Operador de Maquinas/Motorista',
+        'Operador de Maquinas',
+        'Ajudante Camiao',
+        'Motorista Mini Bus',
+        'Gestor de Transporte',
+        'Riger',
     ],
 ];
 
-function normalizarTextoPessoal($texto) {
-    $v = strtolower(trim((string)$texto));
-    $de = ['á','à','ã','â','ä','é','è','ê','ë','í','ì','î','ï','ó','ò','õ','ô','ö','ú','ù','û','ü','ç'];
-    $para = ['a','a','a','a','a','e','e','e','e','i','i','i','i','o','o','o','o','o','u','u','u','u','c'];
-    return str_replace($de, $para, $v);
+if (!isset($cargos_por_perfil[$perfil_filtro])) {
+    $perfil_filtro = '';
 }
 
-function classificarPerfilPessoal($cargoId, $tipoDocumento) {
-    $base = normalizarTextoPessoal((string)$cargoId . ' ' . (string)$tipoDocumento);
-
-    if (strpos($base, 'motor') !== false || strpos($base, 'conduc') !== false || strpos($base, 'carta') !== false) {
-        return 'motorista';
-    }
-    if (strpos($base, 'mecan') !== false) {
-        return 'mecanico';
-    }
-    if (
-        strpos($base, 'operador') !== false ||
-        strpos($base, 'maquina') !== false ||
-        strpos($base, 'escav') !== false ||
-        strpos($base, 'grua') !== false ||
-        strpos($base, 'guindaste') !== false
-    ) {
-        return 'operador';
-    }
-
-    return 'outros';
+if ($perfil_filtro !== '' && $cargo_filtro !== 'todos' && !in_array($cargo_filtro, $cargos_por_perfil[$perfil_filtro], true)) {
+    $cargo_filtro = 'todos';
 }
 
-function correspondeSubfiltroPessoal($perfil, $subfiltro, $tipoDocumento) {
-    if ($subfiltro === '' || $subfiltro === 'todos') {
-        return true;
-    }
+if ($aplicar_filtro && $perfil_filtro !== '') {
+    try {
+        $where = [];
+        $params = [];
 
-    $doc = normalizarTextoPessoal($tipoDocumento);
-
-    if ($perfil === 'motorista') {
-        if ($subfiltro === 'c_carta') return strpos($doc, 'carta') !== false || strpos($doc, 'conduc') !== false;
-        if ($subfiltro === 'c_profissional') return strpos($doc, 'profissional') !== false;
-        if ($subfiltro === 'c_pesado') return strpos($doc, 'pesado') !== false;
-        if ($subfiltro === 'c_mercadorias') return strpos($doc, 'mercadoria') !== false || strpos($doc, 'cargas') !== false;
-        return true;
-    }
-
-    if ($perfil === 'mecanico') {
-        if ($subfiltro === 'c_formacao') return strpos($doc, 'formacao') !== false || strpos($doc, 'treinamento') !== false;
-        if ($subfiltro === 'c_certificacao') return strpos($doc, 'certific') !== false || strpos($doc, 'qualific') !== false;
-        if ($subfiltro === 'c_seguranca') return strpos($doc, 'seguranca') !== false || strpos($doc, 'hse') !== false;
-        return true;
-    }
-
-    if ($perfil === 'operador') {
-        if ($subfiltro === 'c_maquinas') return strpos($doc, 'maquina') !== false || strpos($doc, 'equipamento') !== false || strpos($doc, 'operador') !== false;
-        if ($subfiltro === 'c_elevacao') return strpos($doc, 'elevacao') !== false || strpos($doc, 'plataforma') !== false;
-        if ($subfiltro === 'c_grua') return strpos($doc, 'grua') !== false || strpos($doc, 'guindaste') !== false || strpos($doc, 'ponte rolante') !== false;
-        return true;
-    }
-
-    return true;
-}
-
-if (!isset($subfiltros_por_perfil[$perfil_filtro])) {
-    $perfil_filtro = 'todos';
-}
-if (!isset($subfiltros_por_perfil[$perfil_filtro][$subfiltro_filtro])) {
-    $subfiltro_filtro = 'todos';
-}
-
-try {
-    $sqlTipos = "
-        SELECT DISTINCT tipo_documento
-        FROM pessoal_documentos
-        WHERE tipo_documento IS NOT NULL
-          AND tipo_documento <> ''
-        ORDER BY tipo_documento ASC
-    ";
-    $stmtTipos = $pdo->query($sqlTipos);
-    $tipos_documento = $stmtTipos->fetchAll(PDO::FETCH_COLUMN);
-
-    $where = [];
-    $params = [];
-
-    if ($pesquisa !== '') {
-        $where[] = "(p.nome LIKE :pesquisa OR CAST(p.numero AS CHAR) LIKE :pesquisa OR CAST(p.cargo_id AS CHAR) LIKE :pesquisa OR pd.tipo_documento LIKE :pesquisa)";
-        $params[':pesquisa'] = '%' . $pesquisa . '%';
-    }
-
-    if ($tipo_documento_filtro !== '' && $tipo_documento_filtro !== 'todos') {
-        $where[] = "pd.tipo_documento = :tipo_documento";
-        $params[':tipo_documento'] = $tipo_documento_filtro;
-    }
-
-    $sql = "
-        SELECT
-            p.id AS pessoal_id,
-            p.numero,
-            p.nome,
-            p.cargo_id,
-            p.estado,
-            pd.tipo_documento,
-            pd.data_emissao,
-            pd.data_vencimento,
-            pd.created_at AS documento_created_at
-        FROM pessoal p
-        LEFT JOIN pessoal_documentos pd
-            ON pd.pessoal_id = p.id
-    ";
-
-    if (!empty($where)) {
-        $sql .= " WHERE " . implode(" AND ", $where);
-    }
-
-    $sql .= " ORDER BY p.id ASC, pd.id ASC";
-
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $resultado = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    foreach ($resultado as $item) {
-        $perfilLinha = classificarPerfilPessoal($item['cargo_id'] ?? '', $item['tipo_documento'] ?? '');
-
-        if ($perfil_filtro !== 'todos' && $perfilLinha !== $perfil_filtro) {
-            continue;
+        if ($pesquisa !== '') {
+            $where[] = "(p.nome LIKE :pesquisa OR CAST(p.numero AS CHAR) LIKE :pesquisa OR c.nome LIKE :pesquisa OR pd.tipo_documento LIKE :pesquisa)";
+            $params[':pesquisa'] = '%' . $pesquisa . '%';
         }
 
-        if (!correspondeSubfiltroPessoal($perfil_filtro, $subfiltro_filtro, (string)($item['tipo_documento'] ?? ''))) {
-            continue;
+        $cargos_permitidos = $cargos_por_perfil[$perfil_filtro];
+        if (!empty($cargos_permitidos)) {
+            $placeholders = [];
+            foreach ($cargos_permitidos as $idx => $cargo_nome) {
+                $ph = ':cargo_perfil_' . $idx;
+                $placeholders[] = $ph;
+                $params[$ph] = $cargo_nome;
+            }
+            $where[] = 'c.nome IN (' . implode(', ', $placeholders) . ')';
         }
 
-        $item['perfil_classificado'] = $perfilLinha;
-        $pessoal_lista[] = $item;
+        if ($cargo_filtro !== '' && $cargo_filtro !== 'todos') {
+            $where[] = 'c.nome = :cargo_especifico';
+            $params[':cargo_especifico'] = $cargo_filtro;
+        }
+
+        $sql = "
+            SELECT
+                p.id AS pessoal_id,
+                p.numero,
+                p.nome,
+                c.nome AS cargo_nome,
+                p.estado,
+                pd.tipo_documento,
+                pd.data_emissao,
+                pd.data_vencimento,
+                pd.created_at AS documento_created_at
+            FROM pessoal p
+            LEFT JOIN cargos c
+                ON c.id = p.cargo_id
+            LEFT JOIN pessoal_documentos pd
+                ON pd.pessoal_id = p.id
+        ";
+
+        if (!empty($where)) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+
+        $sql .= ' ORDER BY p.nome ASC, pd.id ASC';
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $pessoal_lista = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        $erro_pessoal = 'Nao foi possivel carregar os funcionarios.';
     }
-} catch (Throwable $e) {
-    $erro_pessoal = 'Nao foi possivel carregar os funcionarios.';
 }
 
-function labelPerfilPessoal($perfil) {
-    if ($perfil === 'motorista') return 'Motorista';
-    if ($perfil === 'mecanico') return 'Mecanico';
-    if ($perfil === 'operador') return 'Operador';
-    return 'Outros';
+function tituloPerfilPessoal(string $perfil): string {
+    if ($perfil === 'oficina') {
+        return 'Oficina';
+    }
+    if ($perfil === 'transporte') {
+        return 'Transporte';
+    }
+    return 'Perfil';
 }
 ?>
 <div data-mode-scope>
+    <style>
+        .pessoal-entry {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .btn-entry {
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+            color: #111827;
+            padding: 9px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            min-height: 36px;
+        }
+        .btn-entry[data-open-pessoal-modal="oficina"] {
+            background: #dbeafe;
+            color: #1e3a8a;
+            border-color: #93c5fd;
+        }
+        .btn-entry[data-open-pessoal-modal="transporte"] {
+            background: #ffedd5;
+            color: #9a3412;
+            border-color: #fdba74;
+        }
+        .pessoal-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            z-index: 1100;
+            padding: 22px;
+            overflow: auto;
+        }
+        .pessoal-modal.open {
+            display: block;
+        }
+        .pessoal-modal-window {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+            overflow: hidden;
+        }
+        .pessoal-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f8fafc;
+        }
+        .pessoal-modal.perfil-oficina .pessoal-modal-header {
+            background: #1d4ed8;
+            border-bottom-color: #1e40af;
+        }
+        .pessoal-modal.perfil-transporte .pessoal-modal-header {
+            background: #ea580c;
+            border-bottom-color: #c2410c;
+        }
+        .pessoal-modal-header h4 {
+            margin: 0;
+            font-size: 14px;
+            color: #111827;
+        }
+        .pessoal-modal.perfil-oficina .pessoal-modal-header h4,
+        .pessoal-modal.perfil-transporte .pessoal-modal-header h4 {
+            color: #ffffff;
+        }
+        .pessoal-modal-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .pessoal-modal-btn {
+            border: 1px solid #d1d5db;
+            background: #ffffff;
+            color: #111827;
+            padding: 7px 10px;
+            border-radius: 7px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .pessoal-modal-btn[data-minimizar-modal] {
+            background: #fef3c7;
+            border-color: #fbbf24;
+            color: #92400e;
+        }
+        .pessoal-modal-btn[data-fechar-modal] {
+            background: #fee2e2;
+            border-color: #fca5a5;
+            color: #b91c1c;
+        }
+        .pessoal-modal-body {
+            padding: 14px;
+        }
+        .pessoal-modal.minimized .pessoal-modal-body {
+            display: none;
+        }
+        .pessoal-tools {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .pessoal-tools .btn-export[data-export-format="excel"] {
+            background: #dcfce7;
+            border-color: #86efac;
+            color: #166534;
+        }
+        .pessoal-tools .btn-export[data-export-format="pdf"] {
+            background: #fee2e2;
+            border-color: #fca5a5;
+            color: #991b1b;
+        }
+        @media (max-width: 900px) {
+            .pessoal-modal {
+                padding: 8px;
+            }
+        }
+    </style>
+
     <div class="tool-header">
         <div class="tool-title">
             <h3><i class="fas fa-users"></i> Pessoal</h3>
-            <p>O cadastro de pessoas e feito no modulo RH. Nesta area documental, apenas consultamos e filtramos documentos.</p>
-        </div>
-        <div class="tool-actions">
-            <a href="/vilcon-systemon/app/modules/rh/index.php" class="btn-mode" style="text-decoration:none;display:inline-flex;align-items:center;">
-                <i class="fas fa-arrow-up-right-from-square"></i> Ir para RH
-            </a>
+            <p>Selecione Oficina ou Transporte para abrir a tela de filtragem e lista documental.</p>
         </div>
     </div>
 
-    <form class="filter-container" method="get" action="">
-        <input type="hidden" name="view" value="pessoal">
-        <div class="form-group" style="flex:1;">
-            <label><i class="fas fa-magnifying-glass"></i> Pesquisar</label>
-            <input type="text" name="q" value="<?= htmlspecialchars($pesquisa) ?>" placeholder="Nome, numero, cargo, tipo documento...">
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-users"></i> Perfil</label>
-            <select name="perfil">
-                <option value="todos" <?= $perfil_filtro === 'todos' ? 'selected' : '' ?>>Todos</option>
-                <option value="mecanico" <?= $perfil_filtro === 'mecanico' ? 'selected' : '' ?>>Mecanicos</option>
-                <option value="motorista" <?= $perfil_filtro === 'motorista' ? 'selected' : '' ?>>Motoristas</option>
-                <option value="operador" <?= $perfil_filtro === 'operador' ? 'selected' : '' ?>>Operadores</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-layer-group"></i> Subfiltro Perfil</label>
-            <select name="subfiltro">
-                <?php foreach (($subfiltros_por_perfil[$perfil_filtro] ?? ['todos' => 'Todos']) as $k => $label): ?>
-                    <option value="<?= htmlspecialchars((string)$k) ?>" <?= $subfiltro_filtro === (string)$k ? 'selected' : '' ?>>
-                        <?= htmlspecialchars((string)$label) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <div class="form-group">
-            <label><i class="fas fa-filter"></i> Filtrar documento</label>
-            <select name="tipo_documento">
-                <option value="todos">Todos</option>
-                <?php foreach ($tipos_documento as $tipo): ?>
-                    <option value="<?= htmlspecialchars((string)$tipo) ?>" <?= $tipo_documento_filtro === (string)$tipo ? 'selected' : '' ?>>
-                        <?= htmlspecialchars((string)$tipo) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <button type="submit" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
-        <a href="?view=pessoal" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;"><i class="fas fa-rotate-left" style="margin-right:6px;"></i> Limpar</a>
-    </form>
-
-    <div id="pessoal-lista" class="panel-view">
-        <table class="list-table">
-            <thead>
-                <tr>
-                    <th>Numero</th>
-                    <th>Nome</th>
-                    <th>Perfil</th>
-                    <th>Tipo Documento</th>
-                    <th>Data Emissao</th>
-                    <th>Data Vencimento</th>
-                    <th>Criado Em</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ($erro_pessoal !== null): ?>
-                    <tr>
-                        <td colspan="7"><?= htmlspecialchars($erro_pessoal) ?></td>
-                    </tr>
-                <?php elseif (empty($pessoal_lista)): ?>
-                    <tr>
-                        <td colspan="7">Sem registos para os filtros aplicados.</td>
-                    </tr>
-                <?php else: ?>
-                    <?php foreach ($pessoal_lista as $item): ?>
-                        <?php
-                        $emissao = trim((string)($item['data_emissao'] ?? ''));
-                        $vencimento = trim((string)($item['data_vencimento'] ?? ''));
-                        $criadoEm = trim((string)($item['documento_created_at'] ?? ''));
-                        $perfilLinha = (string)($item['perfil_classificado'] ?? 'outros');
-                        ?>
-                        <tr>
-                            <td><?= htmlspecialchars((string)($item['numero'] ?? '-')) ?></td>
-                            <td><?= htmlspecialchars((string)($item['nome'] ?? '-')) ?></td>
-                            <td><?= htmlspecialchars(labelPerfilPessoal($perfilLinha)) ?></td>
-                            <td><?= htmlspecialchars((string)($item['tipo_documento'] ?? '-')) ?></td>
-                            <td><?= htmlspecialchars($emissao !== '' ? $emissao : '-') ?></td>
-                            <td><?= htmlspecialchars($vencimento !== '' ? $vencimento : '-') ?></td>
-                            <td><?= htmlspecialchars($criadoEm !== '' ? $criadoEm : '-') ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
+    <div class="pessoal-entry">
+        <button type="button" class="btn-entry" data-open-pessoal-modal="oficina"><i class="fas fa-screwdriver-wrench"></i> Oficina</button>
+        <button type="button" class="btn-entry" data-open-pessoal-modal="transporte"><i class="fas fa-truck"></i> Transporte</button>
     </div>
+
+    <?php if (!$aplicar_filtro): ?>
+        <div class="filter-container" style="margin-top:8px;">
+            <span style="font-size:12px; color:#6b7280;">A lista de funcionarios so aparece apos aplicar os filtros dentro de Oficina ou Transporte.</span>
+        </div>
+    <?php endif; ?>
+
+    <?php foreach ($cargos_por_perfil as $perfil => $listaCargos): ?>
+        <?php
+            $modalAberto = ($perfil_filtro === $perfil && $aplicar_filtro);
+            $cargoAtual = ($perfil_filtro === $perfil) ? $cargo_filtro : 'todos';
+            $pesquisaAtual = ($perfil_filtro === $perfil) ? $pesquisa : '';
+            $mostrarLista = ($perfil_filtro === $perfil && $aplicar_filtro);
+        ?>
+        <div class="pessoal-modal perfil-<?= htmlspecialchars($perfil) ?> <?= $modalAberto ? 'open' : '' ?>" id="pessoal-modal-<?= htmlspecialchars($perfil) ?>">
+            <div class="pessoal-modal-window">
+                <div class="pessoal-modal-header">
+                    <h4>Documental Pessoal - <?= htmlspecialchars(tituloPerfilPessoal($perfil)) ?></h4>
+                    <div class="pessoal-modal-actions">
+                        <button type="button" class="pessoal-modal-btn" data-minimizar-modal>Minimizar</button>
+                        <button type="button" class="pessoal-modal-btn" data-fechar-modal>Fechar</button>
+                    </div>
+                </div>
+
+                <div class="pessoal-modal-body">
+                    <form class="filter-container" method="get" action="">
+                        <input type="hidden" name="view" value="pessoal">
+                        <input type="hidden" name="perfil" value="<?= htmlspecialchars($perfil) ?>">
+                        <input type="hidden" name="aplicar" value="1">
+
+                        <div class="form-group" style="flex:1;">
+                            <label><i class="fas fa-magnifying-glass"></i> Pesquisa</label>
+                            <input type="text" name="q" value="<?= htmlspecialchars($pesquisaAtual) ?>" placeholder="Nome, numero, cargo, tipo documento...">
+                        </div>
+
+                        <div class="form-group">
+                            <label><i class="fas fa-briefcase"></i> Cargo</label>
+                            <select name="cargo">
+                                <option value="todos">Todos os cargos</option>
+                                <?php foreach ($listaCargos as $cargoNome): ?>
+                                    <option value="<?= htmlspecialchars($cargoNome) ?>" <?= $cargoAtual === $cargoNome ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($cargoNome) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <button type="submit" class="btn-save"><i class="fas fa-sliders"></i> Aplicar filtro</button>
+                        <a href="?view=pessoal&perfil=<?= urlencode($perfil) ?>" class="btn-save" style="text-decoration:none;display:inline-flex;align-items:center;"><i class="fas fa-rotate-left" style="margin-right:6px;"></i> Limpar</a>
+                    </form>
+
+                    <div class="pessoal-tools">
+                        <button type="button" class="btn-export" data-export-format="excel">
+                            <i class="fas fa-file-excel"></i> Baixar Excel
+                        </button>
+                        <button type="button" class="btn-export" data-export-format="pdf">
+                            <i class="fas fa-file-pdf"></i> Baixar PDF
+                        </button>
+                    </div>
+
+                    <div class="panel-view <?= $mostrarLista ? '' : 'hidden' ?>">
+                        <table class="list-table">
+                            <thead>
+                                <tr>
+                                    <th>Numero</th>
+                                    <th>Nome</th>
+                                    <th>Cargo</th>
+                                    <th>Tipo Documento</th>
+                                    <th>Data Emissao</th>
+                                    <th>Data Vencimento</th>
+                                    <th>Criado Em</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($mostrarLista && $erro_pessoal !== null): ?>
+                                    <tr>
+                                        <td colspan="7"><?= htmlspecialchars($erro_pessoal) ?></td>
+                                    </tr>
+                                <?php elseif ($mostrarLista && empty($pessoal_lista)): ?>
+                                    <tr>
+                                        <td colspan="7">Sem registos para os filtros aplicados.</td>
+                                    </tr>
+                                <?php elseif ($mostrarLista): ?>
+                                    <?php foreach ($pessoal_lista as $item): ?>
+                                        <?php
+                                        $emissao = trim((string)($item['data_emissao'] ?? ''));
+                                        $vencimento = trim((string)($item['data_vencimento'] ?? ''));
+                                        $criadoEm = trim((string)($item['documento_created_at'] ?? ''));
+                                        ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars((string)($item['numero'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars((string)($item['nome'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars((string)($item['cargo_nome'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars((string)($item['tipo_documento'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars($emissao !== '' ? $emissao : '-') ?></td>
+                                            <td><?= htmlspecialchars($vencimento !== '' ? $vencimento : '-') ?></td>
+                                            <td><?= htmlspecialchars($criadoEm !== '' ? $criadoEm : '-') ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="7">Aplique os filtros para ver a lista de funcionarios.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    <?php endforeach; ?>
 </div>
+
+<script>
+(function() {
+    function abrirModal(id) {
+        var modal = document.getElementById(id);
+        if (!modal) return;
+        modal.classList.add('open');
+    }
+
+    function fecharModal(modal) {
+        if (!modal) return;
+        modal.classList.remove('open');
+        modal.classList.remove('minimized');
+    }
+
+    document.querySelectorAll('[data-open-pessoal-modal]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var perfil = btn.getAttribute('data-open-pessoal-modal');
+            abrirModal('pessoal-modal-' + perfil);
+        });
+    });
+
+    document.querySelectorAll('[data-fechar-modal]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            fecharModal(btn.closest('.pessoal-modal'));
+        });
+    });
+
+    document.querySelectorAll('[data-minimizar-modal]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var modal = btn.closest('.pessoal-modal');
+            if (!modal) return;
+            modal.classList.toggle('minimized');
+            btn.textContent = modal.classList.contains('minimized') ? 'Restaurar' : 'Minimizar';
+        });
+    });
+
+    document.querySelectorAll('.pessoal-modal').forEach(function(modal) {
+        modal.addEventListener('click', function(ev) {
+            if (ev.target === modal) {
+                fecharModal(modal);
+            }
+        });
+    });
+})();
+</script>

@@ -2,6 +2,7 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+require_once __DIR__ . '/user_profile_widget.php';
 ?>
 <!DOCTYPE html>
 <html lang="pt">
@@ -60,3 +61,4 @@ if (session_status() === PHP_SESSION_NONE) {
     </style>
 </head>
 <body>
+<?php renderUserProfileWidget(); ?>

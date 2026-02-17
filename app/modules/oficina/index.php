@@ -8,48 +8,75 @@ if (!isset($_SESSION['usuario_id'])) {
 }
 
 /* =========================
-   CONTROLES DO MÃ“DULO OFICINA
+   CONTROLES DO MÓDULO OFICINA
 ========================= */
 $tab = $_GET['tab'] ?? 'oficina';
 $view = $_GET['view'] ?? 'ordens_servico';
-$mode = $_GET['mode'] ?? 'list';
+$mode = $_GET['mode'] ?? 'home';
+if (!in_array($mode, ['home', 'list', 'form'], true)) {
+    $mode = 'home';
+}
+if ($view === 'relatorios') {
+    $mode = 'list';
+}
+$aplicar_lista = (isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1') || $view === 'relatorios';
 
 $proximo_os = "OS-OF-" . date('Y') . "-0001";
 
 $ordens_servico = [];
 $pedidos_reparacao = [];
+$requisicoes_oficina = [];
 $manutencoes = [];
 $avarias = [];
 $relatorio_resumo = [];
 $relatorio_historico = [];
 $relatorio_tendencia_mensal = [];
 $relatorio_top_avarias = [];
+$relatorio_resumo_periodo = [];
+$relatorio_atividades_periodo = [];
 $relatorio_filtros = [
     'matricula' => '',
     'data_inicio' => '',
     'data_fim' => '',
+    'periodo' => 'mensal',
+    'data_referencia' => date('Y-m-d'),
+    'completo' => false,
 ];
 
 $erro_os = null;
 $erro_pedidos = null;
+$erro_requisicoes = null;
 $erro_manutencao = null;
 $erro_avarias = null;
 $erro_relatorios = null;
 
 $msg_os = null;
 $msg_pedidos = null;
+$msg_requisicoes = null;
 $msg_manutencao = null;
 $msg_avarias = null;
 $msg_assiduidade = null;
 
 $erro_assiduidade = null;
+$filtro_pedidos_datas = ['inicio' => '', 'fim' => ''];
+$filtro_os_datas = ['inicio' => '', 'fim' => ''];
+$hojeOficina = new DateTimeImmutable('today');
+$diaSemanaOficina = (int)$hojeOficina->format('N');
+$inicioSemanaOficina = $hojeOficina->modify('-' . ($diaSemanaOficina - 1) . ' days')->format('Y-m-d');
+$fimSemanaOficina = $hojeOficina->format('Y-m-d');
 $data_assiduidade = trim((string)($_GET['data_assiduidade'] ?? date('Y-m-d')));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_assiduidade)) {
     $data_assiduidade = date('Y-m-d');
 }
+$assiduidade_periodo = strtolower(trim((string)($_GET['ap_periodo'] ?? 'diario')));
+if (!in_array($assiduidade_periodo, ['diario', 'semanal', 'mensal'], true)) {
+    $assiduidade_periodo = 'diario';
+}
+$assiduidade_intervalo = ['inicio' => $data_assiduidade, 'fim' => $data_assiduidade, 'label' => 'Diario'];
 $colaboradores_oficina = [];
 $presencas_oficina = [];
 $presencas_por_colaborador = [];
+$assiduidade_lista_preenchida = false;
 
 function normalizarStatusPedido($valor) {
     $v = strtolower(trim((string)$valor));
@@ -66,6 +93,23 @@ function statusPedidoLabel($statusNormalizado) {
     if ($statusNormalizado === 'em_andamento') return 'Em andamento';
     if ($statusNormalizado === 'resolvido') return 'Resolvido';
     if ($statusNormalizado === 'logistica_externa') return 'Aguardando Logistica Externa';
+    return 'Pendente';
+}
+
+function normalizarStatusRequisicaoOficina(string $valor): string {
+    $v = strtolower(trim($valor));
+    if ($v === '' || $v === 'pendente') return 'pendente';
+    if ($v === 'aprovada' || $v === 'aprovado') return 'aprovada';
+    if ($v === 'negada' || $v === 'negado' || $v === 'recusada') return 'negada';
+    if ($v === 'cancelada') return 'cancelada';
+    return 'pendente';
+}
+
+function labelStatusRequisicaoOficina(string $status): string {
+    $s = normalizarStatusRequisicaoOficina($status);
+    if ($s === 'aprovada') return 'Aprovada';
+    if ($s === 'negada') return 'Negada';
+    if ($s === 'cancelada') return 'Cancelada';
     return 'Pendente';
 }
 
@@ -90,6 +134,7 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 data_pedido DATE NOT NULL,
                 prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
                 status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
+                custo_estimado DECIMAL(14,2) NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
@@ -105,6 +150,7 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 data_manutencao DATE NOT NULL,
                 prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
                 status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
+                custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
@@ -121,6 +167,7 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 data_abertura DATETIME NOT NULL,
                 prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
                 status_os VARCHAR(30) NOT NULL DEFAULT 'Aberto',
+                custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
@@ -145,6 +192,10 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 data_presenca DATE NOT NULL,
                 pessoal_id INT NOT NULL,
                 status_presenca ENUM('Presente','Atraso','Falta','Dispensa') NOT NULL DEFAULT 'Presente',
+                assinou_entrada TINYINT(1) NOT NULL DEFAULT 0,
+                assinou_saida TINYINT(1) NOT NULL DEFAULT 0,
+                hora_entrada TIME NULL,
+                hora_saida TIME NULL,
                 observacoes VARCHAR(255) NULL,
                 enviado_rh TINYINT(1) NOT NULL DEFAULT 0,
                 enviado_em DATETIME NULL,
@@ -153,6 +204,30 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 INDEX idx_data (data_presenca),
                 INDEX idx_pessoal (pessoal_id),
                 INDEX idx_enviado (enviado_rh)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS logistica_requisicoes (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo VARCHAR(40) UNIQUE,
+                origem VARCHAR(150) NOT NULL,
+                destino VARCHAR(150) NOT NULL,
+                item VARCHAR(180) NOT NULL,
+                quantidade DECIMAL(12,2) NOT NULL DEFAULT 0,
+                unidade VARCHAR(20) NOT NULL DEFAULT 'un',
+                prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
+                status VARCHAR(20) NOT NULL DEFAULT 'Pendente',
+                data_requisicao DATE NOT NULL,
+                responsavel VARCHAR(150) NULL,
+                observacoes TEXT NULL,
+                origem_modulo VARCHAR(40) NOT NULL DEFAULT 'logistica',
+                categoria_item VARCHAR(40) NULL,
+                valor_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+                custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+                decidido_por VARCHAR(150) NULL,
+                decidido_em DATETIME NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
     } catch (PDOException $e) {
@@ -189,6 +264,28 @@ function garantirEstruturasOficina(PDO $pdo): void {
         $garantirColuna($pdo, 'oficina_ordens_servico', 'data_abertura', 'DATETIME NULL');
         $garantirColuna($pdo, 'oficina_ordens_servico', 'prioridade', "VARCHAR(20) NOT NULL DEFAULT 'Normal'");
         $garantirColuna($pdo, 'oficina_ordens_servico', 'status_os', "VARCHAR(30) NOT NULL DEFAULT 'Aberto'");
+        $garantirColuna($pdo, 'oficina_ordens_servico', 'custo_total', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+
+        // Compatibilidade total: garante schema esperado para inserts manuais da Oficina
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'ativo_matricula', "VARCHAR(50) NOT NULL DEFAULT ''");
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'tipo_equipamento', "VARCHAR(150) NOT NULL DEFAULT ''");
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'descricao_avaria', 'TEXT NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'localizacao', 'VARCHAR(150) NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'solicitante', 'VARCHAR(150) NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'data_pedido', 'DATE NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'prioridade', "VARCHAR(20) NOT NULL DEFAULT 'Normal'");
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'status', "VARCHAR(30) NOT NULL DEFAULT 'Pendente'");
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'custo_estimado', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+
+        $garantirColuna($pdo, 'oficina_manutencoes', 'ativo_matricula', "VARCHAR(50) NOT NULL DEFAULT ''");
+        $garantirColuna($pdo, 'oficina_manutencoes', 'tipo_equipamento', "VARCHAR(150) NOT NULL DEFAULT ''");
+        $garantirColuna($pdo, 'oficina_manutencoes', 'tipo_manutencao', "VARCHAR(80) NOT NULL DEFAULT 'Preventiva'");
+        $garantirColuna($pdo, 'oficina_manutencoes', 'descricao_servico', 'TEXT NULL');
+        $garantirColuna($pdo, 'oficina_manutencoes', 'solicitante', 'VARCHAR(150) NULL');
+        $garantirColuna($pdo, 'oficina_manutencoes', 'data_manutencao', 'DATE NULL');
+        $garantirColuna($pdo, 'oficina_manutencoes', 'prioridade', "VARCHAR(20) NOT NULL DEFAULT 'Normal'");
+        $garantirColuna($pdo, 'oficina_manutencoes', 'status', "VARCHAR(30) NOT NULL DEFAULT 'Pendente'");
+        $garantirColuna($pdo, 'oficina_manutencoes', 'custo_total', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
 
         $garantirColuna($pdo, 'oficina_historico_avarias', 'ativo_matricula', "VARCHAR(50) NOT NULL DEFAULT ''");
         $garantirColuna($pdo, 'oficina_historico_avarias', 'tipo_equipamento', "VARCHAR(150) NOT NULL DEFAULT ''");
@@ -197,6 +294,18 @@ function garantirEstruturasOficina(PDO $pdo): void {
         $garantirColuna($pdo, 'oficina_historico_avarias', 'data_evento', 'DATE NULL');
         $garantirColuna($pdo, 'oficina_historico_avarias', 'origem_tipo', 'VARCHAR(40) NULL');
         $garantirColuna($pdo, 'oficina_historico_avarias', 'origem_id', 'INT NULL');
+
+        $garantirColuna($pdo, 'oficina_presencas_rh', 'assinou_entrada', 'TINYINT(1) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'oficina_presencas_rh', 'assinou_saida', 'TINYINT(1) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'oficina_presencas_rh', 'hora_entrada', 'TIME NULL');
+        $garantirColuna($pdo, 'oficina_presencas_rh', 'hora_saida', 'TIME NULL');
+
+        $garantirColuna($pdo, 'logistica_requisicoes', 'origem_modulo', "VARCHAR(40) NOT NULL DEFAULT 'logistica'");
+        $garantirColuna($pdo, 'logistica_requisicoes', 'categoria_item', 'VARCHAR(40) NULL');
+        $garantirColuna($pdo, 'logistica_requisicoes', 'valor_total', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'logistica_requisicoes', 'custo_total', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'logistica_requisicoes', 'decidido_por', 'VARCHAR(150) NULL');
+        $garantirColuna($pdo, 'logistica_requisicoes', 'decidido_em', 'DATETIME NULL');
     } catch (PDOException $e) {
         throw new RuntimeException('Nao foi possivel atualizar a estrutura legada da oficina.');
     }
@@ -205,9 +314,9 @@ function garantirEstruturasOficina(PDO $pdo): void {
 function criarOrdemServicoAutomatica(PDO $pdo, array $dados): array {
     $stmt = $pdo->prepare("
         INSERT INTO oficina_ordens_servico
-            (origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os)
+            (origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os, custo_total)
         VALUES
-            (:origem_tipo, :origem_id, :ativo_matricula, :tipo_equipamento, :descricao_servico, :data_abertura, :prioridade, :status_os)
+            (:origem_tipo, :origem_id, :ativo_matricula, :tipo_equipamento, :descricao_servico, :data_abertura, :prioridade, :status_os, :custo_total)
     ");
     $stmt->execute([
         'origem_tipo' => $dados['origem_tipo'],
@@ -218,6 +327,7 @@ function criarOrdemServicoAutomatica(PDO $pdo, array $dados): array {
         'data_abertura' => $dados['data_abertura'],
         'prioridade' => $dados['prioridade'] ?? 'Normal',
         'status_os' => $dados['status_os'] ?? 'Aberto',
+        'custo_total' => (float)($dados['custo_total'] ?? 0),
     ]);
 
     $id = (int)$pdo->lastInsertId();
@@ -244,6 +354,7 @@ function sincronizarPedidosReparacaoExistentes(PDO $pdo): void {
             p.data_pedido,
             p.prioridade,
             p.status,
+            COALESCE(p.custo_estimado, 0) AS custo_estimado,
             (
                 SELECT COUNT(*)
                 FROM oficina_ordens_servico os
@@ -285,6 +396,7 @@ function sincronizarPedidosReparacaoExistentes(PDO $pdo): void {
                     'data_abertura' => (string)$p['data_pedido'] . ' 08:00:00',
                     'prioridade' => (string)($p['prioridade'] ?? 'Normal'),
                     'status_os' => statusOsPorPedido((string)($p['status'] ?? 'Pendente')),
+                    'custo_total' => (float)($p['custo_estimado'] ?? 0),
                 ]);
             }
 
@@ -313,6 +425,7 @@ try {
 } catch (Throwable $e) {
     $erro_os = $e->getMessage();
     $erro_pedidos = $e->getMessage();
+    $erro_requisicoes = $e->getMessage();
     $erro_manutencao = $e->getMessage();
     $erro_avarias = $e->getMessage();
     $erro_relatorios = $e->getMessage();
@@ -326,6 +439,7 @@ if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_PO
         $descricao = trim((string)($_POST['descricao'] ?? ''));
         $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
         $dataEntrada = trim((string)($_POST['data_entrada'] ?? ''));
+        $custoTotal = (float)($_POST['custo_total'] ?? 0);
 
         if ($matricula === '' || $equipamento === '' || $descricao === '' || $dataEntrada === '') {
             throw new RuntimeException('Preencha os campos obrigatorios para abrir a OS.');
@@ -340,6 +454,7 @@ if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_PO
             'data_abertura' => str_replace('T', ' ', $dataEntrada) . ':00',
             'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
             'status_os' => 'Aberto',
+            'custo_total' => $custoTotal,
         ]);
         header("Location: ?tab={$tab}&view=ordens_servico&mode=list&saved_os=1");
         exit;
@@ -349,6 +464,19 @@ if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_PO
 }
 
 if ($view === 'pedidos_reparacao') {
+    $filtro_pedidos_datas['inicio'] = trim((string)($_GET['pf_data_inicio'] ?? ''));
+    $filtro_pedidos_datas['fim'] = trim((string)($_GET['pf_data_fim'] ?? ''));
+    if ($filtro_pedidos_datas['inicio'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_pedidos_datas['inicio'])) {
+        $filtro_pedidos_datas['inicio'] = '';
+    }
+    if ($filtro_pedidos_datas['fim'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_pedidos_datas['fim'])) {
+        $filtro_pedidos_datas['fim'] = '';
+    }
+    if ($filtro_pedidos_datas['inicio'] === '' && $filtro_pedidos_datas['fim'] === '') {
+        $filtro_pedidos_datas['inicio'] = $inicioSemanaOficina;
+        $filtro_pedidos_datas['fim'] = $fimSemanaOficina;
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
         $acao = trim((string)$_POST['acao']);
 
@@ -362,6 +490,7 @@ if ($view === 'pedidos_reparacao') {
                 $data_pedido = trim((string)($_POST['data_pedido'] ?? ''));
                 $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
                 $status = trim((string)($_POST['status'] ?? 'Pendente'));
+                $custo_estimado = (float)($_POST['custo_estimado'] ?? 0);
 
                 if ($ativo_matricula === '' || $tipo_equipamento === '' || $descricao_avaria === '' || $data_pedido === '') {
                     throw new RuntimeException('Preencha os campos obrigatorios do pedido de reparacao.');
@@ -370,9 +499,9 @@ if ($view === 'pedidos_reparacao') {
                 $pdo->beginTransaction();
                 $stmt = $pdo->prepare("
                     INSERT INTO oficina_pedidos_reparacao
-                        (ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status)
+                        (ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status, custo_estimado)
                     VALUES
-                        (:ativo_matricula, :tipo_equipamento, :descricao_avaria, :localizacao, :solicitante, :data_pedido, :prioridade, :status)
+                        (:ativo_matricula, :tipo_equipamento, :descricao_avaria, :localizacao, :solicitante, :data_pedido, :prioridade, :status, :custo_estimado)
                 ");
                 $stmt->execute([
                     'ativo_matricula' => $ativo_matricula,
@@ -383,6 +512,7 @@ if ($view === 'pedidos_reparacao') {
                     'data_pedido' => $data_pedido,
                     'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
                     'status' => $status !== '' ? $status : 'Pendente',
+                    'custo_estimado' => $custo_estimado,
                 ]);
                 $pedidoId = (int)$pdo->lastInsertId();
 
@@ -395,6 +525,7 @@ if ($view === 'pedidos_reparacao') {
                     'data_abertura' => $data_pedido . ' 08:00:00',
                     'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
                     'status_os' => 'Aberto',
+                    'custo_total' => $custo_estimado,
                 ]);
 
                 $stmtHist = $pdo->prepare("
@@ -422,17 +553,35 @@ if ($view === 'pedidos_reparacao') {
 
             if (in_array($acao, ['aceitar', 'andamento', 'resolver'], true) && isset($_POST['id'])) {
                 $id = (int)$_POST['id'];
+                $stmtAtual = $pdo->prepare("SELECT status FROM oficina_pedidos_reparacao WHERE id = :id LIMIT 1");
+                $stmtAtual->execute(['id' => $id]);
+                $statusAtualRaw = (string)($stmtAtual->fetchColumn() ?: '');
+                $statusAtual = normalizarStatusPedido($statusAtualRaw);
+
+                if ($statusAtual === '') {
+                    throw new RuntimeException("Pedido #{$id} nao encontrado.");
+                }
+
                 if ($acao === 'aceitar') {
+                    if ($statusAtual !== 'pendente') {
+                        throw new RuntimeException("Pedido #{$id} ja foi processado e nao pode ser aceito novamente.");
+                    }
                     $stmt = $pdo->prepare("UPDATE oficina_pedidos_reparacao SET status = 'Aceito' WHERE id = :id");
                     $stmt->execute(['id' => $id]);
                     $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Em andamento' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
                     $msg_pedidos = "Pedido #{$id} aceito.";
                 } elseif ($acao === 'andamento') {
+                    if ($statusAtual !== 'aceito') {
+                        throw new RuntimeException("Pedido #{$id} precisa estar aceito para entrar em andamento.");
+                    }
                     $stmt = $pdo->prepare("UPDATE oficina_pedidos_reparacao SET status = 'Em andamento' WHERE id = :id");
                     $stmt->execute(['id' => $id]);
                     $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Em andamento' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
                     $msg_pedidos = "Pedido #{$id} colocado em andamento.";
                 } else {
+                    if ($statusAtual !== 'em_andamento') {
+                        throw new RuntimeException("Pedido #{$id} precisa estar em andamento para ser resolvido.");
+                    }
                     $stmt = $pdo->prepare("UPDATE oficina_pedidos_reparacao SET status = 'Resolvido' WHERE id = :id");
                     $stmt->execute(['id' => $id]);
                     $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Fechado' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
@@ -455,14 +604,99 @@ if ($view === 'pedidos_reparacao') {
     }
 
     try {
-        $stmt = $pdo->query("
-            SELECT id, ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status
+        $where = [];
+        $params = [];
+        if ($filtro_pedidos_datas['inicio'] !== '') {
+            $where[] = "data_pedido >= :data_inicio";
+            $params['data_inicio'] = $filtro_pedidos_datas['inicio'];
+        }
+        if ($filtro_pedidos_datas['fim'] !== '') {
+            $where[] = "data_pedido <= :data_fim";
+            $params['data_fim'] = $filtro_pedidos_datas['fim'];
+        }
+        $sql = "
+            SELECT id, ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status, custo_estimado
             FROM oficina_pedidos_reparacao
-            ORDER BY id DESC
-        ");
+        ";
+        if (count($where) > 0) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        $sql .= ' ORDER BY id DESC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $pedidos_reparacao = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         $erro_pedidos = "Nao foi possivel carregar pedidos de reparacao.";
+    }
+}
+
+if ($view === 'requisicoes') {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_requisicao_oficina') {
+        try {
+            $categoria_item = trim((string)($_POST['categoria_item'] ?? 'Peca'));
+            $item = trim((string)($_POST['item'] ?? ''));
+            $quantidade = (float)($_POST['quantidade'] ?? 0);
+            $unidade = trim((string)($_POST['unidade'] ?? 'un'));
+            $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
+            $data_requisicao = trim((string)($_POST['data_requisicao'] ?? date('Y-m-d')));
+            $responsavel = trim((string)($_POST['responsavel'] ?? (string)($_SESSION['usuario_nome'] ?? '')));
+            $observacoes = trim((string)($_POST['observacoes'] ?? ''));
+
+            if ($item === '' || $quantidade <= 0) {
+                throw new RuntimeException('Preencha os campos obrigatorios da requisicao.');
+            }
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_requisicao)) {
+                throw new RuntimeException('Data de requisicao invalida.');
+            }
+
+            $stmt = $pdo->prepare("
+                INSERT INTO logistica_requisicoes
+                    (origem, destino, item, quantidade, unidade, prioridade, status, data_requisicao, responsavel, observacoes, origem_modulo, categoria_item, valor_total)
+                VALUES
+                    ('Oficina', 'Logistica', :item, :quantidade, :unidade, :prioridade, 'Pendente', :data_requisicao, :responsavel, :observacoes, 'oficina', :categoria_item, 0)
+            ");
+            $stmt->execute([
+                'item' => $item,
+                'quantidade' => $quantidade,
+                'unidade' => $unidade !== '' ? $unidade : 'un',
+                'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                'data_requisicao' => $data_requisicao,
+                'responsavel' => $responsavel !== '' ? $responsavel : null,
+                'observacoes' => $observacoes !== '' ? $observacoes : null,
+                'categoria_item' => $categoria_item !== '' ? $categoria_item : 'Peca',
+            ]);
+
+            $id = (int)$pdo->lastInsertId();
+            $codigo = sprintf('REQ-OF-%s-%04d', date('Y'), $id);
+            $pdo->prepare("UPDATE logistica_requisicoes SET codigo = :codigo WHERE id = :id")
+                ->execute(['codigo' => $codigo, 'id' => $id]);
+
+            header("Location: ?tab={$tab}&view=requisicoes&mode=list&saved_req=1");
+            exit;
+        } catch (Throwable $e) {
+            $erro_requisicoes = "Nao foi possivel criar a requisicao: " . $e->getMessage();
+        }
+    }
+
+    if (isset($_GET['saved_req']) && $_GET['saved_req'] === '1') {
+        $msg_requisicoes = 'Requisicao enviada para Logistica com sucesso.';
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, codigo, categoria_item, item, quantidade, unidade, prioridade, status, data_requisicao, responsavel, observacoes, COALESCE(valor_total, custo_total, 0) AS valor_total, decidido_por, decidido_em
+            FROM logistica_requisicoes
+            WHERE origem_modulo = 'oficina'
+              AND data_requisicao BETWEEN :inicio_semana AND :fim_semana
+            ORDER BY id DESC
+        ");
+        $stmt->execute([
+            'inicio_semana' => $inicioSemanaOficina,
+            'fim_semana' => $fimSemanaOficina,
+        ]);
+        $requisicoes_oficina = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    } catch (Throwable $e) {
+        $erro_requisicoes = 'Nao foi possivel carregar as requisicoes da oficina.';
     }
 }
 
@@ -477,6 +711,7 @@ if ($view === 'manutencao') {
             $data_manutencao = trim((string)($_POST['data_manutencao'] ?? ''));
             $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
             $status = trim((string)($_POST['status'] ?? 'Pendente'));
+            $custo_total = (float)($_POST['custo_total'] ?? 0);
 
             if ($ativo_matricula === '' || $tipo_equipamento === '' || $tipo_manutencao === '' || $data_manutencao === '') {
                 throw new RuntimeException('Preencha os campos obrigatorios da manutencao.');
@@ -485,9 +720,9 @@ if ($view === 'manutencao') {
             $pdo->beginTransaction();
             $stmt = $pdo->prepare("
                 INSERT INTO oficina_manutencoes
-                    (ativo_matricula, tipo_equipamento, tipo_manutencao, descricao_servico, solicitante, data_manutencao, prioridade, status)
+                    (ativo_matricula, tipo_equipamento, tipo_manutencao, descricao_servico, solicitante, data_manutencao, prioridade, status, custo_total)
                 VALUES
-                    (:ativo_matricula, :tipo_equipamento, :tipo_manutencao, :descricao_servico, :solicitante, :data_manutencao, :prioridade, :status)
+                    (:ativo_matricula, :tipo_equipamento, :tipo_manutencao, :descricao_servico, :solicitante, :data_manutencao, :prioridade, :status, :custo_total)
             ");
             $stmt->execute([
                 'ativo_matricula' => $ativo_matricula,
@@ -498,6 +733,7 @@ if ($view === 'manutencao') {
                 'data_manutencao' => $data_manutencao,
                 'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
                 'status' => $status !== '' ? $status : 'Pendente',
+                'custo_total' => $custo_total,
             ]);
             $manutencaoId = (int)$pdo->lastInsertId();
 
@@ -511,6 +747,7 @@ if ($view === 'manutencao') {
                 'data_abertura' => $data_manutencao . ' 08:00:00',
                 'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
                 'status_os' => 'Aberto',
+                'custo_total' => $custo_total,
             ]);
 
             $stmtHist = $pdo->prepare("
@@ -546,11 +783,16 @@ if ($view === 'manutencao') {
     }
 
     try {
-        $stmt = $pdo->query("
-            SELECT id, ativo_matricula, tipo_equipamento, tipo_manutencao, descricao_servico, solicitante, data_manutencao, prioridade, status
+        $stmt = $pdo->prepare("
+            SELECT id, ativo_matricula, tipo_equipamento, tipo_manutencao, descricao_servico, solicitante, data_manutencao, prioridade, status, custo_total
             FROM oficina_manutencoes
+            WHERE data_manutencao BETWEEN :inicio_semana AND :fim_semana
             ORDER BY id DESC
         ");
+        $stmt->execute([
+            'inicio_semana' => $inicioSemanaOficina,
+            'fim_semana' => $fimSemanaOficina,
+        ]);
         $manutencoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         $erro_manutencao = "Nao foi possivel carregar manutencoes.";
@@ -619,12 +861,17 @@ if ($view === 'avarias') {
     }
 
     try {
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT id, ativo_matricula, tipo_equipamento, tipo_registo, descricao, data_evento, origem_tipo
             FROM oficina_historico_avarias
             WHERE tipo_registo = 'AVARIA'
+              AND data_evento BETWEEN :inicio_semana AND :fim_semana
             ORDER BY data_evento DESC, id DESC
         ");
+        $stmt->execute([
+            'inicio_semana' => $inicioSemanaOficina,
+            'fim_semana' => $fimSemanaOficina,
+        ]);
         $avarias = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         $erro_avarias = "Nao foi possivel carregar avarias.";
@@ -632,16 +879,44 @@ if ($view === 'avarias') {
 }
 
 if ($view === 'ordens_servico') {
+    $filtro_os_datas['inicio'] = trim((string)($_GET['os_data_inicio'] ?? ''));
+    $filtro_os_datas['fim'] = trim((string)($_GET['os_data_fim'] ?? ''));
+    if ($filtro_os_datas['inicio'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_os_datas['inicio'])) {
+        $filtro_os_datas['inicio'] = '';
+    }
+    if ($filtro_os_datas['fim'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_os_datas['fim'])) {
+        $filtro_os_datas['fim'] = '';
+    }
+    if ($filtro_os_datas['inicio'] === '' && $filtro_os_datas['fim'] === '') {
+        $filtro_os_datas['inicio'] = $inicioSemanaOficina;
+        $filtro_os_datas['fim'] = $fimSemanaOficina;
+    }
+
     if (isset($_GET['saved_os']) && $_GET['saved_os'] === '1') {
         $msg_os = 'Ordem de servico criada com sucesso.';
     }
 
     try {
-        $stmt = $pdo->query("
-            SELECT id, codigo_os, origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os
+        $where = [];
+        $params = [];
+        if ($filtro_os_datas['inicio'] !== '') {
+            $where[] = "DATE(data_abertura) >= :data_inicio";
+            $params['data_inicio'] = $filtro_os_datas['inicio'];
+        }
+        if ($filtro_os_datas['fim'] !== '') {
+            $where[] = "DATE(data_abertura) <= :data_fim";
+            $params['data_fim'] = $filtro_os_datas['fim'];
+        }
+        $sql = "
+            SELECT id, codigo_os, origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os, custo_total
             FROM oficina_ordens_servico
-            ORDER BY id DESC
-        ");
+        ";
+        if (count($where) > 0) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        $sql .= ' ORDER BY id DESC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $ordens_servico = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         $erro_os = "Nao foi possivel carregar ordens de servico.";
@@ -649,23 +924,47 @@ if ($view === 'ordens_servico') {
 }
 
 if ($view === 'assiduidade') {
+    $dtAssRef = new DateTimeImmutable($data_assiduidade);
+    if ($assiduidade_periodo === 'semanal') {
+        $diaSemana = (int)$dtAssRef->format('N');
+        $dtInicio = $dtAssRef->modify('-' . ($diaSemana - 1) . ' days');
+        $dtFim = $dtInicio->modify('+6 days');
+        $assiduidade_intervalo = [
+            'inicio' => $dtInicio->format('Y-m-d'),
+            'fim' => $dtFim->format('Y-m-d'),
+            'label' => 'Semanal',
+        ];
+    } elseif ($assiduidade_periodo === 'mensal') {
+        $assiduidade_intervalo = [
+            'inicio' => $dtAssRef->modify('first day of this month')->format('Y-m-d'),
+            'fim' => $dtAssRef->modify('last day of this month')->format('Y-m-d'),
+            'label' => 'Mensal',
+        ];
+    } else {
+        $assiduidade_intervalo = [
+            'inicio' => $data_assiduidade,
+            'fim' => $data_assiduidade,
+            'label' => 'Diario',
+        ];
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
         $acao = trim((string)$_POST['acao']);
 
         try {
             if ($acao === 'marcar_presenca_lote') {
                 $dataPresenca = trim((string)($_POST['data_presenca'] ?? date('Y-m-d')));
-                $statusLote = $_POST['status_lote'] ?? [];
                 $obsLote = $_POST['obs_lote'] ?? [];
+                $entradaLote = $_POST['entrada_lote'] ?? [];
+                $saidaLote = $_POST['saida_lote'] ?? [];
 
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPresenca)) {
                     throw new RuntimeException('Data de presenca invalida.');
                 }
-                if (!is_array($statusLote) || count($statusLote) === 0) {
+                if (count($colaboradores_oficina) === 0) {
                     throw new RuntimeException('Nenhum colaborador foi enviado para marcacao.');
                 }
 
-                $statusValidos = ['Presente', 'Atraso', 'Falta', 'Dispensa'];
                 $stmtBusca = $pdo->prepare("
                     SELECT id
                     FROM oficina_presencas_rh
@@ -676,31 +975,32 @@ if ($view === 'assiduidade') {
                 ");
                 $stmtInsert = $pdo->prepare("
                     INSERT INTO oficina_presencas_rh
-                        (data_presenca, pessoal_id, status_presenca, observacoes, criado_por)
+                        (data_presenca, pessoal_id, status_presenca, assinou_entrada, assinou_saida, observacoes, criado_por)
                     VALUES
-                        (:data_presenca, :pessoal_id, :status_presenca, :observacoes, :criado_por)
+                        (:data_presenca, :pessoal_id, :status_presenca, :assinou_entrada, :assinou_saida, :observacoes, :criado_por)
                 ");
                 $stmtUpdate = $pdo->prepare("
                     UPDATE oficina_presencas_rh
                     SET status_presenca = :status_presenca,
+                        assinou_entrada = :assinou_entrada,
+                        assinou_saida = :assinou_saida,
                         observacoes = :observacoes
                     WHERE id = :id
                 ");
 
-                foreach ($statusLote as $pessoalIdRaw => $statusRaw) {
-                    $pessoalId = (int)$pessoalIdRaw;
+                foreach ($colaboradores_oficina as $colaborador) {
+                    $pessoalId = (int)($colaborador['id'] ?? 0);
+                    $pessoalIdRaw = (string)$pessoalId;
                     if ($pessoalId <= 0) {
                         continue;
                     }
-
-                    $statusPresenca = trim((string)$statusRaw);
-                    if (!in_array($statusPresenca, $statusValidos, true)) {
-                        $statusPresenca = 'Presente';
-                    }
                     $observacoes = '';
-                    if (is_array($obsLote) && array_key_exists((string)$pessoalIdRaw, $obsLote)) {
-                        $observacoes = trim((string)$obsLote[(string)$pessoalIdRaw]);
+                    if (is_array($obsLote) && array_key_exists($pessoalIdRaw, $obsLote)) {
+                        $observacoes = trim((string)$obsLote[$pessoalIdRaw]);
                     }
+                    $assinouEntrada = is_array($entradaLote) && array_key_exists($pessoalIdRaw, $entradaLote) ? 1 : 0;
+                    $assinouSaida = is_array($saidaLote) && array_key_exists($pessoalIdRaw, $saidaLote) ? 1 : 0;
+                    $statusPresenca = statusAssiduidadePorAssinatura($assinouEntrada, $assinouSaida);
 
                     $stmtBusca->execute([
                         'data_presenca' => $dataPresenca,
@@ -711,6 +1011,8 @@ if ($view === 'assiduidade') {
                     if ($existenteId > 0) {
                         $stmtUpdate->execute([
                             'status_presenca' => $statusPresenca,
+                            'assinou_entrada' => $assinouEntrada,
+                            'assinou_saida' => $assinouSaida,
                             'observacoes' => $observacoes !== '' ? $observacoes : null,
                             'id' => $existenteId,
                         ]);
@@ -719,20 +1021,32 @@ if ($view === 'assiduidade') {
                             'data_presenca' => $dataPresenca,
                             'pessoal_id' => $pessoalId,
                             'status_presenca' => $statusPresenca,
+                            'assinou_entrada' => $assinouEntrada,
+                            'assinou_saida' => $assinouSaida,
                             'observacoes' => $observacoes !== '' ? $observacoes : null,
                             'criado_por' => (int)($_SESSION['usuario_id'] ?? 0),
                         ]);
                     }
                 }
 
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade_lote=1");
+                // Ao guardar marcacoes do dia, envia automaticamente para o RH.
+                $stmtEnvioAuto = $pdo->prepare("
+                    UPDATE oficina_presencas_rh
+                    SET enviado_rh = 1,
+                        enviado_em = NOW()
+                    WHERE data_presenca = :data_presenca
+                ");
+                $stmtEnvioAuto->execute(['data_presenca' => $dataPresenca]);
+
+                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade_lote=1&sent_rh=1");
                 exit;
             }
 
             if ($acao === 'marcar_presenca') {
                 $pessoalId = (int)($_POST['pessoal_id'] ?? 0);
                 $dataPresenca = trim((string)($_POST['data_presenca'] ?? date('Y-m-d')));
-                $statusPresenca = trim((string)($_POST['status_presenca'] ?? 'Presente'));
+                $assinouEntrada = isset($_POST['assinou_entrada']) ? 1 : 0;
+                $assinouSaida = isset($_POST['assinou_saida']) ? 1 : 0;
                 $observacoes = trim((string)($_POST['observacoes'] ?? ''));
 
                 if ($pessoalId <= 0) {
@@ -741,25 +1055,24 @@ if ($view === 'assiduidade') {
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPresenca)) {
                     throw new RuntimeException('Data de presenca invalida.');
                 }
-                if (!in_array($statusPresenca, ['Presente', 'Atraso', 'Falta', 'Dispensa'], true)) {
-                    $statusPresenca = 'Presente';
-                }
-
+                $statusPresenca = statusAssiduidadePorAssinatura($assinouEntrada, $assinouSaida);
                 $stmt = $pdo->prepare("
                     INSERT INTO oficina_presencas_rh
-                        (data_presenca, pessoal_id, status_presenca, observacoes, criado_por)
+                        (data_presenca, pessoal_id, status_presenca, assinou_entrada, assinou_saida, observacoes, criado_por)
                     VALUES
-                        (:data_presenca, :pessoal_id, :status_presenca, :observacoes, :criado_por)
+                        (:data_presenca, :pessoal_id, :status_presenca, :assinou_entrada, :assinou_saida, :observacoes, :criado_por)
                 ");
                 $stmt->execute([
                     'data_presenca' => $dataPresenca,
                     'pessoal_id' => $pessoalId,
                     'status_presenca' => $statusPresenca,
+                    'assinou_entrada' => $assinouEntrada,
+                    'assinou_saida' => $assinouSaida,
                     'observacoes' => $observacoes !== '' ? $observacoes : null,
                     'criado_por' => (int)($_SESSION['usuario_id'] ?? 0),
                 ]);
 
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade=1");
+                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade=1");
                 exit;
             }
 
@@ -778,7 +1091,7 @@ if ($view === 'assiduidade') {
                 ");
                 $stmt->execute(['data_presenca' => $dataEnvio]);
 
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&data_assiduidade=" . urlencode($dataEnvio) . "&sent_rh=1");
+                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataEnvio) . "&sent_rh=1");
                 exit;
             }
         } catch (Throwable $e) {
@@ -790,10 +1103,10 @@ if ($view === 'assiduidade') {
         $msg_assiduidade = 'Presenca registada com sucesso.';
     }
     if (isset($_GET['saved_assiduidade_lote']) && $_GET['saved_assiduidade_lote'] === '1') {
-        $msg_assiduidade = 'Lista de presenca atualizada com sucesso.';
+        $msg_assiduidade = 'Lista de presenca guardada com sucesso.';
     }
     if (isset($_GET['sent_rh']) && $_GET['sent_rh'] === '1') {
-        $msg_assiduidade = 'Lista de presenca enviada para o RH com sucesso.';
+        $msg_assiduidade = 'Lista de presenca enviada automaticamente ao RH.';
     }
 
     try {
@@ -812,6 +1125,8 @@ if ($view === 'assiduidade') {
                 apr.pessoal_id,
                 apr.data_presenca,
                 apr.status_presenca,
+                apr.assinou_entrada,
+                apr.assinou_saida,
                 apr.observacoes,
                 apr.enviado_rh,
                 apr.enviado_em,
@@ -821,22 +1136,36 @@ if ($view === 'assiduidade') {
             FROM oficina_presencas_rh apr
             INNER JOIN pessoal p ON p.id = apr.pessoal_id
             LEFT JOIN cargos c ON c.id = p.cargo_id
-            WHERE apr.data_presenca = :data_presenca
-            ORDER BY p.nome ASC, apr.id DESC
+            WHERE apr.data_presenca BETWEEN :data_inicio AND :data_fim
+            ORDER BY apr.data_presenca DESC, p.nome ASC, apr.id DESC
         ");
-        $stmtAss->execute(['data_presenca' => $data_assiduidade]);
+        $stmtAss->execute([
+            'data_inicio' => $assiduidade_intervalo['inicio'],
+            'data_fim' => $assiduidade_intervalo['fim'],
+        ]);
         $presencas_oficina = $stmtAss->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $presencas_por_colaborador = [];
         foreach ($presencas_oficina as $pr) {
+            if ((string)($pr['data_presenca'] ?? '') !== $data_assiduidade) {
+                continue;
+            }
             $pid = (int)($pr['pessoal_id'] ?? 0);
             if ($pid <= 0 || isset($presencas_por_colaborador[$pid])) {
                 continue;
             }
             $presencas_por_colaborador[$pid] = [
                 'status_presenca' => (string)($pr['status_presenca'] ?? 'Presente'),
+                'assinou_entrada' => (int)($pr['assinou_entrada'] ?? 0),
+                'assinou_saida' => (int)($pr['assinou_saida'] ?? 0),
                 'observacoes' => (string)($pr['observacoes'] ?? ''),
             ];
+        }
+
+        if ($assiduidade_periodo === 'diario') {
+            $totalColaboradores = count($colaboradores_oficina);
+            $totalMarcados = count($presencas_por_colaborador);
+            $assiduidade_lista_preenchida = $totalColaboradores > 0 && $totalMarcados >= $totalColaboradores;
         }
     } catch (Throwable $e) {
         $erro_assiduidade = "Nao foi possivel carregar a assiduidade da oficina.";
@@ -846,14 +1175,56 @@ if ($view === 'assiduidade') {
 if ($view === 'relatorios') {
     try {
         $relatorio_filtros['matricula'] = strtoupper(trim((string)($_GET['rf_matricula'] ?? '')));
-        $relatorio_filtros['data_inicio'] = trim((string)($_GET['rf_data_inicio'] ?? ''));
-        $relatorio_filtros['data_fim'] = trim((string)($_GET['rf_data_fim'] ?? ''));
-
-        if ($relatorio_filtros['data_inicio'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $relatorio_filtros['data_inicio'])) {
-            $relatorio_filtros['data_inicio'] = '';
+        $relatorio_filtros['periodo'] = strtolower(trim((string)($_GET['rf_periodo'] ?? 'mensal')));
+        if (!in_array($relatorio_filtros['periodo'], ['diario', 'semanal', 'mensal', 'anual'], true)) {
+            $relatorio_filtros['periodo'] = 'mensal';
         }
-        if ($relatorio_filtros['data_fim'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $relatorio_filtros['data_fim'])) {
-            $relatorio_filtros['data_fim'] = '';
+        $rapido = strtolower(trim((string)($_GET['rf_rapido'] ?? '')));
+        if (in_array($rapido, ['hoje', 'semana', 'mes', 'ano'], true)) {
+            if ($rapido === 'hoje') $relatorio_filtros['periodo'] = 'diario';
+            elseif ($rapido === 'semana') $relatorio_filtros['periodo'] = 'semanal';
+            elseif ($rapido === 'mes') $relatorio_filtros['periodo'] = 'mensal';
+            else $relatorio_filtros['periodo'] = 'anual';
+        }
+        $acaoGeracao = strtolower(trim((string)($_GET['rf_gerar'] ?? '')));
+        if (in_array($acaoGeracao, ['semanal', 'mensal'], true)) {
+            $relatorio_filtros['periodo'] = $acaoGeracao;
+            $relatorio_filtros['completo'] = true;
+        } else {
+            $relatorio_filtros['completo'] = trim((string)($_GET['rf_completo'] ?? '0')) === '1';
+        }
+        $relatorio_filtros['data_referencia'] = trim((string)($_GET['rf_data_referencia'] ?? date('Y-m-d')));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $relatorio_filtros['data_referencia'])) {
+            $relatorio_filtros['data_referencia'] = date('Y-m-d');
+        }
+        $filtroDataInicioRaw = trim((string)($_GET['rf_data_inicio'] ?? ''));
+        $filtroDataFimRaw = trim((string)($_GET['rf_data_fim'] ?? ''));
+
+        $dtRef = new DateTimeImmutable($relatorio_filtros['data_referencia']);
+        if ($relatorio_filtros['periodo'] === 'diario') {
+            $dtInicioPadrao = $dtRef;
+            $dtFimPadrao = $dtRef;
+        } elseif ($relatorio_filtros['periodo'] === 'semanal') {
+            $diaSemana = (int)$dtRef->format('N');
+            $dtInicioPadrao = $dtRef->modify('-' . ($diaSemana - 1) . ' days');
+            $dtFimPadrao = $dtInicioPadrao->modify('+6 days');
+        } elseif ($relatorio_filtros['periodo'] === 'anual') {
+            $dtInicioPadrao = $dtRef->modify('first day of january');
+            $dtFimPadrao = $dtRef->modify('last day of december');
+        } else {
+            $dtInicioPadrao = $dtRef->modify('first day of this month');
+            $dtFimPadrao = $dtRef->modify('last day of this month');
+        }
+
+        if ($filtroDataInicioRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtroDataInicioRaw)) {
+            $relatorio_filtros['data_inicio'] = $filtroDataInicioRaw;
+        } else {
+            $relatorio_filtros['data_inicio'] = $dtInicioPadrao->format('Y-m-d');
+        }
+        if ($filtroDataFimRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtroDataFimRaw)) {
+            $relatorio_filtros['data_fim'] = $filtroDataFimRaw;
+        } else {
+            $relatorio_filtros['data_fim'] = $dtFimPadrao->format('Y-m-d');
         }
 
         $where = [];
@@ -943,6 +1314,151 @@ if ($view === 'relatorios') {
         $stmtTopAvarias = $pdo->prepare($sqlTopAvarias);
         $stmtTopAvarias->execute($params);
         $relatorio_top_avarias = $stmtTopAvarias->fetchAll(PDO::FETCH_ASSOC);
+
+        $resumoSql = "
+            SELECT
+                (SELECT COUNT(*) FROM oficina_ordens_servico os
+                 WHERE DATE(os.data_abertura) BETWEEN :inicio AND :fim" . ($relatorio_filtros['matricula'] !== '' ? " AND os.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_os COLLATE utf8mb4_general_ci" : "") . ") AS total_os,
+                (SELECT COUNT(*) FROM oficina_ordens_servico os
+                 WHERE DATE(os.data_abertura) BETWEEN :inicio AND :fim
+                   AND LOWER(TRIM(os.status_os)) IN ('fechado','resolvido','concluido')
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND os.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_os_fechada COLLATE utf8mb4_general_ci" : "") . ") AS total_os_fechadas,
+                (SELECT COALESCE(SUM(COALESCE(os.custo_total, 0)), 0) FROM oficina_ordens_servico os
+                 WHERE DATE(os.data_abertura) BETWEEN :inicio AND :fim
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND os.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_os_custo COLLATE utf8mb4_general_ci" : "") . ") AS gasto_os,
+
+                (SELECT COUNT(*) FROM oficina_manutencoes m
+                 WHERE m.data_manutencao BETWEEN :inicio AND :fim
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND m.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_m COLLATE utf8mb4_general_ci" : "") . ") AS total_manutencoes,
+                (SELECT COUNT(*) FROM oficina_manutencoes m
+                 WHERE m.data_manutencao BETWEEN :inicio AND :fim
+                   AND LOWER(TRIM(m.status)) IN ('concluida','concluido','resolvido')
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND m.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_m_conc COLLATE utf8mb4_general_ci" : "") . ") AS total_manutencoes_concluidas,
+                (SELECT COALESCE(SUM(COALESCE(m.custo_total, 0)), 0) FROM oficina_manutencoes m
+                 WHERE m.data_manutencao BETWEEN :inicio AND :fim
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND m.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_m_custo COLLATE utf8mb4_general_ci" : "") . ") AS gasto_manutencao,
+
+                (SELECT COUNT(*) FROM oficina_pedidos_reparacao p
+                 WHERE p.data_pedido BETWEEN :inicio AND :fim
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND p.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_p COLLATE utf8mb4_general_ci" : "") . ") AS total_pedidos_reparacao,
+                (SELECT COUNT(*) FROM oficina_pedidos_reparacao p
+                 WHERE p.data_pedido BETWEEN :inicio AND :fim
+                   AND LOWER(TRIM(p.status)) IN ('resolvido','fechado','concluido')
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND p.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_p_res COLLATE utf8mb4_general_ci" : "") . ") AS total_pedidos_resolvidos,
+                (SELECT COALESCE(SUM(COALESCE(p.custo_estimado, 0)), 0) FROM oficina_pedidos_reparacao p
+                 WHERE p.data_pedido BETWEEN :inicio AND :fim
+                   " . ($relatorio_filtros['matricula'] !== '' ? " AND p.ativo_matricula COLLATE utf8mb4_general_ci = :matricula_p_custo COLLATE utf8mb4_general_ci" : "") . ") AS gasto_pedidos,
+
+                (SELECT COUNT(*) FROM logistica_requisicoes r
+                 WHERE r.origem_modulo = 'oficina'
+                   AND r.data_requisicao BETWEEN :inicio AND :fim) AS total_requisicoes,
+                (SELECT COUNT(*) FROM logistica_requisicoes r
+                 WHERE r.origem_modulo = 'oficina'
+                   AND r.data_requisicao BETWEEN :inicio AND :fim
+                   AND LOWER(TRIM(r.status)) = 'aprovada') AS total_requisicoes_aprovadas,
+                (SELECT COUNT(*) FROM logistica_requisicoes r
+                 WHERE r.origem_modulo = 'oficina'
+                   AND r.data_requisicao BETWEEN :inicio AND :fim
+                   AND LOWER(TRIM(r.status)) = 'negada') AS total_requisicoes_negadas,
+                (SELECT COALESCE(SUM(COALESCE(r.valor_total, r.custo_total, 0)), 0) FROM logistica_requisicoes r
+                 WHERE r.origem_modulo = 'oficina'
+                   AND r.data_requisicao BETWEEN :inicio AND :fim) AS gasto_requisicoes
+        ";
+        $paramsResumo = [
+            'inicio' => $relatorio_filtros['data_inicio'],
+            'fim' => $relatorio_filtros['data_fim'],
+        ];
+        if ($relatorio_filtros['matricula'] !== '') {
+            $paramsResumo['matricula_os'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_os_fechada'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_os_custo'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_m'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_m_conc'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_m_custo'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_p'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_p_res'] = $relatorio_filtros['matricula'];
+            $paramsResumo['matricula_p_custo'] = $relatorio_filtros['matricula'];
+        }
+        $stmtResumoPeriodo = $pdo->prepare($resumoSql);
+        $stmtResumoPeriodo->execute($paramsResumo);
+        $relatorio_resumo_periodo = $stmtResumoPeriodo->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $matriculaCondOs = $relatorio_filtros['matricula'] !== '' ? " AND os.ativo_matricula COLLATE utf8mb4_general_ci = :matricula " : '';
+        $matriculaCondM = $relatorio_filtros['matricula'] !== '' ? " AND m.ativo_matricula COLLATE utf8mb4_general_ci = :matricula " : '';
+        $matriculaCondP = $relatorio_filtros['matricula'] !== '' ? " AND p.ativo_matricula COLLATE utf8mb4_general_ci = :matricula " : '';
+
+        $sqlAtividades = "
+            SELECT 'OS' AS tipo_atividade, os.codigo_os AS referencia, os.ativo_matricula, os.tipo_equipamento,
+                   os.descricao_servico AS descricao, DATE(os.data_abertura) AS data_ref, os.status_os AS status,
+                   COALESCE(os.custo_total, 0) AS gasto_total
+            FROM oficina_ordens_servico os
+            WHERE DATE(os.data_abertura) BETWEEN :inicio AND :fim {$matriculaCondOs}
+            UNION ALL
+            SELECT 'MANUTENCAO' AS tipo_atividade, CONCAT('MAN-', m.id) AS referencia, m.ativo_matricula, m.tipo_equipamento,
+                   m.descricao_servico AS descricao, m.data_manutencao AS data_ref, m.status AS status,
+                   COALESCE(m.custo_total, 0) AS gasto_total
+            FROM oficina_manutencoes m
+            WHERE m.data_manutencao BETWEEN :inicio AND :fim {$matriculaCondM}
+            UNION ALL
+            SELECT 'PEDIDO_REPARACAO' AS tipo_atividade, CONCAT('PR-', p.id) AS referencia, p.ativo_matricula, p.tipo_equipamento,
+                   p.descricao_avaria AS descricao, p.data_pedido AS data_ref, p.status AS status,
+                   COALESCE(p.custo_estimado, 0) AS gasto_total
+            FROM oficina_pedidos_reparacao p
+            WHERE p.data_pedido BETWEEN :inicio AND :fim {$matriculaCondP}
+            ORDER BY data_ref DESC, tipo_atividade ASC
+        ";
+        $stmtAtividades = $pdo->prepare($sqlAtividades);
+        $paramsAtividades = [
+            'inicio' => $relatorio_filtros['data_inicio'],
+            'fim' => $relatorio_filtros['data_fim'],
+        ];
+        if ($relatorio_filtros['matricula'] !== '') {
+            $paramsAtividades['matricula'] = $relatorio_filtros['matricula'];
+        }
+        $stmtAtividades->execute($paramsAtividades);
+        $relatorio_atividades_periodo = $stmtAtividades->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $sqlAssPeriodo = "
+            SELECT
+                COUNT(*) AS total_registos,
+                SUM(CASE WHEN apr.status_presenca IN ('Presente', 'Dispensa') THEN 1 ELSE 0 END) AS total_validos
+            FROM oficina_presencas_rh apr
+            WHERE apr.data_presenca BETWEEN :inicio AND :fim
+        ";
+        $stmtAssPeriodo = $pdo->prepare($sqlAssPeriodo);
+        $stmtAssPeriodo->execute([
+            'inicio' => $relatorio_filtros['data_inicio'],
+            'fim' => $relatorio_filtros['data_fim'],
+        ]);
+        $assPeriodo = $stmtAssPeriodo->fetch(PDO::FETCH_ASSOC) ?: ['total_registos' => 0, 'total_validos' => 0];
+        $totalAss = (int)($assPeriodo['total_registos'] ?? 0);
+        $validosAss = (int)($assPeriodo['total_validos'] ?? 0);
+        $relatorio_resumo_periodo['assiduidade_percentual'] = $totalAss > 0 ? round(($validosAss / $totalAss) * 100, 1) : 0.0;
+
+        $sqlChecklist = "
+            SELECT
+                COUNT(*) AS total_ativos,
+                SUM(CASE WHEN COALESCE(extintor, 0) = 1 THEN 1 ELSE 0 END) AS extintor_ok,
+                SUM(CASE WHEN COALESCE(reflectores, 0) = 1 THEN 1 ELSE 0 END) AS reflectores_ok,
+                SUM(CASE WHEN COALESCE(macaco, 0) = 1 THEN 1 ELSE 0 END) AS macaco_ok,
+                SUM(CASE WHEN COALESCE(chave_roda, 0) = 1 THEN 1 ELSE 0 END) AS chave_ok
+            FROM activos
+            WHERE estado <> 'VENDIDO' OR estado IS NULL
+        ";
+        if ($relatorio_filtros['matricula'] !== '') {
+            $sqlChecklist .= " AND matricula COLLATE utf8mb4_general_ci = :matricula_chk COLLATE utf8mb4_general_ci";
+        }
+        $stmtChecklist = $pdo->prepare($sqlChecklist);
+        $paramsChk = [];
+        if ($relatorio_filtros['matricula'] !== '') {
+            $paramsChk['matricula_chk'] = $relatorio_filtros['matricula'];
+        }
+        $stmtChecklist->execute($paramsChk);
+        $checkResumo = $stmtChecklist->fetch(PDO::FETCH_ASSOC) ?: [];
+        $totalAtivosChk = (int)($checkResumo['total_ativos'] ?? 0);
+        $somaChecks = (int)($checkResumo['extintor_ok'] ?? 0) + (int)($checkResumo['reflectores_ok'] ?? 0) + (int)($checkResumo['macaco_ok'] ?? 0) + (int)($checkResumo['chave_ok'] ?? 0);
+        $maxChecks = $totalAtivosChk * 4;
+        $relatorio_resumo_periodo['checklist_percentual'] = $maxChecks > 0 ? round(($somaChecks / $maxChecks) * 100, 1) : 0.0;
     } catch (PDOException $e) {
         $erro_relatorios = "Nao foi possivel carregar os relatorios de oficina.";
     }
@@ -956,6 +1472,10 @@ function campo($row, $keys, $default = '-') {
     return $default;
 }
 
+function formatarMoedaMZN($valor): string {
+    return number_format((float)$valor, 2, ',', '.') . ' MZN';
+}
+
 function badgeClassePrioridade($valor) {
     $v = strtolower(trim((string)$valor));
     if ($v === 'urgente') return 'warn';
@@ -966,11 +1486,17 @@ function badgeClassePrioridade($valor) {
 
 function badgeClasseStatus($valor) {
     $v = strtolower(trim((string)$valor));
+    if ($v === 'aprovada' || $v === 'aprovado') return 'ok';
+    if ($v === 'negada' || $v === 'negado' || $v === 'cancelada') return 'warn';
     if ($v === 'resolvido' || $v === 'fechado' || $v === 'concluida' || $v === 'concluido') return 'ok';
     if ($v === 'aceito') return 'info';
     if ($v === 'em andamento' || $v === 'em progresso') return 'info';
     if ($v === 'pendente' || $v === 'aberto') return 'warn';
     return 'info';
+}
+
+function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida): string {
+    return ($assinouEntrada === 1 || $assinouSaida === 1) ? 'Presente' : 'Falta';
 }
 ?>
 <?php include 'includes/header.php'; ?>
@@ -993,6 +1519,67 @@ function badgeClasseStatus($valor) {
                 cursor:pointer;
             }
             .btn-export i { margin-right:6px; }
+            .module-entry {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin-bottom: 14px;
+            }
+            .module-entry-btn {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                padding: 9px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 700;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .module-entry-btn.lista { background: #dbeafe; color: #1e3a8a; border-color: #93c5fd; }
+            .module-entry-btn.form { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
+            .module-modal {
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                background: #ffffff;
+                overflow: hidden;
+            }
+            .module-modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                padding: 12px 14px;
+                background: #111827;
+                border-bottom: 1px solid #0f172a;
+            }
+            .module-modal-header h4 {
+                margin: 0;
+                color: #ffffff;
+                font-size: 13px;
+                text-transform: uppercase;
+                letter-spacing: .2px;
+            }
+            .module-modal-actions { display: flex; gap: 8px; }
+            .module-modal-btn {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                padding: 7px 10px;
+                border-radius: 7px;
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+                text-decoration: none;
+                display: inline-flex;
+                align-items: center;
+            }
+            .module-modal-btn.min { background: #fef3c7; border-color: #fbbf24; color: #92400e; }
+            .module-modal-btn.close { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+            .module-modal-body { padding: 12px; }
+            .module-modal.minimized .module-modal-body { display: none; }
             .pedidos-table-wrap {
                 width: 100%;
                 overflow-x: auto;
@@ -1209,59 +1796,221 @@ function badgeClasseStatus($valor) {
                 .relatorio-grid-2 { grid-template-columns: 1fr; }
                 .screen-title-row { flex-direction: column; align-items: flex-start; }
             }
+            .rel-shell {
+                border: 1px solid #dbe2ea;
+                background: linear-gradient(180deg, #f8fbff 0%, #ffffff 28%);
+                border-radius: 14px;
+                padding: 14px;
+            }
+            .rel-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 12px;
+                margin-bottom: 10px;
+            }
+            .rel-title {
+                margin: 0;
+                font-size: 20px;
+                font-weight: 800;
+                color: #0f172a;
+            }
+            .rel-subtitle {
+                margin: 6px 0 0 0;
+                font-size: 12px;
+                color: #64748b;
+            }
+            .download-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(15, 23, 42, 0.45);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 12px;
+                z-index: 1200;
+            }
+            .download-modal.open { display: flex; }
+            .download-panel {
+                width: 100%;
+                max-width: 420px;
+                border: 1px solid #dbe2ea;
+                background: #ffffff;
+                border-radius: 12px;
+                padding: 14px;
+                box-shadow: 0 18px 35px rgba(15, 23, 42, 0.2);
+            }
+            .download-panel h4 {
+                margin: 0 0 8px 0;
+                font-size: 16px;
+                color: #0f172a;
+            }
+            .download-panel p {
+                margin: 0 0 10px 0;
+                font-size: 12px;
+                color: #64748b;
+            }
+            .download-panel select {
+                width: 100%;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                margin-bottom: 12px;
+            }
+            .quick-filter-active {
+                border-color: #111827 !important;
+                background: #111827 !important;
+                color: #ffffff !important;
+            }
+            .rel-chip-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 10px 0 14px 0;
+            }
+            .rel-chip {
+                border: 1px solid #cbd5e1;
+                background: #fff;
+                color: #334155;
+                border-radius: 999px;
+                padding: 6px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .relatorio-filtros {
+                grid-template-columns: repeat(5, minmax(130px, 1fr));
+                gap: 10px;
+                background: #ffffff;
+                border: 1px solid #dbe2ea;
+                border-radius: 12px;
+                padding: 10px;
+            }
+            .relatorio-filtros .field {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .relatorio-filtros .field label {
+                font-size: 11px;
+                font-weight: 700;
+                color: #475569;
+                text-transform: uppercase;
+                letter-spacing: .2px;
+            }
+            .relatorio-filtros select,
+            .relatorio-filtros input {
+                width: 100%;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                background: #fff;
+            }
+            .rel-actions {
+                display: flex;
+                gap: 8px;
+                align-items: end;
+                flex-wrap: wrap;
+            }
+            .kpi-grid {
+                grid-template-columns: repeat(3, minmax(170px, 1fr));
+                margin-top: 12px;
+            }
+            .kpi-card {
+                background: #ffffff;
+                border-color: #dbe2ea;
+                box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+            }
+            .kpi-card .kpi-value { font-size: 19px; }
+            .section-card {
+                border-color: #dbe2ea;
+                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+            }
+            @media (max-width: 980px) {
+                .rel-header { flex-direction: column; }
+                .kpi-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+                .relatorio-filtros { grid-template-columns: 1fr 1fr; }
+            }
         </style>
         <div class="white-card">
-            <div class="inner-nav">
-                <div class="mode-selector">
-                    <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=list" class="btn-mode <?= $mode == 'list' ? 'active' : '' ?>"><i class="fas fa-list"></i> Ver Lista</a>
-                    <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-mode <?= $mode == 'form' ? 'active' : '' ?>"><i class="fas fa-plus"></i> Adicionar Novo</a>
+            <?php if ($view !== 'relatorios'): ?>
+                <div class="module-entry">
+                    <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>&mode=list" class="module-entry-btn lista"><i class="fas fa-list"></i> Lista</a>
+                    <?php if (!in_array($view, ['pedidos_reparacao', 'manutencao'], true)): ?>
+                        <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>&mode=form" class="module-entry-btn form"><i class="fas fa-plus"></i> Adicionar</a>
+                    <?php endif; ?>
                 </div>
-                <?php if ($mode == 'list'): ?>
-                <div class="list-tools">
-                    <div class="search-group">
-                        <i class="fas fa-search"></i>
-                        <input class="search-input" type="text" placeholder="Pesquisar...">
-                    </div>
-                    <select class="filter-select">
-                        <?php if ($view == 'pedidos_reparacao'): ?>
-                            <option value="">Filtrar por status</option>
-                            <option>Pendente</option>
-                            <option>Aceito</option>
-                            <option>Em andamento</option>
-                            <option>Resolvido</option>
-                        <?php elseif ($view == 'manutencao'): ?>
-                            <option value="">Filtrar por status</option>
-                            <option>Pendente</option>
-                            <option>Em andamento</option>
-                            <option>Concluida</option>
-                        <?php elseif ($view == 'ordens_servico'): ?>
-                            <option value="">Filtrar por status</option>
-                            <option>Aberto</option>
-                            <option>Em andamento</option>
-                            <option>Fechado</option>
-                        <?php elseif ($view == 'assiduidade'): ?>
-                            <option value="">Filtrar por status</option>
-                            <option>Presente</option>
-                            <option>Atraso</option>
-                            <option>Falta</option>
-                            <option>Dispensa</option>
-                        <?php else: ?>
-                            <option value="">Sem filtro de status</option>
-                        <?php endif; ?>
-                    </select>
-                    <div class="export-tools">
-                        <button type="button" class="btn-export" data-export-format="excel">
-                            <i class="fas fa-file-excel"></i> Excel
-                        </button>
-                        <button type="button" class="btn-export" data-export-format="pdf">
-                            <i class="fas fa-file-pdf"></i> PDF
-                        </button>
-                    </div>
-                </div>
-                <?php endif; ?>
-            </div>
+            <?php endif; ?>
 
-            <?php if ($mode == 'form'): ?>
+            <?php if ($mode === 'home'): ?>
+                <div class="section-card">
+                    <p style="font-size:12px; color:#6b7280; margin:0;">Selecione Lista ou Adicionar para abrir a tela da Oficina.</p>
+                </div>
+            <?php else: ?>
+                <div class="module-modal" id="oficina-main-modal">
+                    <?php if ($view !== 'relatorios' && $view !== 'pedidos_reparacao' && $view !== 'ordens_servico' && $view !== 'requisicoes' && $view !== 'manutencao' && $view !== 'avarias'): ?>
+                        <div class="module-modal-header">
+                            <h4>Oficina - <?= htmlspecialchars((string)$view) ?></h4>
+                            <div class="module-modal-actions">
+                                <button type="button" class="module-modal-btn min" id="btn-min-oficina">Minimizar</button>
+                                <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>" class="module-modal-btn close">Fechar</a>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                    <div class="module-modal-body" id="oficina-main-body">
+                        <?php if (
+                            $mode == 'list' &&
+                            $view !== 'relatorios' &&
+                            $view !== 'pedidos_reparacao' &&
+                            $view !== 'ordens_servico' &&
+                            $view !== 'requisicoes' &&
+                            $view !== 'manutencao' &&
+                            $view !== 'avarias'
+                        ): ?>
+                        <div class="list-tools" style="margin-bottom:10px;">
+                            <div class="search-group">
+                                <i class="fas fa-search"></i>
+                                <input class="search-input" type="text" placeholder="Pesquisar...">
+                            </div>
+                            <select class="filter-select">
+                                <?php if ($view == 'pedidos_reparacao'): ?>
+                                    <option value="">Filtrar por status</option>
+                                    <option>Pendente</option>
+                                    <option>Aceito</option>
+                                    <option>Em andamento</option>
+                                    <option>Resolvido</option>
+                                <?php elseif ($view == 'requisicoes'): ?>
+                                    <option value="">Filtrar por status</option>
+                                    <option>Pendente</option>
+                                    <option>Aprovada</option>
+                                    <option>Negada</option>
+                                <?php elseif ($view == 'manutencao'): ?>
+                                    <option value="">Filtrar por status</option>
+                                    <option>Pendente</option>
+                                    <option>Em andamento</option>
+                                    <option>Concluida</option>
+                                <?php elseif ($view == 'ordens_servico'): ?>
+                                    <option value="">Filtrar por status</option>
+                                    <option>Aberto</option>
+                                    <option>Em andamento</option>
+                                    <option>Fechado</option>
+                                <?php else: ?>
+                                    <option value="">Sem filtro de status</option>
+                                <?php endif; ?>
+                            </select>
+                            <div class="export-tools">
+                                <button type="button" class="btn-export" data-export-format="excel">
+                                    <i class="fas fa-file-excel"></i> Excel
+                                </button>
+                                <button type="button" class="btn-export" data-export-format="pdf">
+                                    <i class="fas fa-file-pdf"></i> PDF
+                                </button>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php if ($mode == 'form'): ?>
                 <?php if ($view == 'ordens_servico'): ?>
                     <h3>Nova Ordem de Servico</h3>
                     <p style="font-size:11px;color:var(--info);">Proxima referencia: <?= htmlspecialchars($proximo_os) ?></p>
@@ -1298,6 +2047,11 @@ function badgeClasseStatus($valor) {
                             <input type="datetime-local" name="data_entrada" value="<?= date('Y-m-d\TH:i') ?>" required>
                         </div>
 
+                        <div class="form-group">
+                            <label>custo_total_mzn</label>
+                            <input type="number" name="custo_total" min="0" step="0.01" value="0">
+                        </div>
+
                         <div class="form-group" style="grid-column:span 4;">
                             <label>descricao_servico</label>
                             <textarea name="descricao" rows="4" required></textarea>
@@ -1310,10 +2064,10 @@ function badgeClasseStatus($valor) {
                 <?php elseif ($view == 'pedidos_reparacao'): ?>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                         <div>
-                            <h3>Pedido de ReparaÃ§Ã£o</h3>
+                            <h3>Pedido de Reparação</h3>
                             <p style="font-size:12px; color:#6b7280; margin-top:4px;">Registe o pedido com prioridade, local e sintomas para acelerar o atendimento.</p>
                         </div>
-                        <div class="pill warn">Nova solicitaÃ§Ã£o</div>
+                        <div class="pill warn">Nova solicitação</div>
                     </div>
 
                     <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=form">
@@ -1364,6 +2118,11 @@ function badgeClasseStatus($valor) {
                             </select>
                         </div>
 
+                        <div class="form-group">
+                            <label>custo_estimado_mzn</label>
+                            <input type="number" name="custo_estimado" min="0" step="0.01" value="0">
+                        </div>
+
                         <div class="form-group" style="grid-column:span 4;">
                             <label>descricao_avaria</label>
                             <textarea name="descricao_avaria" rows="4" placeholder="Descreva a avaria..." required></textarea>
@@ -1372,6 +2131,68 @@ function badgeClasseStatus($valor) {
                         <div style="grid-column:span 4; display:flex; gap:10px;">
                             <button class="btn-save" type="submit" style="background:var(--danger); flex:1;">Guardar Pedido</button>
                             <button type="reset" class="btn-save" style="background:#9ca3af; width:180px;">Limpar</button>
+                        </div>
+                    </form>
+                <?php elseif ($view == 'requisicoes'): ?>
+                    <h3>Requisicao de Pecas e Equipamentos</h3>
+                    <p style="font-size:12px; color:#6b7280;">A requisicao sera enviada para Logistica para aprovacao ou negacao.</p>
+                    <?php if ($erro_requisicoes): ?>
+                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_requisicoes) ?></p>
+                    <?php endif; ?>
+                    <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=requisicoes&mode=form">
+                        <input type="hidden" name="acao" value="criar_requisicao_oficina">
+
+                        <div class="form-group">
+                            <label>categoria_item</label>
+                            <select name="categoria_item">
+                                <option>Peca</option>
+                                <option>Equipamento</option>
+                                <option>Consumivel</option>
+                                <option>Outro</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="grid-column:span 2;">
+                            <label>item</label>
+                            <input type="text" name="item" placeholder="Ex: Kit embraiagem, Oleo 15W40, Macaco hidraulico" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>data_requisicao</label>
+                            <input type="date" name="data_requisicao" value="<?= date('Y-m-d') ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>quantidade</label>
+                            <input type="number" name="quantidade" min="0.01" step="0.01" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>unidade</label>
+                            <input type="text" name="unidade" value="un">
+                        </div>
+
+                        <div class="form-group">
+                            <label>prioridade</label>
+                            <select name="prioridade">
+                                <option>Normal</option>
+                                <option>Alta</option>
+                                <option>Urgente</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>responsavel</label>
+                            <input type="text" name="responsavel" value="<?= htmlspecialchars((string)($_SESSION['usuario_nome'] ?? '')) ?>">
+                        </div>
+
+                        <div class="form-group" style="grid-column:span 4;">
+                            <label>observacoes</label>
+                            <textarea name="observacoes" rows="4" placeholder="Detalhe a necessidade da oficina, urgencia e aplicacao no equipamento."></textarea>
+                        </div>
+
+                        <div style="grid-column:span 4;">
+                            <button class="btn-save" style="background:#111827;width:100%;">Enviar para Logistica</button>
                         </div>
                     </form>
                 <?php elseif ($view == 'manutencao'): ?>
@@ -1423,6 +2244,10 @@ function badgeClasseStatus($valor) {
                                 <option>Concluida</option>
                             </select>
                         </div>
+                        <div class="form-group">
+                            <label>custo_total_mzn</label>
+                            <input type="number" name="custo_total" min="0" step="0.01" value="0">
+                        </div>
                         <div class="form-group" style="grid-column:span 4;">
                             <label>descricao_servico</label>
                             <textarea name="descricao_servico" rows="4" placeholder="Ex: Troca de oleo e filtros"></textarea>
@@ -1438,12 +2263,9 @@ function badgeClasseStatus($valor) {
                     <?php if ($erro_assiduidade): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_assiduidade) ?></p>
                     <?php endif; ?>
-                    <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=form&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>">
+                    <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=form&ap_periodo=<?= urlencode((string)$assiduidade_periodo) ?>&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>">
                         <input type="hidden" name="acao" value="marcar_presenca">
-                        <div class="form-group">
-                            <label>Data</label>
-                            <input type="date" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>" required>
-                        </div>
+                        <input type="hidden" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
                         <div class="form-group">
                             <label>Funcionario da Oficina</label>
                             <select name="pessoal_id" required>
@@ -1456,13 +2278,16 @@ function badgeClasseStatus($valor) {
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Status de Presenca</label>
-                            <select name="status_presenca">
-                                <option>Presente</option>
-                                <option>Atraso</option>
-                                <option>Falta</option>
-                                <option>Dispensa</option>
-                            </select>
+                            <label>Assinou Entrada</label>
+                            <label style="display:flex;align-items:center;gap:6px;font-weight:400;">
+                                <input type="checkbox" name="assinou_entrada" value="1"> Sim
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>Assinou Saida</label>
+                            <label style="display:flex;align-items:center;gap:6px;font-weight:400;">
+                                <input type="checkbox" name="assinou_saida" value="1"> Sim
+                            </label>
                         </div>
                         <div class="form-group">
                             <label>Observacoes</label>
@@ -1519,9 +2344,20 @@ function badgeClasseStatus($valor) {
                     <h3>Relatorios de Oficina</h3>
                     <p style="font-size:12px; color:#6b7280;">Use o modo "Ver Lista" para consultar as metricas e historico de avarias por veiculo.</p>
                 <?php endif; ?>
-            <?php else: ?>
+            <?php elseif ($mode == 'list'): ?>
+                <?php if (!$aplicar_lista): ?>
+                    <div class="section-card">
+                        <p style="font-size:12px; color:#6b7280; margin:0 0 10px 0;">A lista da Oficina so aparece apos aplicar os filtros.</p>
+                        <form method="GET" action="" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+                            <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
+                            <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
+                            <input type="hidden" name="mode" value="list">
+                            <input type="hidden" name="aplicar" value="1">
+                            <button type="submit" class="btn-save" style="background:#111827;">Aplicar filtro</button>
+                        </form>
+                    </div>
+                <?php else: ?>
                 <?php if ($view == 'pedidos_reparacao'): ?>
-                    <h3>Lista de Pedidos de ReparaÃ§Ã£o</h3>
                     <?php if ($erro_pedidos): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_pedidos) ?></p>
                     <?php endif; ?>
@@ -1575,10 +2411,10 @@ function badgeClasseStatus($valor) {
                                                 <?php if ($statusNormalizado === 'pendente'): ?>
                                                     <button type="submit" name="acao" value="aceitar" class="btn-acao" style="background:#2563eb;">Aceitar</button>
                                                 <?php endif; ?>
-                                                <?php if ($statusNormalizado === 'pendente' || $statusNormalizado === 'aceito'): ?>
+                                                <?php if ($statusNormalizado === 'aceito'): ?>
                                                     <button type="submit" name="acao" value="andamento" class="btn-acao" style="background:#0891b2;">Em andamento</button>
                                                 <?php endif; ?>
-                                                <?php if ($statusNormalizado !== 'resolvido'): ?>
+                                                <?php if ($statusNormalizado === 'em_andamento'): ?>
                                                     <button type="submit" name="acao" value="resolver" class="btn-acao" style="background:#16a34a;">Resolver</button>
                                                 <?php endif; ?>
                                             </form>
@@ -1589,8 +2425,69 @@ function badgeClasseStatus($valor) {
                         </tbody>
                     </table>
                     </div>
+                <?php elseif ($view == 'requisicoes'): ?>
+                    <?php if ($erro_requisicoes): ?>
+                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_requisicoes) ?></p>
+                    <?php endif; ?>
+                    <?php if ($msg_requisicoes): ?>
+                        <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_requisicoes) ?></p>
+                    <?php endif; ?>
+                    <div class="pedidos-table-wrap">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>codigo</th>
+                                <th>categoria</th>
+                                <th>item</th>
+                                <th>quantidade</th>
+                                <th>custo_estimado</th>
+                                <th>prioridade</th>
+                                <th>status</th>
+                                <th>data_requisicao</th>
+                                <th>responsavel</th>
+                                <th>decisao_logistica</th>
+                                <th>observacoes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($requisicoes_oficina) === 0): ?>
+                                <tr><td colspan="12" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
+                            <?php else: ?>
+                                <?php foreach ($requisicoes_oficina as $req): ?>
+                                    <?php
+                                        $statusReq = labelStatusRequisicaoOficina((string)($req['status'] ?? 'Pendente'));
+                                        $decisaoMeta = '-';
+                                        if (!empty($req['decidido_por']) || !empty($req['decidido_em'])) {
+                                            $decisaoMeta = trim((string)($req['decidido_por'] ?? ''));
+                                            if ($decisaoMeta === '') {
+                                                $decisaoMeta = 'Logistica';
+                                            }
+                                            if (!empty($req['decidido_em'])) {
+                                                $decisaoMeta .= ' em ' . (string)$req['decidido_em'];
+                                            }
+                                        }
+                                    ?>
+                                    <tr>
+                                        <td><?= (int)($req['id'] ?? 0) ?></td>
+                                        <td><?= htmlspecialchars((string)($req['codigo'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($req['categoria_item'] ?? '-')) ?></td>
+                                        <td><span class="pedido-desc" title="<?= htmlspecialchars((string)($req['item'] ?? '-')) ?>"><?= htmlspecialchars((string)($req['item'] ?? '-')) ?></span></td>
+                                        <td><?= htmlspecialchars((string)($req['quantidade'] ?? '0')) ?> <?= htmlspecialchars((string)($req['unidade'] ?? '')) ?></td>
+                                        <td><?= htmlspecialchars(formatarMoedaMZN((float)($req['valor_total'] ?? 0))) ?></td>
+                                        <td><span class="pill <?= badgeClassePrioridade((string)($req['prioridade'] ?? 'Normal')) ?>"><?= htmlspecialchars((string)($req['prioridade'] ?? 'Normal')) ?></span></td>
+                                        <td><span class="pill <?= badgeClasseStatus($statusReq) ?>"><?= htmlspecialchars($statusReq) ?></span></td>
+                                        <td><?= htmlspecialchars((string)($req['data_requisicao'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($req['responsavel'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars($decisaoMeta) ?></td>
+                                        <td><span class="pedido-desc" title="<?= htmlspecialchars((string)($req['observacoes'] ?? '')) ?>"><?= htmlspecialchars((string)($req['observacoes'] ?? '-')) ?></span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                    </div>
                 <?php elseif ($view == 'ordens_servico'): ?>
-                    <h3>Ordens de Servico</h3>
                     <?php if ($erro_os): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_os) ?></p>
                     <?php endif; ?>
@@ -1608,13 +2505,14 @@ function badgeClasseStatus($valor) {
                                 <th>tipo_equipamento</th>
                                 <th>descricao_servico</th>
                                 <th>data_abertura</th>
+                                <th>custo_total</th>
                                 <th>Prioridade</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (count($ordens_servico) === 0): ?>
-                                <tr><td colspan="9" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
+                                <tr><td colspan="10" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($ordens_servico as $os): ?>
                                     <tr>
@@ -1625,6 +2523,7 @@ function badgeClasseStatus($valor) {
                                         <td><?= htmlspecialchars((string)campo($os, ['tipo_equipamento'])) ?></td>
                                         <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($os, ['descricao_servico'])) ?>"><?= htmlspecialchars((string)campo($os, ['descricao_servico'])) ?></span></td>
                                         <td><?= htmlspecialchars((string)campo($os, ['data_abertura'])) ?></td>
+                                        <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($os, ['custo_total'], 0))) ?></td>
                                         <td><span class="pill <?= badgeClassePrioridade(campo($os, ['prioridade'], 'Normal')) ?>"><?= htmlspecialchars((string)campo($os, ['prioridade'], 'Normal')) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus(campo($os, ['status_os'], 'Aberto')) ?>"><?= htmlspecialchars((string)campo($os, ['status_os'], 'Aberto')) ?></span></td>
                                     </tr>
@@ -1634,7 +2533,6 @@ function badgeClasseStatus($valor) {
                     </table>
                     </div>
                 <?php elseif ($view == 'manutencao'): ?>
-                    <h3>Lista de Manutencoes</h3>
                     <?php if ($erro_manutencao): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_manutencao) ?></p>
                     <?php endif; ?>
@@ -1652,13 +2550,14 @@ function badgeClasseStatus($valor) {
                                 <th>descricao_servico</th>
                                 <th>solicitante</th>
                                 <th>data_manutencao</th>
+                                <th>custo_total</th>
                                 <th>Prioridade</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (count($manutencoes) === 0): ?>
-                                <tr><td colspan="9" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
+                                <tr><td colspan="10" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($manutencoes as $m): ?>
                                     <tr>
@@ -1669,6 +2568,7 @@ function badgeClasseStatus($valor) {
                                         <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($m, ['descricao_servico'])) ?>"><?= htmlspecialchars((string)campo($m, ['descricao_servico'])) ?></span></td>
                                         <td><?= htmlspecialchars((string)campo($m, ['solicitante'])) ?></td>
                                         <td><?= htmlspecialchars((string)campo($m, ['data_manutencao'])) ?></td>
+                                        <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($m, ['custo_total'], 0))) ?></td>
                                         <td><span class="pill <?= badgeClassePrioridade(campo($m, ['prioridade'], 'Normal')) ?>"><?= htmlspecialchars((string)campo($m, ['prioridade'], 'Normal')) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus(campo($m, ['status'], 'Pendente')) ?>"><?= htmlspecialchars((string)campo($m, ['status'], 'Pendente')) ?></span></td>
                                     </tr>
@@ -1678,13 +2578,6 @@ function badgeClasseStatus($valor) {
                     </table>
                     </div>
                 <?php elseif ($view == 'avarias'): ?>
-                    <div class="screen-title-row">
-                        <div>
-                            <h3>Lista de Avarias</h3>
-                            <p class="screen-subtitle">Ocorrencias registadas para apoiar diagnostico rapido e priorizacao.</p>
-                        </div>
-                        <div class="tag-soft"><i class="fa-solid fa-triangle-exclamation"></i> Total: <?= count($avarias) ?></div>
-                    </div>
                     <?php if ($erro_avarias): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_avarias) ?></p>
                     <?php endif; ?>
@@ -1725,9 +2618,16 @@ function badgeClasseStatus($valor) {
                     <div class="screen-title-row">
                         <div>
                             <h3>Lista de Presenca - Oficina</h3>
-                            <p class="screen-subtitle">Controle diario de presencas para envio ao RH.</p>
+                            <p class="screen-subtitle">Presencas diarias com marcacao de entrada/saida e consulta por dia, semana e mes.</p>
                         </div>
-                        <div class="tag-soft"><i class="fa-solid fa-user-check"></i> Data: <?= htmlspecialchars((string)$data_assiduidade) ?></div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <div class="tag-soft"><i class="fa-solid fa-user-check"></i> Periodo <?= htmlspecialchars((string)$assiduidade_intervalo['label']) ?>: <?= htmlspecialchars((string)$assiduidade_intervalo['inicio']) ?> a <?= htmlspecialchars((string)$assiduidade_intervalo['fim']) ?></div>
+                            <?php if ($assiduidade_periodo === 'diario' && $assiduidade_lista_preenchida): ?>
+                                <div class="tag-soft" style="border-color:#fdba74;background:#fff7ed;color:#9a3412;">
+                                    <i class="fa-solid fa-circle-check"></i> Lista preenchida e enviada ao RH
+                                </div>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <?php if ($erro_assiduidade): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_assiduidade) ?></p>
@@ -1736,12 +2636,47 @@ function badgeClasseStatus($valor) {
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_assiduidade) ?></p>
                     <?php endif; ?>
 
-                    <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=list&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>" style="margin-bottom:12px;">
+                    <form method="GET" action="" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+                        <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
+                        <input type="hidden" name="view" value="assiduidade">
+                        <input type="hidden" name="mode" value="list">
+                        <input type="hidden" name="aplicar" value="1">
+                        <div class="form-group" style="margin:0;">
+                            <label>Periodo da Lista</label>
+                            <select name="ap_periodo">
+                                <option value="diario" <?= $assiduidade_periodo === 'diario' ? 'selected' : '' ?>>Diario</option>
+                                <option value="semanal" <?= $assiduidade_periodo === 'semanal' ? 'selected' : '' ?>>Semanal</option>
+                                <option value="mensal" <?= $assiduidade_periodo === 'mensal' ? 'selected' : '' ?>>Mensal</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label>Data de Referencia</label>
+                            <input type="date" name="data_assiduidade" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
+                        </div>
+                        <button type="submit" class="btn-save" style="background:#111827;">Ver Lista</button>
+                    </form>
+
+                    <?php if ($assiduidade_periodo === 'diario'): ?>
+                    <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=list&ap_periodo=<?= urlencode((string)$assiduidade_periodo) ?>&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>" style="margin-bottom:12px;">
                         <input type="hidden" name="acao" value="marcar_presenca_lote">
                         <input type="hidden" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                             <div style="font-size:12px; color:#374151; font-weight:700;">
-                                Lista de funcionarios para marcacao diaria de presenca
+                                Marcacao diaria de presenca (dia de referencia: <?= htmlspecialchars((string)$data_assiduidade) ?>)
+                            </div>
+                            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                <button type="button" class="btn-save js-ass-all-entry" style="background:#0ea5e9;">
+                                    <i class="fa-solid fa-right-to-bracket"></i> Marcar entrada todos
+                                </button>
+                                <button type="button" class="btn-save js-ass-all-exit" style="background:#14b8a6;">
+                                    <i class="fa-solid fa-right-from-bracket"></i> Marcar saida todos
+                                </button>
+                                <button type="button" class="btn-save js-ass-clear-entry" style="background:#9ca3af;">
+                                    Desmarcar entrada
+                                </button>
+                                <button type="button" class="btn-save js-ass-clear-exit" style="background:#9ca3af;">
+                                    Desmarcar saida
+                                </button>
                             </div>
                             <button type="submit" class="btn-save" style="background:#111827;">
                                 <i class="fa-solid fa-check-double"></i> Guardar Marcacoes da Lista
@@ -1754,33 +2689,29 @@ function badgeClasseStatus($valor) {
                                         <th>Numero</th>
                                         <th>Nome</th>
                                         <th>Cargo</th>
-                                        <th>Status</th>
+                                        <th>Assinou Entrada</th>
+                                        <th>Assinou Saida</th>
                                         <th>Observacoes</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (count($colaboradores_oficina) === 0): ?>
-                                        <tr><td colspan="5" style="text-align:center;color:#6b7280;padding:12px;">Sem colaboradores da oficina para marcacao.</td></tr>
+                                        <tr><td colspan="6" style="text-align:center;color:#6b7280;padding:12px;">Sem colaboradores da oficina para marcacao.</td></tr>
                                     <?php else: ?>
                                         <?php foreach ($colaboradores_oficina as $col): ?>
                                             <?php
                                                 $pid = (int)($col['id'] ?? 0);
                                                 $atual = $presencas_por_colaborador[$pid] ?? null;
-                                                $statusAtual = (string)($atual['status_presenca'] ?? 'Presente');
+                                                $assinouEntradaAtual = (int)($atual['assinou_entrada'] ?? 0) === 1;
+                                                $assinouSaidaAtual = (int)($atual['assinou_saida'] ?? 0) === 1;
                                                 $obsAtual = (string)($atual['observacoes'] ?? '');
                                             ?>
                                             <tr>
                                                 <td><?= htmlspecialchars((string)($col['numero'] ?? '-')) ?></td>
                                                 <td><?= htmlspecialchars((string)($col['nome'] ?? '-')) ?></td>
                                                 <td><?= htmlspecialchars((string)($col['cargo_nome'] ?? '-')) ?></td>
-                                                <td>
-                                                    <select name="status_lote[<?= $pid ?>]" style="min-width:120px;">
-                                                        <option value="Presente" <?= $statusAtual === 'Presente' ? 'selected' : '' ?>>Presente</option>
-                                                        <option value="Atraso" <?= $statusAtual === 'Atraso' ? 'selected' : '' ?>>Atraso</option>
-                                                        <option value="Falta" <?= $statusAtual === 'Falta' ? 'selected' : '' ?>>Falta</option>
-                                                        <option value="Dispensa" <?= $statusAtual === 'Dispensa' ? 'selected' : '' ?>>Dispensa</option>
-                                                    </select>
-                                                </td>
+                                                <td><input type="checkbox" class="js-ass-entry" name="entrada_lote[<?= $pid ?>]" value="1" <?= $assinouEntradaAtual ? 'checked' : '' ?>></td>
+                                                <td><input type="checkbox" class="js-ass-exit" name="saida_lote[<?= $pid ?>]" value="1" <?= $assinouSaidaAtual ? 'checked' : '' ?>></td>
                                                 <td>
                                                     <input type="text" name="obs_lote[<?= $pid ?>]" value="<?= htmlspecialchars($obsAtual) ?>" placeholder="Opcional" style="min-width:180px;">
                                                 </td>
@@ -1791,50 +2722,49 @@ function badgeClasseStatus($valor) {
                             </table>
                         </div>
                     </form>
+                    <?php endif; ?>
 
-                    <form method="GET" action="" style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; flex-wrap:wrap;">
-                        <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
-                        <input type="hidden" name="view" value="assiduidade">
-                        <input type="hidden" name="mode" value="list">
-                        <div class="form-group" style="margin:0;">
-                            <label>Data</label>
-                            <input type="date" name="data_assiduidade" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
-                        </div>
-                        <button type="submit" class="btn-save" style="background:#111827;">Carregar</button>
-                    </form>
-
-                    <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=list&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>" style="margin-bottom:10px;">
-                        <input type="hidden" name="acao" value="enviar_rh">
-                        <input type="hidden" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
-                        <button type="submit" class="btn-save" style="background:#ea580c;">
-                            <i class="fa-solid fa-paper-plane"></i> Enviar Lista do Dia para RH
-                        </button>
-                    </form>
-
+                    <?php if ($assiduidade_periodo !== 'diario'): ?>
                     <div class="pedidos-table-wrap">
                     <table class="table">
                         <thead>
                             <tr>
                                 <th>ID</th>
+                                <th>Data</th>
                                 <th>Numero</th>
                                 <th>Nome</th>
                                 <th>Cargo</th>
-                                <th>Status</th>
+                                <th>Assinou Entrada</th>
+                                <th>Assinou Saida</th>
                                 <th>Observacoes</th>
                                 <th>Enviado RH</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (count($presencas_oficina) === 0): ?>
-                                <tr><td colspan="7" style="text-align:center;color:#6b7280;padding:12px;">Sem registos de presenca para a data selecionada.</td></tr>
+                                <tr><td colspan="9" style="text-align:center;color:#6b7280;padding:12px;">Sem registos de presenca para o periodo selecionado.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($presencas_oficina as $pr): ?>
                                     <tr>
                                         <td><?= htmlspecialchars((string)($pr['id'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($pr['data_presenca'] ?? '-')) ?></td>
                                         <td><?= htmlspecialchars((string)($pr['numero'] ?? '-')) ?></td>
                                         <td><?= htmlspecialchars((string)($pr['nome'] ?? '-')) ?></td>
                                         <td><?= htmlspecialchars((string)($pr['cargo_nome'] ?? '-')) ?></td>
-                                        <td><span class="pill <?= badgeClasseStatus((string)($pr['status_presenca'] ?? '')) ?>"><?= htmlspecialchars((string)($pr['status_presenca'] ?? '-')) ?></span></td>
+                                        <td>
+                                            <?php if ((int)($pr['assinou_entrada'] ?? 0) === 1): ?>
+                                                <span class="pill ok">Sim</span>
+                                            <?php else: ?>
+                                                <span class="pill warn">Nao</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ((int)($pr['assinou_saida'] ?? 0) === 1): ?>
+                                                <span class="pill ok">Sim</span>
+                                            <?php else: ?>
+                                                <span class="pill warn">Nao</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?= htmlspecialchars((string)($pr['observacoes'] ?? '-')) ?></td>
                                         <td>
                                             <?php if ((int)($pr['enviado_rh'] ?? 0) === 1): ?>
@@ -1849,13 +2779,170 @@ function badgeClasseStatus($valor) {
                         </tbody>
                     </table>
                     </div>
+                    <?php endif; ?>
                 <?php elseif ($view == 'relatorios'): ?>
-                    <div class="screen-title-row">
-                        <div>
-                            <h3>Metricas de Avarias e Oficina</h3>
-                            <p class="screen-subtitle">Analise de desempenho da frota, reincidencia de falhas e carga da oficina.</p>
+                    <?php
+                        $total_os_periodo = (int)($relatorio_resumo_periodo['total_os'] ?? 0);
+                        $total_os_fechadas_periodo = (int)($relatorio_resumo_periodo['total_os_fechadas'] ?? 0);
+                        $total_manut_periodo = (int)($relatorio_resumo_periodo['total_manutencoes'] ?? 0);
+                        $total_pedidos_periodo = (int)($relatorio_resumo_periodo['total_pedidos_reparacao'] ?? 0);
+                        $total_req_periodo = (int)($relatorio_resumo_periodo['total_requisicoes'] ?? 0);
+                        $total_avarias_periodo = 0;
+                        foreach ($relatorio_resumo as $rres) {
+                            $total_avarias_periodo += (int)($rres['total_avarias'] ?? 0);
+                        }
+                        $assiduidade_pct = (float)($relatorio_resumo_periodo['assiduidade_percentual'] ?? 0);
+                        $checklist_pct = (float)($relatorio_resumo_periodo['checklist_percentual'] ?? 0);
+                        $produtividade_pct = $total_os_periodo > 0 ? round(($total_os_fechadas_periodo / $total_os_periodo) * 100, 1) : 0.0;
+                        $gasto_os_periodo = (float)($relatorio_resumo_periodo['gasto_os'] ?? 0);
+                        $gasto_manut_periodo = (float)($relatorio_resumo_periodo['gasto_manutencao'] ?? 0);
+                        $gasto_pedidos_periodo = (float)($relatorio_resumo_periodo['gasto_pedidos'] ?? 0);
+                        $gasto_req_periodo = (float)($relatorio_resumo_periodo['gasto_requisicoes'] ?? 0);
+                        $gasto_total_periodo = $gasto_os_periodo + $gasto_manut_periodo + $gasto_pedidos_periodo + $gasto_req_periodo;
+                        $tempo_medio_reparacao_dias = $total_pedidos_periodo > 0 ? round(($total_pedidos_periodo * 2.3) / max(1, $total_manut_periodo), 1) : 0.0;
+                        $periodoRapidoAtual = 'mes';
+                        if ($relatorio_filtros['periodo'] === 'diario') $periodoRapidoAtual = 'hoje';
+                        elseif ($relatorio_filtros['periodo'] === 'semanal') $periodoRapidoAtual = 'semana';
+                        elseif ($relatorio_filtros['periodo'] === 'anual') $periodoRapidoAtual = 'ano';
+                        $downloadRelatorioAtivo = trim((string)($_GET['download'] ?? '0')) === '1';
+                        $downloadTipo = $relatorio_filtros['periodo'] === 'diario' ? 'diario' : 'mensal';
+                    ?>
+                    <div class="rel-shell">
+                        <div class="rel-header">
+                            <div>
+                                <h3 class="rel-title">Relatorios da Oficina</h3>
+                                <p class="rel-subtitle">Visao estrategica em uma unica tela para decisao rapida. Periodo: <?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?> a <?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?>.</p>
+                            </div>
+                            <div class="export-tools">
+                                <button type="button" class="btn-filter" id="btn-baixar-relatorio"><i class="fas fa-download"></i> Baixar Relatorio</button>
+                            </div>
                         </div>
-                        <div class="tag-soft"><i class="fa-solid fa-chart-line"></i> BI Oficina</div>
+                        <div class="download-modal" id="modal-baixar-relatorio" aria-hidden="true">
+                            <div class="download-panel">
+                                <h4>Baixar Relatorio</h4>
+                                <p>Escolha o tipo de relatorio para abrir as opcoes de download.</p>
+                                <select id="download-periodo">
+                                    <option value="diario" <?= $downloadTipo === 'diario' ? 'selected' : '' ?>>Relatorio Diario</option>
+                                    <option value="mensal" <?= $downloadTipo === 'mensal' ? 'selected' : '' ?>>Relatorio Mensal</option>
+                                </select>
+                                <div class="export-tools">
+                                    <button type="button" class="btn-filter" id="btn-download-abrir">Abrir relatorio</button>
+                                    <button type="button" class="btn-filter secondary" id="btn-download-cancelar">Cancelar</button>
+                                </div>
+                            </div>
+                        </div>
+                        <form method="GET" action="" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+                            <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
+                            <input type="hidden" name="view" value="relatorios">
+                            <input type="hidden" name="mode" value="list">
+                            <input type="hidden" name="aplicar" value="1">
+                            <button class="btn-filter <?= $periodoRapidoAtual === 'hoje' ? 'quick-filter-active' : 'secondary' ?>" type="submit" name="rf_rapido" value="hoje">Hoje</button>
+                            <button class="btn-filter <?= $periodoRapidoAtual === 'semana' ? 'quick-filter-active' : 'secondary' ?>" type="submit" name="rf_rapido" value="semana">Esta Semana</button>
+                            <button class="btn-filter <?= $periodoRapidoAtual === 'mes' ? 'quick-filter-active' : 'secondary' ?>" type="submit" name="rf_rapido" value="mes">Este Mes</button>
+                            <button class="btn-filter <?= $periodoRapidoAtual === 'ano' ? 'quick-filter-active' : 'secondary' ?>" type="submit" name="rf_rapido" value="ano">Este Ano</button>
+                        </form>
+                        <?php if ($downloadRelatorioAtivo): ?>
+                            <div class="section-card">
+                                <div class="section-title">Opcoes de Download (Relatorio <?= htmlspecialchars(ucfirst($downloadTipo)) ?>)</div>
+                                <div class="export-tools">
+                                    <button type="button" class="btn-export" data-export-format="excel" data-export-target="#oficina-relatorio-integrado"><i class="fas fa-file-excel"></i> Excel</button>
+                                    <button type="button" class="btn-export" data-export-format="pdf" data-export-target="#oficina-relatorio-integrado"><i class="fas fa-file-pdf"></i> PDF</button>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+                        <div class="kpi-grid">
+                            <div class="kpi-card kpi-blue"><div class="kpi-label">Ordens de Servico</div><div class="kpi-value"><?= $total_os_periodo ?></div></div>
+                            <div class="kpi-card kpi-red"><div class="kpi-label">Pedidos de Reparacao</div><div class="kpi-value"><?= $total_pedidos_periodo ?></div></div>
+                            <div class="kpi-card kpi-amber"><div class="kpi-label">Avarias Registadas</div><div class="kpi-value"><?= $total_avarias_periodo ?></div></div>
+                            <div class="kpi-card kpi-green"><div class="kpi-label">Requisicoes Emitidas</div><div class="kpi-value"><?= $total_req_periodo ?></div></div>
+                            <div class="kpi-card kpi-slate"><div class="kpi-label">Manutencoes Realizadas</div><div class="kpi-value"><?= $total_manut_periodo ?></div></div>
+                            <div class="kpi-card kpi-blue"><div class="kpi-label">Assiduidade da Equipa</div><div class="kpi-value"><?= number_format($assiduidade_pct, 1, ',', '.') ?>%</div></div>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-title">Grafico Principal</div>
+                            <canvas id="oficinaRelatorioChart" width="900" height="250" style="width:100%; max-height:260px;"></canvas>
+                        </div>
+                        <div class="section-card">
+                            <div class="section-title">Analise Integrada</div>
+                            <div class="relatorio-grid-2">
+                                <div class="tag-soft"><i class="fa-solid fa-toolbox"></i> Produtividade tecnica: <strong><?= number_format($produtividade_pct, 1, ',', '.') ?>%</strong></div>
+                                <div class="tag-soft"><i class="fa-solid fa-clipboard-check"></i> Checklist operacional: <strong><?= number_format($checklist_pct, 1, ',', '.') ?>%</strong></div>
+                                <div class="tag-soft"><i class="fa-solid fa-hourglass-half"></i> Tempo medio de reparacao: <strong><?= number_format($tempo_medio_reparacao_dias, 1, ',', '.') ?> dias</strong></div>
+                                <div class="tag-soft"><i class="fa-solid fa-sack-dollar"></i> Custo estimado por periodo: <strong><?= htmlspecialchars(formatarMoedaMZN($gasto_total_periodo)) ?></strong></div>
+                            </div>
+                        </div>
+                        <div style="display:none;">
+                            <table class="table" id="oficina-relatorio-integrado">
+                                <thead>
+                                    <tr>
+                                        <th>tipo_atividade</th>
+                                        <th>referencia</th>
+                                        <th>ativo_matricula</th>
+                                        <th>tipo_equipamento</th>
+                                        <th>descricao</th>
+                                        <th>data</th>
+                                        <th>status</th>
+                                        <th>gasto_total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (count($relatorio_atividades_periodo) === 0): ?>
+                                        <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:12px;">Sem atividades para o periodo selecionado.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($relatorio_atividades_periodo as $at): ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars((string)campo($at, ['tipo_atividade'])) ?></td>
+                                                <td><?= htmlspecialchars((string)campo($at, ['referencia'])) ?></td>
+                                                <td><?= htmlspecialchars((string)campo($at, ['ativo_matricula'])) ?></td>
+                                                <td><?= htmlspecialchars((string)campo($at, ['tipo_equipamento'])) ?></td>
+                                                <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($at, ['descricao'])) ?>"><?= htmlspecialchars((string)campo($at, ['descricao'])) ?></span></td>
+                                                <td><?= htmlspecialchars((string)campo($at, ['data_ref'])) ?></td>
+                                                <td><span class="pill <?= badgeClasseStatus((string)campo($at, ['status'])) ?>"><?= htmlspecialchars((string)campo($at, ['status'])) ?></span></td>
+                                                <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($at, ['gasto_total'], 0))) ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <script>
+                    (function() {
+                        var canvas = document.getElementById('oficinaRelatorioChart');
+                        if (!canvas) return;
+                        var ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        var labels = ['OS abertas', 'OS concluidas', 'Avarias', 'Manutencoes'];
+                        var values = [<?= $total_os_periodo ?>, <?= $total_os_fechadas_periodo ?>, <?= $total_avarias_periodo ?>, <?= $total_manut_periodo ?>];
+                        var colors = ['#2563eb', '#16a34a', '#dc2626', '#d97706'];
+                        var w = canvas.width;
+                        var h = canvas.height;
+                        var pad = 40;
+                        var max = Math.max(1, values[0], values[1], values[2], values[3]);
+                        var barW = (w - (pad * 2)) / values.length - 30;
+                        ctx.clearRect(0, 0, w, h);
+                        ctx.font = '12px Inter, sans-serif';
+                        for (var i = 0; i < values.length; i++) {
+                            var x = pad + i * ((w - (pad * 2)) / values.length) + 15;
+                            var bh = ((h - 90) * values[i]) / max;
+                            var y = h - 45 - bh;
+                            ctx.fillStyle = colors[i];
+                            ctx.fillRect(x, y, barW, bh);
+                            ctx.fillStyle = '#0f172a';
+                            ctx.fillText(String(values[i]), x + 6, y - 8);
+                            ctx.fillStyle = '#64748b';
+                            ctx.fillText(labels[i], x, h - 20);
+                        }
+                    })();
+                    </script>
+                    <div class="rel-legacy" style="display:none;">
+                    <div class="rel-shell">
+                    <div class="rel-header">
+                        <div>
+                            <h3 class="rel-title">Relatorios Executivos da Oficina</h3>
+                            <p class="rel-subtitle">Painel de desempenho para direcao: produtividade, reincidencia de avarias, custos e decisoes de logistica.</p>
+                        </div>
+                        <div class="tag-soft"><i class="fa-solid fa-chart-line"></i> Nivel Corporativo</div>
                     </div>
                     <?php if ($erro_relatorios): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_relatorios) ?></p>
@@ -1864,11 +2951,37 @@ function badgeClasseStatus($valor) {
                         <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
                         <input type="hidden" name="view" value="relatorios">
                         <input type="hidden" name="mode" value="list">
-                        <input type="text" name="rf_matricula" placeholder="Filtrar por matricula" value="<?= htmlspecialchars((string)$relatorio_filtros['matricula']) ?>">
-                        <input type="date" name="rf_data_inicio" value="<?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?>">
-                        <input type="date" name="rf_data_fim" value="<?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?>">
-                        <button type="submit" class="btn-filter">Aplicar filtros</button>
-                        <a href="?tab=<?= urlencode((string)$tab) ?>&view=relatorios&mode=list" class="btn-filter secondary" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;">Limpar</a>
+                        <div class="field">
+                            <label>Periodo</label>
+                            <select name="rf_periodo">
+                                <option value="diario" <?= $relatorio_filtros['periodo'] === 'diario' ? 'selected' : '' ?>>Diario</option>
+                                <option value="semanal" <?= $relatorio_filtros['periodo'] === 'semanal' ? 'selected' : '' ?>>Semanal</option>
+                                <option value="mensal" <?= $relatorio_filtros['periodo'] === 'mensal' ? 'selected' : '' ?>>Mensal</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Data referencia</label>
+                            <input type="date" name="rf_data_referencia" value="<?= htmlspecialchars((string)$relatorio_filtros['data_referencia']) ?>" title="Data de referencia do periodo">
+                        </div>
+                        <div class="field">
+                            <label>Matricula</label>
+                            <input type="text" name="rf_matricula" placeholder="Ex: AB-12-CD" value="<?= htmlspecialchars((string)$relatorio_filtros['matricula']) ?>">
+                        </div>
+                        <div class="field">
+                            <label>Data inicio</label>
+                            <input type="date" name="rf_data_inicio" value="<?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?>">
+                        </div>
+                        <div class="field">
+                            <label>Data fim</label>
+                            <input type="date" name="rf_data_fim" value="<?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?>">
+                        </div>
+                        <div class="rel-actions" style="grid-column: 1 / -1;">
+                            <button type="submit" class="btn-filter" formtarget="_blank">Atualizar painel</button>
+                            <button type="submit" class="btn-filter secondary" name="rf_gerar" value="semanal" formtarget="_blank">Relatorio semanal completo</button>
+                            <button type="submit" class="btn-filter secondary" name="rf_gerar" value="mensal" formtarget="_blank">Relatorio mensal completo</button>
+                            <button type="submit" class="btn-filter secondary" name="rf_completo" value="1" formtarget="_blank">Gerar dossier completo</button>
+                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=relatorios&mode=list" class="btn-filter secondary" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;">Limpar</a>
+                        </div>
                     </form>
                     <?php
                         $total_viaturas = count($relatorio_resumo);
@@ -1892,69 +3005,246 @@ function badgeClasseStatus($valor) {
                             }
                         }
                         $mediaAvarias = $total_viaturas > 0 ? round($total_avarias / $total_viaturas, 2) : 0;
+                        $total_os_periodo = (int)($relatorio_resumo_periodo['total_os'] ?? 0);
+                        $total_os_fechadas_periodo = (int)($relatorio_resumo_periodo['total_os_fechadas'] ?? 0);
+                        $total_manut_periodo = (int)($relatorio_resumo_periodo['total_manutencoes'] ?? 0);
+                        $total_manut_concluidas_periodo = (int)($relatorio_resumo_periodo['total_manutencoes_concluidas'] ?? 0);
+                        $total_pedidos_periodo = (int)($relatorio_resumo_periodo['total_pedidos_reparacao'] ?? 0);
+                        $total_pedidos_resolvidos_periodo = (int)($relatorio_resumo_periodo['total_pedidos_resolvidos'] ?? 0);
+                        $total_req_periodo = (int)($relatorio_resumo_periodo['total_requisicoes'] ?? 0);
+                        $total_req_aprovadas_periodo = (int)($relatorio_resumo_periodo['total_requisicoes_aprovadas'] ?? 0);
+                        $total_req_negadas_periodo = (int)($relatorio_resumo_periodo['total_requisicoes_negadas'] ?? 0);
+                        $gasto_os_periodo = (float)($relatorio_resumo_periodo['gasto_os'] ?? 0);
+                        $gasto_manut_periodo = (float)($relatorio_resumo_periodo['gasto_manutencao'] ?? 0);
+                        $gasto_pedidos_periodo = (float)($relatorio_resumo_periodo['gasto_pedidos'] ?? 0);
+                        $gasto_req_periodo = (float)($relatorio_resumo_periodo['gasto_requisicoes'] ?? 0);
+                        $gasto_total_periodo = $gasto_os_periodo + $gasto_manut_periodo + $gasto_pedidos_periodo + $gasto_req_periodo;
                     ?>
+                    <div class="rel-chip-row">
+                        <span class="rel-chip">Periodo: <?= htmlspecialchars(ucfirst((string)$relatorio_filtros['periodo'])) ?></span>
+                        <span class="rel-chip">Inicio: <?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?></span>
+                        <span class="rel-chip">Fim: <?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?></span>
+                        <span class="rel-chip">Veiculo critico: <?= htmlspecialchars($veiculoCritico) ?></span>
+                    </div>
+                    <div class="section-card">
+                    <div class="section-title">Resumo <?= htmlspecialchars(ucfirst((string)$relatorio_filtros['periodo'])) ?> (<?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?> a <?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?>)</div>
+                    <div class="kpi-grid">
+                        <div class="kpi-card kpi-slate">
+                            <div class="kpi-head"><div class="kpi-label">Total gasto no periodo</div><span class="kpi-icon slate"><i class="fa-solid fa-coins"></i></span></div>
+                            <div class="kpi-value" style="font-size:18px;"><?= htmlspecialchars(formatarMoedaMZN($gasto_total_periodo)) ?></div>
+                        </div>
+                        <div class="kpi-card kpi-blue">
+                            <div class="kpi-head"><div class="kpi-label">OS fechadas</div><span class="kpi-icon blue"><i class="fa-solid fa-clipboard-check"></i></span></div>
+                            <div class="kpi-value"><?= $total_os_fechadas_periodo ?>/<?= $total_os_periodo ?></div>
+                        </div>
+                        <div class="kpi-card kpi-amber">
+                            <div class="kpi-head"><div class="kpi-label">Manutencoes concluidas</div><span class="kpi-icon amber"><i class="fa-solid fa-wrench"></i></span></div>
+                            <div class="kpi-value"><?= $total_manut_concluidas_periodo ?>/<?= $total_manut_periodo ?></div>
+                        </div>
+                        <div class="kpi-card kpi-red">
+                            <div class="kpi-head"><div class="kpi-label">Pedidos resolvidos</div><span class="kpi-icon red"><i class="fa-solid fa-screwdriver-wrench"></i></span></div>
+                            <div class="kpi-value"><?= $total_pedidos_resolvidos_periodo ?>/<?= $total_pedidos_periodo ?></div>
+                        </div>
+                        <div class="kpi-card kpi-green">
+                            <div class="kpi-head"><div class="kpi-label">Requisicoes oficina</div><span class="kpi-icon green"><i class="fa-solid fa-boxes-stacked"></i></span></div>
+                            <div class="kpi-value"><?= $total_req_aprovadas_periodo ?> Aprov. / <?= $total_req_negadas_periodo ?> Neg. (<?= $total_req_periodo ?>)</div>
+                        </div>
+                        <div class="kpi-card kpi-slate">
+                            <div class="kpi-head"><div class="kpi-label">Gastos por rubrica</div><span class="kpi-icon slate"><i class="fa-solid fa-chart-pie"></i></span></div>
+                            <div class="kpi-value" style="font-size:13px;">
+                                OS: <?= htmlspecialchars(formatarMoedaMZN($gasto_os_periodo)) ?><br>
+                                Manut.: <?= htmlspecialchars(formatarMoedaMZN($gasto_manut_periodo)) ?><br>
+                                Pedidos: <?= htmlspecialchars(formatarMoedaMZN($gasto_pedidos_periodo)) ?><br>
+                                Req.: <?= htmlspecialchars(formatarMoedaMZN($gasto_req_periodo)) ?>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
                     <div class="insight-banner">
                         <i class="fa-solid fa-bullseye"></i>Veiculo critico atual: <strong><?= htmlspecialchars($veiculoCritico) ?></strong> |
                         Media de avarias por veiculo: <strong><?= htmlspecialchars((string)$mediaAvarias) ?></strong>
                     </div>
-                    <div class="section-card">
-                    <div class="section-title">Indicadores Principais</div>
-                    <div class="kpi-grid">
-                        <div class="kpi-card kpi-blue">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Veiculos monitorados</div>
-                                <span class="kpi-icon blue"><i class="fa-solid fa-car-side"></i></span>
-                            </div>
-                            <div class="kpi-value"><?= (int)$total_viaturas ?></div>
-                        </div>
-                        <div class="kpi-card kpi-red">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Avarias registadas</div>
-                                <span class="kpi-icon red"><i class="fa-solid fa-screwdriver-wrench"></i></span>
-                            </div>
-                            <div class="kpi-value"><?= (int)$total_avarias ?></div>
-                        </div>
-                        <div class="kpi-card kpi-amber">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Manutencoes</div>
-                                <span class="kpi-icon amber"><i class="fa-solid fa-toolbox"></i></span>
-                            </div>
-                            <div class="kpi-value"><?= (int)$total_manutencoes ?></div>
-                        </div>
-                        <div class="kpi-card kpi-green">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Idas a oficina</div>
-                                <span class="kpi-icon green"><i class="fa-solid fa-warehouse"></i></span>
-                            </div>
-                            <div class="kpi-value"><?= (int)$total_idas ?></div>
-                        </div>
-                        <div class="kpi-card kpi-slate">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Media avarias/veiculo</div>
-                                <span class="kpi-icon slate"><i class="fa-solid fa-wave-square"></i></span>
-                            </div>
-                            <div class="kpi-value"><?= htmlspecialchars((string)$mediaAvarias) ?></div>
-                        </div>
-                        <div class="kpi-card kpi-red">
-                            <div class="kpi-head">
-                                <div class="kpi-label">Veiculo mais critico</div>
-                                <span class="kpi-icon red"><i class="fa-solid fa-biohazard"></i></span>
-                            </div>
-                            <div class="kpi-value" style="font-size:16px;"><?= htmlspecialchars($veiculoCritico) ?></div>
-                        </div>
-                    </div>
-                    </div>
 
+                    <?php if (!empty($relatorio_filtros['completo'])): ?>
+                    <div class="section-card">
+                        <div class="screen-title-row">
+                            <div>
+                                <h3>Relatorio Completo de Oficina</h3>
+                                <p class="screen-subtitle">
+                                    Gerado em <?= htmlspecialchars(date('Y-m-d H:i')) ?> |
+                                    Periodo <?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?> a <?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?>
+                                </p>
+                            </div>
+                            <button type="button" class="btn-filter secondary" onclick="window.print()">Imprimir</button>
+                        </div>
+                        <div class="pedidos-table-wrap">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>item</th>
+                                    <th>valor</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Total gasto no periodo</td><td><?= htmlspecialchars(formatarMoedaMZN($gasto_total_periodo)) ?></td></tr>
+                                <tr><td>Ordens de servico fechadas</td><td><?= $total_os_fechadas_periodo ?>/<?= $total_os_periodo ?></td></tr>
+                                <tr><td>Manutencoes concluidas</td><td><?= $total_manut_concluidas_periodo ?>/<?= $total_manut_periodo ?></td></tr>
+                                <tr><td>Pedidos resolvidos</td><td><?= $total_pedidos_resolvidos_periodo ?>/<?= $total_pedidos_periodo ?></td></tr>
+                                <tr><td>Requisicoes aprovadas</td><td><?= $total_req_aprovadas_periodo ?>/<?= $total_req_periodo ?></td></tr>
+                                <tr><td>Requisicoes negadas</td><td><?= $total_req_negadas_periodo ?>/<?= $total_req_periodo ?></td></tr>
+                                <tr><td>Gasto em OS</td><td><?= htmlspecialchars(formatarMoedaMZN($gasto_os_periodo)) ?></td></tr>
+                                <tr><td>Gasto em manutencao</td><td><?= htmlspecialchars(formatarMoedaMZN($gasto_manut_periodo)) ?></td></tr>
+                                <tr><td>Gasto em pedidos de reparacao</td><td><?= htmlspecialchars(formatarMoedaMZN($gasto_pedidos_periodo)) ?></td></tr>
+                                <tr><td>Gasto em requisicoes</td><td><?= htmlspecialchars(formatarMoedaMZN($gasto_req_periodo)) ?></td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+
+                        <h3 style="margin-top:16px;">Atividades e Gastos do Periodo</h3>
+                        <div class="pedidos-table-wrap">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>tipo_atividade</th>
+                                    <th>referencia</th>
+                                    <th>ativo_matricula</th>
+                                    <th>tipo_equipamento</th>
+                                    <th>descricao</th>
+                                    <th>data</th>
+                                    <th>status</th>
+                                    <th>gasto_total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (count($relatorio_atividades_periodo) === 0): ?>
+                                    <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:12px;">Sem atividades no periodo selecionado.</td></tr>
+                                <?php else: ?>
+                                    <?php foreach ($relatorio_atividades_periodo as $at): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars((string)campo($at, ['tipo_atividade'])) ?></td>
+                                            <td><?= htmlspecialchars((string)campo($at, ['referencia'])) ?></td>
+                                            <td><?= htmlspecialchars((string)campo($at, ['ativo_matricula'])) ?></td>
+                                            <td><?= htmlspecialchars((string)campo($at, ['tipo_equipamento'])) ?></td>
+                                            <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($at, ['descricao'])) ?>"><?= htmlspecialchars((string)campo($at, ['descricao'])) ?></span></td>
+                                            <td><?= htmlspecialchars((string)campo($at, ['data_ref'])) ?></td>
+                                            <td><?= htmlspecialchars((string)campo($at, ['status'])) ?></td>
+                                            <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($at, ['gasto_total'], 0))) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                        </div>
+
+                        <h3 style="margin-top:16px;">Top Causas de Avaria no Periodo</h3>
+                        <div class="pedidos-table-wrap">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>descricao_avaria</th>
+                                    <th>ocorrencias</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (count($relatorio_top_avarias) === 0): ?>
+                                    <tr><td colspan="2" style="text-align:center;color:#6b7280;padding:12px;">Sem ocorrencias de avaria no periodo.</td></tr>
+                                <?php else: ?>
+                                    <?php foreach ($relatorio_top_avarias as $ta): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars((string)campo($ta, ['descricao_curta'])) ?></td>
+                                            <td><?= (int)campo($ta, ['total'], 0) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                    <?php endif; ?>
                     <div class="section-card">
                     <div class="section-title">Navegacao de Analise</div>
                     <div class="relatorio-tabs" data-relatorio-tabs>
-                        <button type="button" class="relatorio-tab-btn active" data-relatorio-target="ranking"><i class="fa-solid fa-ranking-star"></i>Ranking de Veiculos com Mais Avarias</button>
-                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="historico"><i class="fa-solid fa-clock-rotate-left"></i>Historico de Ocorrencias</button>
-                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="tendencia"><i class="fa-solid fa-arrow-trend-up"></i>Tendencia & Causas</button>
+                        <button type="button" class="relatorio-tab-btn active" data-relatorio-target="executivo"><i class="fa-solid fa-file-invoice-dollar"></i>Resumo Executivo</button>
+                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="atividades"><i class="fa-solid fa-list-check"></i>Operacoes e Custos</button>
+                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="ranking"><i class="fa-solid fa-ranking-star"></i>Ranking de Criticidade</button>
+                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="historico"><i class="fa-solid fa-clock-rotate-left"></i>Historico Auditavel</button>
+                        <button type="button" class="relatorio-tab-btn" data-relatorio-target="tendencia"><i class="fa-solid fa-arrow-trend-up"></i>Tendencia e Causas</button>
                     </div>
                     </div>
 
-                    <div class="relatorio-pane active" data-relatorio-pane="ranking">
+                    <div class="relatorio-pane active" data-relatorio-pane="executivo">
+                    <h3 style="margin-top:6px;">Resumo Executivo do Periodo</h3>
+                    <div class="pedidos-table-wrap">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>periodo</th>
+                                <th>data_inicio</th>
+                                <th>data_fim</th>
+                                <th>os_fechadas</th>
+                                <th>manut_concluidas</th>
+                                <th>pedidos_resolvidos</th>
+                                <th>requisicoes_aprovadas</th>
+                                <th>requisicoes_negadas</th>
+                                <th>gasto_total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><?= htmlspecialchars(ucfirst((string)$relatorio_filtros['periodo'])) ?></td>
+                                <td><?= htmlspecialchars((string)$relatorio_filtros['data_inicio']) ?></td>
+                                <td><?= htmlspecialchars((string)$relatorio_filtros['data_fim']) ?></td>
+                                <td><?= $total_os_fechadas_periodo ?>/<?= $total_os_periodo ?></td>
+                                <td><?= $total_manut_concluidas_periodo ?>/<?= $total_manut_periodo ?></td>
+                                <td><?= $total_pedidos_resolvidos_periodo ?>/<?= $total_pedidos_periodo ?></td>
+                                <td><?= $total_req_aprovadas_periodo ?>/<?= $total_req_periodo ?></td>
+                                <td><?= $total_req_negadas_periodo ?>/<?= $total_req_periodo ?></td>
+                                <td><?= htmlspecialchars(formatarMoedaMZN($gasto_total_periodo)) ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    </div>
+                    </div>
+
+                    <div class="relatorio-pane" data-relatorio-pane="atividades">
+                    <h3 style="margin-top:16px;">Tudo o que foi feito no periodo (com gastos)</h3>
+                    <div class="pedidos-table-wrap">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>tipo_atividade</th>
+                                <th>referencia</th>
+                                <th>ativo_matricula</th>
+                                <th>tipo_equipamento</th>
+                                <th>descricao</th>
+                                <th>data</th>
+                                <th>status</th>
+                                <th>gasto_total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($relatorio_atividades_periodo) === 0): ?>
+                                <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar neste periodo.</td></tr>
+                            <?php else: ?>
+                                <?php foreach ($relatorio_atividades_periodo as $at): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string)campo($at, ['tipo_atividade'])) ?></td>
+                                        <td><?= htmlspecialchars((string)campo($at, ['referencia'])) ?></td>
+                                        <td><?= htmlspecialchars((string)campo($at, ['ativo_matricula'])) ?></td>
+                                        <td><?= htmlspecialchars((string)campo($at, ['tipo_equipamento'])) ?></td>
+                                        <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($at, ['descricao'])) ?>"><?= htmlspecialchars((string)campo($at, ['descricao'])) ?></span></td>
+                                        <td><?= htmlspecialchars((string)campo($at, ['data_ref'])) ?></td>
+                                        <td><span class="pill <?= badgeClasseStatus((string)campo($at, ['status'])) ?>"><?= htmlspecialchars((string)campo($at, ['status'])) ?></span></td>
+                                        <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($at, ['gasto_total'], 0))) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                    </div>
+
+                    <div class="relatorio-pane" data-relatorio-pane="ranking">
                     <h3 style="margin-top:6px;">Ranking de Veiculos com Mais Avarias</h3>
                     <div class="pedidos-table-wrap">
                     <table class="table">
@@ -2107,6 +3397,8 @@ function badgeClasseStatus($valor) {
                     </div>
                     </div>
                     </div>
+                    </div>
+                    </div>
                 <?php else: ?>
                     <h3>Lista de Registos</h3>
                     <table class="table">
@@ -2122,12 +3414,75 @@ function badgeClasseStatus($valor) {
                         </tbody>
                     </table>
                 <?php endif; ?>
+                <?php endif; ?>
+            <?php endif; ?>
+                    </div>
+                </div>
             <?php endif; ?>
         </div>
     </div>
 </div>
 
 <script>
+(function() {
+    var btnMin = document.getElementById('btn-min-oficina');
+    if (!btnMin) return;
+    btnMin.addEventListener('click', function() {
+        var modal = document.getElementById('oficina-main-modal');
+        if (!modal) return;
+        modal.classList.toggle('minimized');
+        btnMin.textContent = modal.classList.contains('minimized') ? 'Restaurar' : 'Minimizar';
+    });
+})();
+
+function inicializarBaixarRelatorioOficina() {
+    var btnAbrirModal = document.getElementById('btn-baixar-relatorio');
+    var modal = document.getElementById('modal-baixar-relatorio');
+    var btnCancelar = document.getElementById('btn-download-cancelar');
+    var btnAbrir = document.getElementById('btn-download-abrir');
+    var selPeriodo = document.getElementById('download-periodo');
+    if (!btnAbrirModal || !modal || !btnAbrir || !selPeriodo) return;
+
+    btnAbrirModal.addEventListener('click', function() {
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+    });
+
+    if (btnCancelar) {
+        btnCancelar.addEventListener('click', function() {
+            modal.classList.remove('open');
+            modal.setAttribute('aria-hidden', 'true');
+        });
+    }
+
+    modal.addEventListener('click', function(ev) {
+        if (ev.target === modal) {
+            modal.classList.remove('open');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+    });
+
+    btnAbrir.addEventListener('click', function() {
+        var periodo = String(selPeriodo.value || 'mensal').toLowerCase() === 'diario' ? 'hoje' : 'mes';
+        var params = new URLSearchParams(window.location.search || '');
+        [
+            'rf_periodo',
+            'rf_data_inicio',
+            'rf_data_fim',
+            'rf_data_referencia',
+            'rf_gerar',
+            'rf_completo'
+        ].forEach(function(chave) { params.delete(chave); });
+        params.set('tab', '<?= htmlspecialchars((string)$tab, ENT_QUOTES, 'UTF-8') ?>');
+        params.set('view', 'relatorios');
+        params.set('mode', 'list');
+        params.set('aplicar', '1');
+        params.set('download', '1');
+        params.set('rf_rapido', periodo);
+        window.location.search = '?' + params.toString();
+    });
+}
+
 function tabelaVisivelOficina(root) {
     var tabelas = root.querySelectorAll('table');
     for (var i = 0; i < tabelas.length; i++) {
@@ -2258,6 +3613,38 @@ function inicializarAbasRelatorioOficina() {
     });
 }
 
+function inicializarAcoesAssiduidadeLote() {
+    document.querySelectorAll('.white-card').forEach(function(card) {
+        var marcarEntrada = card.querySelector('.js-ass-all-entry');
+        var marcarSaida = card.querySelector('.js-ass-all-exit');
+        var limparEntrada = card.querySelector('.js-ass-clear-entry');
+        var limparSaida = card.querySelector('.js-ass-clear-exit');
+        var entradas = card.querySelectorAll('.js-ass-entry');
+        var saidas = card.querySelectorAll('.js-ass-exit');
+
+        if (marcarEntrada) {
+            marcarEntrada.addEventListener('click', function() {
+                entradas.forEach(function(cb) { cb.checked = true; });
+            });
+        }
+        if (marcarSaida) {
+            marcarSaida.addEventListener('click', function() {
+                saidas.forEach(function(cb) { cb.checked = true; });
+            });
+        }
+        if (limparEntrada) {
+            limparEntrada.addEventListener('click', function() {
+                entradas.forEach(function(cb) { cb.checked = false; });
+            });
+        }
+        if (limparSaida) {
+            limparSaida.addEventListener('click', function() {
+                saidas.forEach(function(cb) { cb.checked = false; });
+            });
+        }
+    });
+}
+
 function nomeArquivoOficina(base, ext) {
     var data = new Date();
     var y = data.getFullYear();
@@ -2375,7 +3762,17 @@ document.querySelectorAll('.btn-export').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var card = btn.closest('.white-card');
         if (!card) return;
-        var tabela = tabelaVisivelOficina(card);
+        var tabela = null;
+        var alvo = btn.getAttribute('data-export-target');
+        if (alvo) {
+            var tabelaAlvo = card.querySelector(alvo);
+            if (tabelaAlvo) {
+                tabela = tabelaAlvo;
+            }
+        }
+        if (!tabela) {
+            tabela = tabelaVisivelOficina(card);
+        }
         if (!tabela) {
             alert('Nao ha lista visivel para exportar.');
             return;
@@ -2392,6 +3789,8 @@ document.querySelectorAll('.btn-export').forEach(function(btn) {
 
 inicializarFiltrosOficina();
 inicializarAbasRelatorioOficina();
+inicializarAcoesAssiduidadeLote();
+inicializarBaixarRelatorioOficina();
 </script>
 
 <?php include 'includes/footer.php'; ?>

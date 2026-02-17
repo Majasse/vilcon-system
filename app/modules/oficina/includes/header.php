@@ -1,3 +1,9 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+require_once dirname(__DIR__, 3) . '/includes/user_profile_widget.php';
+?>
 <!DOCTYPE html>
 <html lang="pt">
 <head>
@@ -61,3 +67,4 @@
 </head>
 
 <body>
+<?php renderUserProfileWidget(); ?>
