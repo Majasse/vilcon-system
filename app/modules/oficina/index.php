@@ -13,13 +13,13 @@ if (!isset($_SESSION['usuario_id'])) {
 $tab = $_GET['tab'] ?? 'oficina';
 $view = $_GET['view'] ?? 'ordens_servico';
 $mode = $_GET['mode'] ?? 'home';
-if (!in_array($mode, ['home', 'list', 'form'], true)) {
+if (!in_array($mode, ['home', 'list', 'form', 'detalhe'], true)) {
     $mode = 'home';
 }
 if ($view === 'relatorios') {
     $mode = 'list';
 }
-$aplicar_lista = (isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1') || $view === 'relatorios';
+$aplicar_lista = (isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1') || in_array($view, ['relatorios', 'pedidos_reparacao'], true);
 
 $proximo_os = "OS-OF-" . date('Y') . "-0001";
 
@@ -28,6 +28,10 @@ $pedidos_reparacao = [];
 $requisicoes_oficina = [];
 $manutencoes = [];
 $avarias = [];
+$pedido_reparacao_detalhe = null;
+$materiais_pedido_detalhe = [];
+$requisicoes_pedido_detalhe = [];
+$detalhe_lista = 'ambos';
 $relatorio_resumo = [];
 $relatorio_historico = [];
 $relatorio_tendencia_mensal = [];
@@ -230,6 +234,19 @@ function garantirEstruturasOficina(PDO $pdo): void {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS oficina_pedido_materiais (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                pedido_id INT NOT NULL,
+                item VARCHAR(180) NOT NULL,
+                quantidade DECIMAL(12,2) NOT NULL DEFAULT 0,
+                unidade VARCHAR(20) NOT NULL DEFAULT 'un',
+                observacoes VARCHAR(255) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_pedido_id (pedido_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
     } catch (PDOException $e) {
         throw new RuntimeException('Nao foi possivel preparar as tabelas da oficina: ' . $e->getMessage());
     }
@@ -276,6 +293,19 @@ function garantirEstruturasOficina(PDO $pdo): void {
         $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'prioridade', "VARCHAR(20) NOT NULL DEFAULT 'Normal'");
         $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'status', "VARCHAR(30) NOT NULL DEFAULT 'Pendente'");
         $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'custo_estimado', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'diagnostico_realizado', 'TINYINT(1) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'descricao_tecnica', 'TEXT NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'equipa_diagnostico', 'VARCHAR(180) NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'resolve_interno', 'TINYINT(1) NOT NULL DEFAULT 1');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'motivo_externo', 'TEXT NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'encaminhado_logistica_em', 'DATETIME NULL');
+        $garantirColuna($pdo, 'oficina_pedidos_reparacao', 'encaminhado_logistica_por', 'VARCHAR(150) NULL');
+
+        $garantirColuna($pdo, 'oficina_pedido_materiais', 'pedido_id', 'INT NOT NULL');
+        $garantirColuna($pdo, 'oficina_pedido_materiais', 'item', 'VARCHAR(180) NOT NULL');
+        $garantirColuna($pdo, 'oficina_pedido_materiais', 'quantidade', 'DECIMAL(12,2) NOT NULL DEFAULT 0');
+        $garantirColuna($pdo, 'oficina_pedido_materiais', 'unidade', "VARCHAR(20) NOT NULL DEFAULT 'un'");
+        $garantirColuna($pdo, 'oficina_pedido_materiais', 'observacoes', 'VARCHAR(255) NULL');
 
         $garantirColuna($pdo, 'oficina_manutencoes', 'ativo_matricula', "VARCHAR(50) NOT NULL DEFAULT ''");
         $garantirColuna($pdo, 'oficina_manutencoes', 'tipo_equipamento', "VARCHAR(150) NOT NULL DEFAULT ''");
@@ -568,8 +598,9 @@ if ($view === 'pedidos_reparacao') {
                     }
                     $stmt = $pdo->prepare("UPDATE oficina_pedidos_reparacao SET status = 'Aceito' WHERE id = :id");
                     $stmt->execute(['id' => $id]);
-                    $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Em andamento' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
-                    $msg_pedidos = "Pedido #{$id} aceito.";
+                    $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Aceito' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
+                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$id}");
+                    exit;
                 } elseif ($acao === 'andamento') {
                     if ($statusAtual !== 'aceito') {
                         throw new RuntimeException("Pedido #{$id} precisa estar aceito para entrar em andamento.");
@@ -586,6 +617,196 @@ if ($view === 'pedidos_reparacao') {
                     $stmt->execute(['id' => $id]);
                     $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Fechado' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $id]);
                     $msg_pedidos = "Pedido #{$id} marcado como resolvido.";
+                }
+            }
+
+            if (in_array($acao, ['aceitar_detalhe', 'salvar_diagnostico_detalhe', 'adicionar_material_detalhe', 'enviar_logistica_detalhe'], true)) {
+                $pedidoId = (int)($_POST['pedido_id'] ?? 0);
+                if ($pedidoId <= 0) {
+                    throw new RuntimeException('Pedido de reparacao invalido.');
+                }
+
+                $stmtPedido = $pdo->prepare("
+                    SELECT id, status, ativo_matricula, tipo_equipamento, prioridade, descricao_avaria, COALESCE(diagnostico_realizado, 0) AS diagnostico_realizado
+                    FROM oficina_pedidos_reparacao
+                    WHERE id = :id
+                    LIMIT 1
+                ");
+                $stmtPedido->execute(['id' => $pedidoId]);
+                $pedidoRow = $stmtPedido->fetch(PDO::FETCH_ASSOC);
+                if (!$pedidoRow) {
+                    throw new RuntimeException('Pedido de reparacao nao encontrado.');
+                }
+
+                if ($acao === 'aceitar_detalhe') {
+                    $statusAtual = normalizarStatusPedido((string)($pedidoRow['status'] ?? ''));
+                    if ($statusAtual === 'pendente') {
+                        $pdo->prepare("UPDATE oficina_pedidos_reparacao SET status = 'Aceito' WHERE id = :id")->execute(['id' => $pedidoId]);
+                        $pdo->prepare("UPDATE oficina_ordens_servico SET status_os = 'Aceito' WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :id")->execute(['id' => $pedidoId]);
+                        $msg_pedidos = "Pedido #{$pedidoId} aceito com sucesso.";
+                    } else {
+                        $msg_pedidos = "Pedido #{$pedidoId} ja estava em estado processado.";
+                    }
+                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}");
+                    exit;
+                }
+
+                if ($acao === 'salvar_diagnostico_detalhe') {
+                    $descricaoTecnica = trim((string)($_POST['descricao_tecnica'] ?? ''));
+                    $diagFeito = isset($_POST['diagnostico_realizado']) ? 1 : 0;
+                    $equipaDiagnostico = trim((string)($_POST['equipa_diagnostico'] ?? ''));
+                    if ($descricaoTecnica !== '') {
+                        $diagFeito = 1;
+                    }
+                    if ($equipaDiagnostico === '') {
+                        throw new RuntimeException('Informe a equipa responsavel pelo diagnostico.');
+                    }
+                    $pdo->prepare("
+                        UPDATE oficina_pedidos_reparacao
+                        SET diagnostico_realizado = :diag,
+                            descricao_tecnica = :descricao,
+                            equipa_diagnostico = :equipa
+                        WHERE id = :id
+                    ")->execute([
+                        'diag' => $diagFeito,
+                        'descricao' => $descricaoTecnica !== '' ? $descricaoTecnica : null,
+                        'equipa' => $equipaDiagnostico,
+                        'id' => $pedidoId
+                    ]);
+                    $msg_pedidos = "Diagnostico tecnico atualizado no pedido #{$pedidoId}.";
+                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}");
+                    exit;
+                }
+
+                if ($acao === 'adicionar_material_detalhe') {
+                    $item = trim((string)($_POST['material_item'] ?? ''));
+                    $quantidade = (float)($_POST['material_quantidade'] ?? 0);
+                    $unidade = trim((string)($_POST['material_unidade'] ?? 'un'));
+                    $obsMaterial = trim((string)($_POST['material_observacoes'] ?? ''));
+                    if ($item === '' || $quantidade <= 0) {
+                        throw new RuntimeException('Informe material e quantidade valida.');
+                    }
+                    $pdo->prepare("
+                        INSERT INTO oficina_pedido_materiais
+                            (pedido_id, item, quantidade, unidade, observacoes)
+                        VALUES
+                            (:pedido_id, :item, :quantidade, :unidade, :observacoes)
+                    ")->execute([
+                        'pedido_id' => $pedidoId,
+                        'item' => $item,
+                        'quantidade' => $quantidade,
+                        'unidade' => $unidade !== '' ? $unidade : 'un',
+                        'observacoes' => $obsMaterial !== '' ? $obsMaterial : null,
+                    ]);
+                    $msg_pedidos = "Material adicionado ao pedido #{$pedidoId}.";
+                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}");
+                    exit;
+                }
+
+                if ($acao === 'enviar_logistica_detalhe') {
+                    $materiaisStmt = $pdo->prepare("
+                        SELECT item, quantidade, unidade, observacoes
+                        FROM oficina_pedido_materiais
+                        WHERE pedido_id = :pedido_id
+                        ORDER BY id ASC
+                    ");
+                    $materiaisStmt->execute(['pedido_id' => $pedidoId]);
+                    $materiais = $materiaisStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                    if (count($materiais) === 0) {
+                        throw new RuntimeException('Adicione pelo menos um material necessario antes de enviar para Logistica.');
+                    }
+
+                    $diagTexto = trim((string)($pedidoRow['descricao_avaria'] ?? ''));
+                    $diagTecnicoStmt = $pdo->prepare("SELECT descricao_tecnica FROM oficina_pedidos_reparacao WHERE id = :id");
+                    $diagTecnicoStmt->execute(['id' => $pedidoId]);
+                    $diagTecnico = trim((string)($diagTecnicoStmt->fetchColumn() ?: ''));
+                    $diagMetaStmt = $pdo->prepare("SELECT equipa_diagnostico FROM oficina_pedidos_reparacao WHERE id = :id");
+                    $diagMetaStmt->execute(['id' => $pedidoId]);
+                    $diagMeta = $diagMetaStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $diagFeito = (int)($pedidoRow['diagnostico_realizado'] ?? 0) === 1;
+                    if (!$diagFeito || $diagTecnico === '') {
+                        throw new RuntimeException('Marque o diagnostico e preencha a descricao tecnica antes de enviar para Logistica.');
+                    }
+                    $descricaoTecnicaFinal = $diagTecnico !== '' ? $diagTecnico : $diagTexto;
+                    $equipaDiagFinal = trim((string)($diagMeta['equipa_diagnostico'] ?? ''));
+
+                    $pdo->beginTransaction();
+                    foreach ($materiais as $m) {
+                        $obsReq = trim((string)($m['observacoes'] ?? ''));
+                        $observacoesReq = 'Pedido Oficina #' . $pedidoId . ' | Matricula: ' . (string)($pedidoRow['ativo_matricula'] ?? '-') . ' | Diagnostico: ' . $descricaoTecnicaFinal;
+                        if ($obsReq !== '') {
+                            $observacoesReq .= ' | Material Obs: ' . $obsReq;
+                        }
+                        $observacoesReq .= ' [PEDIDO_OFICINA_ID:' . $pedidoId . ']';
+
+                        $stmtReq = $pdo->prepare("
+                            INSERT INTO logistica_requisicoes
+                                (origem, destino, item, quantidade, unidade, prioridade, status, data_requisicao, responsavel, observacoes, origem_modulo, categoria_item, valor_total)
+                            VALUES
+                                ('Oficina', 'Logistica', :item, :quantidade, :unidade, :prioridade, 'Pendente', :data_requisicao, :responsavel, :observacoes, 'oficina', 'Peca', 0)
+                        ");
+                        $stmtReq->execute([
+                            'item' => (string)($m['item'] ?? ''),
+                            'quantidade' => (float)($m['quantidade'] ?? 0),
+                            'unidade' => (string)($m['unidade'] ?? 'un'),
+                            'prioridade' => (string)($pedidoRow['prioridade'] ?? 'Normal'),
+                            'data_requisicao' => date('Y-m-d'),
+                            'responsavel' => (string)($_SESSION['usuario_nome'] ?? 'Oficina'),
+                            'observacoes' => $observacoesReq,
+                        ]);
+
+                        $reqId = (int)$pdo->lastInsertId();
+                        $codigoReq = sprintf('REQ-OF-%s-%04d', date('Y'), $reqId);
+                        $pdo->prepare("UPDATE logistica_requisicoes SET codigo = :codigo WHERE id = :id")
+                            ->execute(['codigo' => $codigoReq, 'id' => $reqId]);
+                    }
+
+                    $linhasMateriaisOs = [];
+                    foreach ($materiais as $m) {
+                        $linhasMateriaisOs[] = '- ' . (string)($m['item'] ?? '') . ' | ' . number_format((float)($m['quantidade'] ?? 0), 2, ',', '.') . ' ' . (string)($m['unidade'] ?? 'un');
+                    }
+                    $blocoOs = "Diagnostico tecnico: " . $descricaoTecnicaFinal
+                        . "\nEquipa responsavel: " . ($equipaDiagFinal !== '' ? $equipaDiagFinal : 'Nao informado')
+                        . "\nMateriais necessarios:\n" . implode("\n", $linhasMateriaisOs);
+
+                    $stmtOsPedido = $pdo->prepare("
+                        SELECT id, descricao_servico
+                        FROM oficina_ordens_servico
+                        WHERE origem_tipo = 'PEDIDO_REPARACAO' AND origem_id = :origem_id
+                        ORDER BY id DESC
+                        LIMIT 1
+                    ");
+                    $stmtOsPedido->execute(['origem_id' => $pedidoId]);
+                    $osPedido = $stmtOsPedido->fetch(PDO::FETCH_ASSOC) ?: null;
+                    if ($osPedido) {
+                        $descAtual = trim((string)($osPedido['descricao_servico'] ?? ''));
+                        $descNova = trim($descAtual . "\n\n" . $blocoOs);
+                        $pdo->prepare("
+                            UPDATE oficina_ordens_servico
+                            SET descricao_servico = :descricao_servico,
+                                status_os = 'Aguardando Pecas'
+                            WHERE id = :id
+                        ")->execute([
+                            'descricao_servico' => $descNova,
+                            'id' => (int)$osPedido['id']
+                        ]);
+                    }
+
+                    $pdo->prepare("
+                        UPDATE oficina_pedidos_reparacao
+                        SET status = 'Aguardando Logistica Externa',
+                            encaminhado_logistica_em = NOW(),
+                            encaminhado_logistica_por = :usuario
+                        WHERE id = :id
+                    ")->execute([
+                        'usuario' => (string)($_SESSION['usuario_nome'] ?? 'Oficina'),
+                        'id' => $pedidoId
+                    ]);
+                    $pdo->commit();
+
+                    $msg_pedidos = "Pedido #{$pedidoId} enviado para Logistica com os materiais necessarios.";
+                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}&detalhe_lista=requisicoes");
+                    exit;
                 }
             }
         } catch (Throwable $e) {
@@ -627,6 +848,50 @@ if ($view === 'pedidos_reparacao') {
         $pedidos_reparacao = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         $erro_pedidos = "Nao foi possivel carregar pedidos de reparacao.";
+    }
+
+    if ($mode === 'detalhe') {
+        $detalhe_lista = 'ambos';
+        $pedidoIdDetalhe = (int)($_GET['id'] ?? 0);
+        if ($pedidoIdDetalhe <= 0) {
+            $erro_pedidos = 'Pedido de reparacao invalido para detalhe.';
+            $mode = 'list';
+        } else {
+            $stmtDetalhe = $pdo->prepare("
+                SELECT id, ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status, custo_estimado,
+                       COALESCE(diagnostico_realizado, 0) AS diagnostico_realizado,
+                       COALESCE(descricao_tecnica, '') AS descricao_tecnica,
+                       encaminhado_logistica_em, encaminhado_logistica_por
+                FROM oficina_pedidos_reparacao
+                WHERE id = :id
+                LIMIT 1
+            ");
+            $stmtDetalhe->execute(['id' => $pedidoIdDetalhe]);
+            $pedido_reparacao_detalhe = $stmtDetalhe->fetch(PDO::FETCH_ASSOC) ?: null;
+            if (!$pedido_reparacao_detalhe) {
+                $erro_pedidos = 'Pedido de reparacao nao encontrado.';
+                $mode = 'list';
+            } else {
+                $stmtMateriais = $pdo->prepare("
+                    SELECT id, item, quantidade, unidade, observacoes, created_at
+                    FROM oficina_pedido_materiais
+                    WHERE pedido_id = :pedido_id
+                    ORDER BY id DESC
+                ");
+                $stmtMateriais->execute(['pedido_id' => $pedidoIdDetalhe]);
+                $materiais_pedido_detalhe = $stmtMateriais->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+                $stmtReqDetalhe = $pdo->prepare("
+                    SELECT id, codigo, item, quantidade, unidade, prioridade, status, data_requisicao, responsavel, observacoes
+                    FROM logistica_requisicoes
+                    WHERE origem_modulo = 'oficina'
+                      AND observacoes LIKE :marcador
+                    ORDER BY id DESC
+                ");
+                $stmtReqDetalhe->execute(['marcador' => '%[PEDIDO_OFICINA_ID:' . $pedidoIdDetalhe . ']%']);
+                $requisicoes_pedido_detalhe = $stmtReqDetalhe->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
     }
 }
 
@@ -1724,6 +1989,106 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 padding: 12px;
                 margin-bottom: 12px;
             }
+            .pedido-summary-card {
+                border: 1px solid #dbe4f0;
+                background: linear-gradient(135deg, #f8fbff 0%, #ffffff 45%);
+                border-radius: 14px;
+                padding: 14px;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+            }
+            .pedido-summary-meta {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(140px, 1fr));
+                gap: 10px;
+                margin-top: 10px;
+            }
+            .pedido-summary-chip {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                background: #ffffff;
+                padding: 8px 10px;
+                font-size: 12px;
+            }
+            .pedido-summary-chip strong {
+                display: block;
+                color: #64748b;
+                font-size: 11px;
+                margin-bottom: 2px;
+                text-transform: uppercase;
+                letter-spacing: .3px;
+            }
+            .pedido-summary-desc {
+                margin-top: 10px;
+                border-left: 4px solid #2563eb;
+                background: #f8fafc;
+                padding: 10px 12px;
+                border-radius: 10px;
+                font-size: 12px;
+                color: #334155;
+            }
+            .btn-modern {
+                border: none;
+                border-radius: 10px;
+                padding: 9px 14px;
+                font-size: 12px;
+                font-weight: 700;
+                color: #fff;
+                cursor: pointer;
+                transition: transform .15s ease, box-shadow .2s ease, opacity .2s ease;
+                box-shadow: 0 8px 16px rgba(15, 23, 42, 0.15);
+            }
+            .btn-modern:hover { transform: translateY(-1px); opacity: .96; }
+            .btn-modern.primary { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+            .btn-modern.success { background: linear-gradient(135deg, #0f766e, #0d9488); }
+            .btn-modern.dark { background: linear-gradient(135deg, #111827, #1f2937); }
+            .btn-modern.purple { background: linear-gradient(135deg, #7c3aed, #6d28d9); }
+            .btn-modern.ghost {
+                background: #fff;
+                color: #111827;
+                border: 1px solid #d1d5db;
+                box-shadow: none;
+            }
+            .material-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(15, 23, 42, 0.55);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 14px;
+                z-index: 1300;
+            }
+            .material-modal.open { display: flex; }
+            .material-modal-card {
+                width: min(960px, 96vw);
+                max-height: 88vh;
+                overflow: auto;
+                background: #fff;
+                border-radius: 14px;
+                border: 1px solid #dbe2ea;
+                box-shadow: 0 22px 44px rgba(15, 23, 42, 0.24);
+                padding: 14px;
+            }
+            .material-modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 10px;
+            }
+            .material-close {
+                background: #ef4444;
+                color: #fff;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            @media (max-width: 980px) {
+                .pedido-summary-meta { grid-template-columns: 1fr; }
+            }
             .section-title {
                 font-size: 12px;
                 color: #111827;
@@ -2344,19 +2709,168 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <h3>Relatorios de Oficina</h3>
                     <p style="font-size:12px; color:#6b7280;">Use o modo "Ver Lista" para consultar as metricas e historico de avarias por veiculo.</p>
                 <?php endif; ?>
-            <?php elseif ($mode == 'list'): ?>
-                <?php if (!$aplicar_lista): ?>
-                    <div class="section-card">
-                        <p style="font-size:12px; color:#6b7280; margin:0 0 10px 0;">A lista da Oficina so aparece apos aplicar os filtros.</p>
-                        <form method="GET" action="" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
-                            <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
-                            <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
-                            <input type="hidden" name="mode" value="list">
-                            <input type="hidden" name="aplicar" value="1">
-                            <button type="submit" class="btn-save" style="background:#111827;">Aplicar filtro</button>
+            <?php elseif ($mode == 'detalhe' && $view == 'pedidos_reparacao'): ?>
+                <?php if ($erro_pedidos): ?>
+                    <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_pedidos) ?></p>
+                <?php endif; ?>
+                <?php if ($msg_pedidos): ?>
+                    <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_pedidos) ?></p>
+                <?php endif; ?>
+                <?php if ($pedido_reparacao_detalhe): ?>
+                    <?php
+                        $pedidoIdDetalheUi = (int)($pedido_reparacao_detalhe['id'] ?? 0);
+                        $statusDetalhe = statusPedidoLabel(normalizarStatusPedido((string)($pedido_reparacao_detalhe['status'] ?? 'Pendente')));
+                    ?>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0;">Detalhes do Pedido #<?= $pedidoIdDetalheUi ?></h3>
+                        <a href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=list" class="btn-modern ghost" style="text-decoration:none;">Voltar</a>
+                    </div>
+
+                    <div class="pedido-summary-card" style="margin-bottom:12px;">
+                        <div class="screen-title-row">
+                            <div class="screen-title-group">
+                                <h4 class="screen-title" style="margin-bottom:4px;"><i class="fa-solid fa-clipboard-list"></i> Resumo do Pedido</h4>
+                                <div class="screen-subtitle"><?= htmlspecialchars((string)($pedido_reparacao_detalhe['ativo_matricula'] ?? '-')) ?> | <?= htmlspecialchars((string)($pedido_reparacao_detalhe['tipo_equipamento'] ?? '-')) ?></div>
+                            </div>
+                            <span class="pill <?= badgeClasseStatus($statusDetalhe) ?>"><?= htmlspecialchars($statusDetalhe) ?></span>
+                        </div>
+                        <div class="pedido-summary-meta">
+                            <div class="pedido-summary-chip">
+                                <strong>Solicitante</strong>
+                                <?= htmlspecialchars((string)($pedido_reparacao_detalhe['solicitante'] ?? '-')) ?>
+                            </div>
+                            <div class="pedido-summary-chip">
+                                <strong>Localizacao</strong>
+                                <?= htmlspecialchars((string)($pedido_reparacao_detalhe['localizacao'] ?? '-')) ?>
+                            </div>
+                            <div class="pedido-summary-chip">
+                                <strong>Data do pedido</strong>
+                                <?= htmlspecialchars((string)($pedido_reparacao_detalhe['data_pedido'] ?? '-')) ?>
+                            </div>
+                        </div>
+                        <div class="pedido-summary-desc">
+                            <strong>Descricao da avaria</strong><br>
+                            <?= nl2br(htmlspecialchars((string)($pedido_reparacao_detalhe['descricao_avaria'] ?? '-'))) ?>
+                        </div>
+                    </div>
+
+                    <div class="section-card" style="margin-bottom:12px;">
+                        <h4 style="margin-top:0;">Acoes do Pedido</h4>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>">
+                                <input type="hidden" name="acao" value="aceitar_detalhe">
+                                <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
+                                <button type="submit" class="btn-modern primary">Aceitar pedido</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="section-card" style="margin-bottom:12px;">
+                        <h4 style="margin-top:0;">Diagnostico Tecnico dos Mecanicos</h4>
+                        <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>&detalhe_lista=<?= urlencode((string)$detalhe_lista) ?>">
+                            <input type="hidden" name="acao" value="salvar_diagnostico_detalhe">
+                            <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
+                            <div class="form-group" style="margin-bottom:8px;">
+                                <label>Equipa responsavel pelo diagnostico</label>
+                                <input type="text" name="equipa_diagnostico" value="<?= htmlspecialchars((string)($pedido_reparacao_detalhe['equipa_diagnostico'] ?? '')) ?>" placeholder="Ex: Equipa Mecanica A" required>
+                            </div>
+                            <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px;">
+                                <input type="checkbox" name="diagnostico_realizado" value="1" <?= ((int)($pedido_reparacao_detalhe['diagnostico_realizado'] ?? 0) === 1) ? 'checked' : '' ?>>
+                                Diagnostico realizado
+                            </label>
+                            <textarea name="descricao_tecnica" rows="4" style="width:100%; border:1px solid #d1d5db; border-radius:8px; padding:8px;" placeholder="Descreva o diagnostico tecnico realizado pelos mecanicos..."><?= htmlspecialchars((string)($pedido_reparacao_detalhe['descricao_tecnica'] ?? '')) ?></textarea>
+                            <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="submit" class="btn-modern success">Salvar diagnostico</button>
+                                <button type="button" class="btn-modern dark" id="open-material-modal">+Materiais Necessarios</button>
+                            </div>
                         </form>
                     </div>
-                <?php else: ?>
+
+                    <div class="material-modal" id="material-modal">
+                        <div class="material-modal-card">
+                            <div class="material-modal-header">
+                                <h4 style="margin:0;">Materiais Necessarios</h4>
+                                <button type="button" class="material-close" id="close-material-modal">Fechar</button>
+                            </div>
+                        <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>&detalhe_lista=<?= urlencode((string)$detalhe_lista) ?>" class="form-grid">
+                            <input type="hidden" name="acao" value="adicionar_material_detalhe">
+                            <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
+                            <div class="form-group">
+                                <label>Item</label>
+                                <input type="text" name="material_item" required placeholder="Ex: Filtro de oleo">
+                            </div>
+                            <div class="form-group">
+                                <label>Quantidade</label>
+                                <input type="number" name="material_quantidade" min="0.01" step="0.01" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Unidade</label>
+                                <input type="text" name="material_unidade" value="un">
+                            </div>
+                            <div class="form-group">
+                                <label>Observacoes</label>
+                                <input type="text" name="material_observacoes" placeholder="Opcional">
+                            </div>
+                            <div style="grid-column:span 4;">
+                                <button type="submit" class="btn-modern dark">Adicionar material</button>
+                            </div>
+                        </form>
+
+                        <div class="pedidos-table-wrap" style="margin-top:10px;">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Item</th>
+                                        <th>Quantidade</th>
+                                        <th>Unidade</th>
+                                        <th>Observacoes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (count($materiais_pedido_detalhe) === 0): ?>
+                                        <tr><td colspan="5" style="text-align:center;color:#6b7280;">Nenhum material adicionado.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($materiais_pedido_detalhe as $mat): ?>
+                                            <tr>
+                                                <td><?= (int)($mat['id'] ?? 0) ?></td>
+                                                <td><?= htmlspecialchars((string)($mat['item'] ?? '')) ?></td>
+                                                <td><?= number_format((float)($mat['quantidade'] ?? 0), 2, ',', '.') ?></td>
+                                                <td><?= htmlspecialchars((string)($mat['unidade'] ?? '')) ?></td>
+                                                <td><?= htmlspecialchars((string)($mat['observacoes'] ?? '-')) ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        </div>
+                    </div>
+                    <div class="section-card" style="margin-bottom:12px;">
+                        <h4 style="margin-top:0;">Enviar para Logistica</h4>
+                        <p style="font-size:12px; color:#6b7280;">A Logistica recebe a relacao de pecas para tratar cotacoes.</p>
+                        <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>&detalhe_lista=<?= urlencode((string)$detalhe_lista) ?>" style="display:flex; justify-content:center;">
+                            <input type="hidden" name="acao" value="enviar_logistica_detalhe">
+                            <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
+                            <button type="submit" class="btn-modern purple">Mandar para Logistica</button>
+                        </form>
+                    </div>
+                    <script>
+                    (function() {
+                        var modal = document.getElementById('material-modal');
+                        var openBtn = document.getElementById('open-material-modal');
+                        var closeBtn = document.getElementById('close-material-modal');
+                        if (!modal || !openBtn || !closeBtn) return;
+                        openBtn.addEventListener('click', function() { modal.classList.add('open'); });
+                        closeBtn.addEventListener('click', function() { modal.classList.remove('open'); });
+                        modal.addEventListener('click', function(e) {
+                            if (e.target === modal) modal.classList.remove('open');
+                        });
+                    })();
+                    </script>
+
+                <?php endif; ?>
+            <?php elseif ($mode == 'list'): ?>
                 <?php if ($view == 'pedidos_reparacao'): ?>
                     <?php if ($erro_pedidos): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_pedidos) ?></p>
@@ -2406,18 +2920,7 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                         <td><span class="pill <?= badgeClassePrioridade($prioridade) ?>"><?= htmlspecialchars((string)$prioridade) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus($statusLabel) ?>"><?= htmlspecialchars((string)$statusLabel) ?></span></td>
                                         <td>
-                                            <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=list" class="pedido-acoes">
-                                                <input type="hidden" name="id" value="<?= htmlspecialchars((string)campo($p, ['id'])) ?>">
-                                                <?php if ($statusNormalizado === 'pendente'): ?>
-                                                    <button type="submit" name="acao" value="aceitar" class="btn-acao" style="background:#2563eb;">Aceitar</button>
-                                                <?php endif; ?>
-                                                <?php if ($statusNormalizado === 'aceito'): ?>
-                                                    <button type="submit" name="acao" value="andamento" class="btn-acao" style="background:#0891b2;">Em andamento</button>
-                                                <?php endif; ?>
-                                                <?php if ($statusNormalizado === 'em_andamento'): ?>
-                                                    <button type="submit" name="acao" value="resolver" class="btn-acao" style="background:#16a34a;">Resolver</button>
-                                                <?php endif; ?>
-                                            </form>
+                                            <a class="btn-acao" style="background:#111827; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>">Ver detalhes</a>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -3413,7 +3916,6 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             </tr>
                         </tbody>
                     </table>
-                <?php endif; ?>
                 <?php endif; ?>
             <?php endif; ?>
                     </div>

@@ -1,12 +1,90 @@
 <?php 
-session_start();
-if (!headers_sent()) {
-    header('Content-Type: text/html; charset=UTF-8');
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
-require_once __DIR__ . '/app/config/db.php';
-require_once __DIR__ . '/app/core/permissions.php';
 
-if (!isset($_SESSION['usuario_id'])) { header("Location: login.php"); exit(); }
+$dbCandidates = [
+    __DIR__ . '/app/config/db.php',
+    __DIR__ . '/config/db.php'
+];
+$dbLoaded = false;
+foreach ($dbCandidates as $dbFile) {
+    if (is_file($dbFile)) {
+        require_once $dbFile;
+        $dbLoaded = true;
+        break;
+    }
+}
+if (!$dbLoaded) {
+    http_response_code(500);
+    exit('Falha ao localizar ficheiro de base de dados.');
+}
+
+if (!function_exists('usuarioEhAdmin')) {
+    function usuarioEhAdmin(): bool {
+        $perfil = strtolower(trim((string) ($_SESSION['usuario_perfil'] ?? '')));
+        return in_array($perfil, ['admin', 'administrador', 'superadmin', 'diretor', 'diretor geral'], true);
+    }
+}
+
+if (!function_exists('garantirPermissao')) {
+    function garantirPermissao(PDO $pdo, string $modulo, string $acao = 'ver'): void {
+        if (!isset($_SESSION['usuario_id'])) {
+            header('Location: /vilcon-systemon/public/login.php');
+            exit();
+        }
+        if (usuarioEhAdmin()) {
+            return;
+        }
+
+        // Compatibilidade: se a tabela de permissões não existir ainda, não bloqueia o módulo.
+        $tblExistsStmt = $pdo->query("SHOW TABLES LIKE 'usuarios_permissoes'");
+        $tblExists = $tblExistsStmt ? (bool) $tblExistsStmt->fetchColumn() : false;
+        if (!$tblExists) {
+            return;
+        }
+
+        $coluna = 'pode_ver';
+        if ($acao === 'editar') $coluna = 'pode_editar';
+        if ($acao === 'aprovar') $coluna = 'pode_aprovar';
+
+        $st = $pdo->prepare("SELECT `$coluna` FROM usuarios_permissoes WHERE usuario_id = :u AND modulo = :m LIMIT 1");
+        $st->execute([
+            ':u' => (int) ($_SESSION['usuario_id'] ?? 0),
+            ':m' => $modulo
+        ]);
+        $permitido = (int) ($st->fetchColumn() ?: 0) === 1;
+        if (!$permitido) {
+            http_response_code(403);
+            exit('Acesso negado: sem permissão para este módulo.');
+        }
+    }
+}
+
+if (!function_exists('auditarPostBasico')) {
+    function auditarPostBasico(PDO $pdo, ?string $modulo = null): void {
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') return;
+        if (!isset($_SESSION['usuario_id'])) return;
+
+        $acao = 'POST';
+        $keys = array_keys($_POST);
+        if (!empty($keys)) {
+            $acao .= ' ' . implode(',', array_slice($keys, 0, 6));
+        }
+
+        try {
+            if (function_exists('registrarAcaoSistema')) {
+                registrarAcaoSistema($pdo, $acao . ($modulo ? " [$modulo]" : ''), 'request', (int) $_SESSION['usuario_id']);
+            } elseif (function_exists('registrarAuditoria')) {
+                registrarAuditoria($pdo, $acao . ($modulo ? " [$modulo]" : ''), 'request');
+            }
+        } catch (Throwable $e) {
+            // Não interromper fluxo por falha de auditoria.
+        }
+    }
+}
+
+if (!isset($_SESSION['usuario_id'])) { header("Location: /vilcon-systemon/public/login.php"); exit(); }
 garantirPermissao($pdo, 'transporte', 'ver');
 auditarPostBasico($pdo, 'transporte');
 
@@ -65,62 +143,6 @@ $pdo->exec("
         pdf_anexo VARCHAR(255) NULL,
         status VARCHAR(40) NOT NULL DEFAULT 'Enviado para Oficina',
         criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
-
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS oficina_pedidos_reparacao (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        ativo_matricula VARCHAR(50) NOT NULL,
-        tipo_equipamento VARCHAR(150) NOT NULL,
-        descricao_avaria TEXT NOT NULL,
-        localizacao VARCHAR(150) NULL,
-        solicitante VARCHAR(150) NULL,
-        data_pedido DATE NOT NULL,
-        prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
-        status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
-        custo_estimado DECIMAL(14,2) NOT NULL DEFAULT 0,
-        origem_tipo VARCHAR(40) NULL,
-        origem_id INT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
-ensureColumnExists($pdo, 'oficina_pedidos_reparacao', 'origem_tipo', "varchar(40) NULL");
-ensureColumnExists($pdo, 'oficina_pedidos_reparacao', 'origem_id', "int NULL");
-try {
-    $pdo->exec("ALTER TABLE oficina_pedidos_reparacao ADD INDEX idx_oficina_pr_origem (origem_tipo, origem_id)");
-} catch (Throwable $e) {
-    // indice pode ja existir
-}
-
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS oficina_ordens_servico (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        codigo_os VARCHAR(40) UNIQUE,
-        origem_tipo VARCHAR(40) NOT NULL DEFAULT 'MANUAL',
-        origem_id INT NULL,
-        ativo_matricula VARCHAR(50) NOT NULL,
-        tipo_equipamento VARCHAR(150) NOT NULL,
-        descricao_servico TEXT NOT NULL,
-        data_abertura DATETIME NOT NULL,
-        prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
-        status_os VARCHAR(30) NOT NULL DEFAULT 'Aberto',
-        custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
-
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS oficina_historico_avarias (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        ativo_matricula VARCHAR(50) NOT NULL,
-        tipo_equipamento VARCHAR(150) NOT NULL,
-        tipo_registo VARCHAR(30) NOT NULL,
-        descricao TEXT NOT NULL,
-        data_evento DATE NOT NULL,
-        origem_tipo VARCHAR(40) NULL,
-        origem_id INT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 
@@ -507,99 +529,6 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
     }
 
     return ['ok' => true, 'files' => $salvos];
-}
-
-function mapPrioridadeTransporteParaOficina(string $prioridade): string {
-    $p = strtolower(trim($prioridade));
-    if($p === 'alta' || $p === 'urgente') return 'Alta';
-    if($p === 'baixa') return 'Baixa';
-    return 'Normal';
-}
-
-function sincronizarPedidoReparacaoNaOficina(PDO $pdo, array $pedido): void {
-    $origemId = (int) ($pedido['transporte_pedido_id'] ?? 0);
-    $origemTipo = null;
-    $origemIdDb = null;
-    if($origemId > 0) {
-        $chk = $pdo->prepare("
-            SELECT id
-            FROM oficina_pedidos_reparacao
-            WHERE origem_tipo = 'TRANSPORTE_PEDIDO_REPARACAO' AND origem_id = :origem_id
-            LIMIT 1
-        ");
-        $chk->execute([':origem_id' => $origemId]);
-        if($chk->fetchColumn()) {
-            return;
-        }
-        $origemTipo = 'TRANSPORTE_PEDIDO_REPARACAO';
-        $origemIdDb = $origemId;
-    }
-
-    $ativoMatricula = trim((string) ($pedido['matricula'] ?? ''));
-    if($ativoMatricula === '') {
-        $ativoMatricula = trim((string) ($pedido['viatura_id'] ?? ''));
-    }
-
-    $tipoEquipamento = trim((string) ($pedido['viatura_id'] ?? ''));
-    if($tipoEquipamento === '') {
-        $tipoEquipamento = 'Viatura';
-    }
-
-    $dataPedido = date('Y-m-d');
-    $prioridadeOficina = mapPrioridadeTransporteParaOficina((string) ($pedido['prioridade'] ?? 'Media'));
-
-    $insPedido = $pdo->prepare("
-        INSERT INTO oficina_pedidos_reparacao
-        (ativo_matricula, tipo_equipamento, descricao_avaria, localizacao, solicitante, data_pedido, prioridade, status, custo_estimado, origem_tipo, origem_id)
-        VALUES
-        (:ativo_matricula, :tipo_equipamento, :descricao_avaria, :localizacao, :solicitante, :data_pedido, :prioridade, 'Pendente', 0, :origem_tipo, :origem_id)
-    ");
-    $insPedido->execute([
-        ':ativo_matricula' => $ativoMatricula,
-        ':tipo_equipamento' => $tipoEquipamento,
-        ':descricao_avaria' => trim((string) ($pedido['avaria_reportada'] ?? '')),
-        ':localizacao' => trim((string) ($pedido['localizacao'] ?? '')) !== '' ? trim((string) ($pedido['localizacao'] ?? '')) : null,
-        ':solicitante' => trim((string) ($pedido['solicitante'] ?? '')) !== '' ? trim((string) ($pedido['solicitante'] ?? '')) : null,
-        ':data_pedido' => $dataPedido,
-        ':prioridade' => $prioridadeOficina,
-        ':origem_tipo' => $origemTipo,
-        ':origem_id' => $origemIdDb
-    ]);
-    $oficinaPedidoId = (int) $pdo->lastInsertId();
-
-    $nextOsStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM oficina_ordens_servico");
-    $nextOsId = (int) $nextOsStmt->fetchColumn();
-    $codigoOs = 'OS-OF-' . date('Y') . '-' . str_pad((string) $nextOsId, 4, '0', STR_PAD_LEFT);
-
-    $insOs = $pdo->prepare("
-        INSERT INTO oficina_ordens_servico
-        (codigo_os, origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os, custo_total)
-        VALUES
-        (:codigo_os, 'PEDIDO_REPARACAO', :origem_id, :ativo_matricula, :tipo_equipamento, :descricao_servico, :data_abertura, :prioridade, 'Aberto', 0)
-    ");
-    $insOs->execute([
-        ':codigo_os' => $codigoOs,
-        ':origem_id' => $oficinaPedidoId,
-        ':ativo_matricula' => $ativoMatricula,
-        ':tipo_equipamento' => $tipoEquipamento,
-        ':descricao_servico' => trim((string) ($pedido['avaria_reportada'] ?? '')),
-        ':data_abertura' => date('Y-m-d H:i:s'),
-        ':prioridade' => $prioridadeOficina
-    ]);
-
-    $insHist = $pdo->prepare("
-        INSERT INTO oficina_historico_avarias
-        (ativo_matricula, tipo_equipamento, tipo_registo, descricao, data_evento, origem_tipo, origem_id)
-        VALUES
-        (:ativo_matricula, :tipo_equipamento, 'AVARIA', :descricao, :data_evento, 'PEDIDO_REPARACAO', :origem_id)
-    ");
-    $insHist->execute([
-        ':ativo_matricula' => $ativoMatricula,
-        ':tipo_equipamento' => $tipoEquipamento,
-        ':descricao' => trim((string) ($pedido['avaria_reportada'] ?? '')),
-        ':data_evento' => $dataPedido,
-        ':origem_id' => $oficinaPedidoId
-    ]);
 }
 
 function registarAuditoriaAlteracao(
@@ -1614,64 +1543,30 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if(isset($_POST['salvar_pedido_reparacao'])) {
         if($erro_form === '') {
-            $viaturaIdRep = trim((string) ($_POST['viatura_id_rep'] ?? ''));
-            $matriculaRep = trim((string) ($_POST['matricula_rep'] ?? ''));
-            $condutorRep = trim((string) ($_POST['condutor_rep'] ?? ''));
-            $kmAtualRep = isset($_POST['km_atual_rep']) && $_POST['km_atual_rep'] !== '' ? (int) $_POST['km_atual_rep'] : null;
-            $localizacaoRep = trim((string) ($_POST['localizacao_rep'] ?? ''));
-            $avariaReportada = trim((string) ($_POST['avaria_reportada'] ?? ''));
-            $prioridadeRep = trim((string) ($_POST['prioridade_rep'] ?? 'Media'));
-            $solicitanteRep = trim((string) ($_POST['solicitante_rep'] ?? ''));
+            $nextRepStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_pedidos_reparacao");
+            $nextRepId = (int) $nextRepStmt->fetchColumn();
+            $codigo = 'PR-' . date('Y') . '-' . str_pad((string) $nextRepId, 4, '0', STR_PAD_LEFT);
 
-            try {
-                $pdo->beginTransaction();
-                sincronizarPedidoReparacaoNaOficina($pdo, [
-                    'transporte_pedido_id' => 0,
-                    'viatura_id' => $viaturaIdRep,
-                    'matricula' => $matriculaRep,
-                    'localizacao' => $localizacaoRep,
-                    'avaria_reportada' => $avariaReportada,
-                    'prioridade' => $prioridadeRep,
-                    'solicitante' => $solicitanteRep
-                ]);
+            $stmtRep = $pdo->prepare("
+                INSERT INTO transporte_pedidos_reparacao
+                (codigo, viatura_id, matricula, condutor, km_atual, localizacao, avaria_reportada, prioridade, solicitante, pdf_anexo, status)
+                VALUES
+                (:codigo, :viatura_id, :matricula, :condutor, :km_atual, :localizacao, :avaria_reportada, :prioridade, :solicitante, NULL, 'Enviado para Oficina')
+            ");
+            $stmtRep->execute([
+                ':codigo' => $codigo,
+                ':viatura_id' => trim((string) ($_POST['viatura_id_rep'] ?? '')),
+                ':matricula' => trim((string) ($_POST['matricula_rep'] ?? '')),
+                ':condutor' => trim((string) ($_POST['condutor_rep'] ?? '')),
+                ':km_atual' => isset($_POST['km_atual_rep']) && $_POST['km_atual_rep'] !== '' ? (int) $_POST['km_atual_rep'] : null,
+                ':localizacao' => trim((string) ($_POST['localizacao_rep'] ?? '')),
+                ':avaria_reportada' => trim((string) ($_POST['avaria_reportada'] ?? '')),
+                ':prioridade' => trim((string) ($_POST['prioridade_rep'] ?? 'Media')),
+                ':solicitante' => trim((string) ($_POST['solicitante_rep'] ?? ''))
+            ]);
 
-                $pdo->commit();
-
-                // Espelho legado no transporte (nao bloqueia o fluxo principal da oficina).
-                try {
-                    $nextRepStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_pedidos_reparacao");
-                    $nextRepId = (int) $nextRepStmt->fetchColumn();
-                    $codigo = 'PR-' . date('Y') . '-' . str_pad((string) $nextRepId, 4, '0', STR_PAD_LEFT);
-
-                    $stmtRep = $pdo->prepare("
-                        INSERT INTO transporte_pedidos_reparacao
-                        (codigo, viatura_id, matricula, condutor, km_atual, localizacao, avaria_reportada, prioridade, solicitante, pdf_anexo, status)
-                        VALUES
-                        (:codigo, :viatura_id, :matricula, :condutor, :km_atual, :localizacao, :avaria_reportada, :prioridade, :solicitante, NULL, 'Enviado para Oficina')
-                    ");
-                    $stmtRep->execute([
-                        ':codigo' => $codigo,
-                        ':viatura_id' => $viaturaIdRep,
-                        ':matricula' => $matriculaRep,
-                        ':condutor' => $condutorRep,
-                        ':km_atual' => $kmAtualRep,
-                        ':localizacao' => $localizacaoRep,
-                        ':avaria_reportada' => $avariaReportada,
-                        ':prioridade' => $prioridadeRep,
-                        ':solicitante' => $solicitanteRep
-                    ]);
-                } catch (Throwable $e) {
-                    // sem impacto: pedido principal ja foi salvo na oficina
-                }
-
-                header("Location:/vilcon-systemon/public/app/modules/oficina/index.php?tab=oficina&view=pedidos_reparacao&mode=list");
-                exit();
-            } catch (Throwable $e) {
-                if($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                $erro_form = 'Falha ao enviar pedido de reparação para Oficina: ' . $e->getMessage();
-            }
+            header("Location:?tab=transporte&view=pedido_reparacao&mode=list");
+            exit();
         }
     }
 
@@ -3589,42 +3484,23 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
         body { display: flex; min-height: 100vh; background: var(--bg-dark); overflow: hidden; color: var(--text-main); }
-        /* fixed sidebar (merged dashboard style) */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 280px;
-            height: 100vh;
-            background: var(--sidebar-bg);
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid #333;
-            z-index: 300;
-        }
-        .sidebar-header { padding: 22px 16px; text-align: center; border-bottom: 1px solid #333; }
-        .sidebar-header img { width: 180px; display:block; margin:0 auto 6px; }
-        .sidebar-header h2 { font-size: 11px; color: var(--accent-orange); letter-spacing: 2px; font-weight: 700; text-transform: uppercase; }
-        .sidebar ul { list-style: none; padding: 12px 0; overflow-y: auto; flex-grow: 1; }
-        .sidebar ul li a { color: var(--text-dim); text-decoration: none; padding: 12px 22px; display: flex; align-items: center; transition: 0.2s; font-size: 14px; font-weight: 600; }
-        .sidebar ul li a i { margin-right: 12px; width: 20px; text-align: center; font-size: 16px; color: var(--accent-orange); }
-        .sidebar ul li a:hover { background: var(--sidebar-hover); color: var(--text-main); padding-left: 32px; }
-        .sidebar ul li a.active { background: rgba(230,126,34,0.08); color: var(--text-main); border-left: 4px solid var(--accent-orange); }
-        .btn-sair { display: inline-flex; align-items:center; justify-content:center; background: #c0392b !important; color: #fff !important; padding:10px 18px; margin: 12px 20px; border-radius:4px; font-weight:800; text-decoration:none; }
-        .btn-sair:hover { background: #e74c3c !important; transform: scale(1.02); }
-        /* push main content to the right of fixed sidebar */
-        .main-content { margin-left: 280px; flex: 1; background: var(--bg-white); display: flex; flex-direction: column; height: 100vh; overflow-y: auto; color: #222; }
+                .main-content { flex: 1; background: var(--bg-white); display: flex; flex-direction: column; height: 100vh; overflow-y: auto; color: #222; }
         .header-section { padding: 20px 40px; background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
         .tab-menu { display: flex; gap: 8px; }
-        .tab-btn { padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 11px; border: 1px solid #ddd; color: #666; text-transform: uppercase; transition: 0.3s; display: flex; align-items: center; gap: 8px; }
-        .tab-btn.active { background: var(--vilcon-orange); color: #fff; border-color: var(--vilcon-orange); }
+        .tab-btn { padding: 11px 18px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 11px; border: 1px solid #ddd; color: #666; text-transform: uppercase; letter-spacing: .2px; transition: .18s ease; display: inline-flex; align-items: center; gap: 8px; min-height: 38px; line-height: 1; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+        .tab-btn:hover { border-color: #cfcfcf; color: #333; box-shadow: 0 3px 10px rgba(0,0,0,.08); }
+        .tab-btn:focus-visible { outline: 2px solid rgba(243,156,18,.25); outline-offset: 1px; }
+        .tab-btn.active { background: var(--vilcon-orange); color: #fff; border-color: var(--vilcon-orange); box-shadow: 0 4px 12px rgba(243,156,18,.24); }
         .sub-tab-container { background: #eee; padding: 8px; border-radius: 8px; margin: 20px 40px 10px 40px; display: flex; gap: 5px; flex-wrap: wrap; }
-        .sub-tab-btn { padding: 8px 18px; border-radius: 5px; text-decoration: none; font-weight: 700; font-size: 10px; color: #555; text-transform: uppercase; transition: 0.2s; }
-        .sub-tab-btn.active { background: #fff; color: var(--vilcon-black); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .sub-tab-btn { padding: 8px 14px; border-radius: 7px; text-decoration: none; font-weight: 700; font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: .25px; transition: .18s ease; border: 1px solid transparent; min-height: 34px; display: inline-flex; align-items: center; }
+        .sub-tab-btn:hover { color: #222; border-color: #e1e1e1; background: #f7f7f7; }
+        .sub-tab-btn.active { background: #fff; color: #111; border-color: #e6e6e6; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
         .inner-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px dashed #ddd; }
         .mode-selector { display: flex; gap: 10px; }
-        .btn-mode { padding: 8px 15px; border-radius: 20px; font-size: 11px; font-weight: 700; text-decoration: none; text-transform: uppercase; border: 1px solid #ddd; color: #666; background: #fff; }
-        .btn-mode.active { background: var(--vilcon-black); color: #fff; border-color: var(--vilcon-black); }
+        .btn-mode { padding: 8px 14px; border-radius: 8px; font-size: 11px; font-weight: 700; text-decoration: none; text-transform: uppercase; letter-spacing: .2px; border: 1px solid #ddd; color: #666; background: #fff; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; transition: .18s ease; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+        .btn-mode:hover { border-color: #cfcfcf; color: #333; box-shadow: 0 3px 10px rgba(0,0,0,.08); }
+        .btn-mode:focus-visible { outline: 2px solid rgba(52,73,94,.2); outline-offset: 1px; }
+        .btn-mode.active { background: #2f3a45; color: #fff; border-color: #2f3a45; box-shadow: 0 4px 12px rgba(47,58,69,.2); }
         .container { padding: 10px 40px 40px 40px; }
         .white-card { background: #fff; border-radius: 12px; padding: 30px; border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,0.03); margin-bottom: 20px; }
         .form-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
@@ -3632,11 +3508,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         .form-group { display: flex; flex-direction: column; }
         label { font-size: 10px; font-weight: 800; color: #444; margin-bottom: 5px; text-transform: uppercase; }
         input, select, textarea { padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; outline: none; }
-        .btn-save { padding: 12px 25px; border-radius: 6px; font-weight: bold; cursor: pointer; text-transform: uppercase; font-size: 11px; border:none; color:white; }
+        .btn-save { padding: 11px 18px; border-radius: 8px; font-weight: 800; cursor: pointer; text-transform: uppercase; font-size: 11px; letter-spacing: .25px; border: 1px solid transparent; color: #fff; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; transition: .18s ease; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+        .btn-save:hover { filter: brightness(0.97); box-shadow: 0 6px 16px rgba(0,0,0,.2); }
+        .btn-save:focus-visible { outline: 2px solid rgba(39,174,96,.28); outline-offset: 1px; }
         .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .history-table th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid var(--border); text-transform: uppercase; color: #777; font-size: 10px; }
         .history-table td { padding: 12px; border-bottom: 1px solid #eee; }
-        .btn-print { background: #2c3e50; color: #fff; border: none; }
+        .btn-print { background: #2c3e50; color: #fff; border: 1px solid #2c3e50; box-shadow: 0 4px 12px rgba(44,62,80,.2); }
         .calc-note { font-size: 11px; color: #666; margin-top: 4px; }
         .relatorio-print-sheet { display:none; border:1px solid #222; background:#fff; color:#111; padding:12px; }
         .relatorio-print-title { text-align:center; font-weight:800; font-size:16px; margin-bottom:10px; border-bottom:1px solid #222; padding-bottom:6px; }
@@ -3660,6 +3538,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         .stock-action-btn:hover { background:#ffe9cc; }
         .stock-form-banner { background: linear-gradient(135deg, #fff7e8 0%, #fff1d6 100%); border:1px solid #ffd89c; border-radius:10px; padding:10px 12px; margin-bottom:14px; color:#7a4a00; font-size:12px; font-weight:700; display:flex; align-items:center; gap:8px; }
 
+
         @media print {
             .sidebar, .header-section, .sub-tab-container, .inner-nav .btn-mode, .inner-nav .btn-print, .btn-save { display: none !important; }
             .main-content { margin-left: 0; }
@@ -3672,7 +3551,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 </head>
 <body>
 
-<?php require __DIR__ . '/app/includes/sidebar.php'; ?>
+<?php require_once __DIR__ . '/app/includes/sidebar.php'; ?>
 
 <div class="main-content">
     <div class="header-section">
@@ -3680,8 +3559,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             <!-- Aba principal Transporte -->
             <a href="?tab=transporte" class="tab-btn <?= $tab == 'transporte' ? 'active' : '' ?>"><i class="fas fa-route"></i> Transporte</a>
             
-            <!-- Aba principal Gestão de Frota -->
-            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> Gestão de Frota</a>
+            <!-- Aba principal GestÃ£o de Frota -->
+            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> GestÃ£o de Frota</a>
             
             <!-- Aba principal Aluguer de Equipamentos -->
             <a href="?tab=aluguer" class="tab-btn <?= $tab == 'aluguer' ? 'active' : '' ?>"><i class="fas fa-truck"></i> Aluguer de Equipamentos</a>
@@ -3695,26 +3574,26 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <?php if($tab == 'transporte'): ?>
             <!-- Sub-abas de Transporte -->
             <a href="?tab=transporte&view=reservas&mode=list" class="sub-tab-btn <?= $view == 'reservas' ? 'active' : '' ?>">Reservas</a>
-            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de Serviço</a>
-            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de Reparação</a>
+            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de ServiÃ§o</a>
+            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de ReparaÃ§Ã£o</a>
             <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
-            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano Manutenção</a>
-            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">Relatório Geral</a>
+            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano ManutenÃ§Ã£o</a>
+            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
         
         <?php elseif($tab == 'gestao_frota'): ?>
-            <!-- Sub-abas de Gestão de Frota -->
-            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">Formulários Recebidos</a>
-            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle Combustível</a>
+            <!-- Sub-abas de GestÃ£o de Frota -->
+            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">FormulÃ¡rios Recebidos</a>
+            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle CombustÃ­vel</a>
             <a href="?tab=gestao_frota&view=stock&mode=list" class="sub-tab-btn <?= $view == 'stock' ? 'active' : '' ?>">Controle de Stock</a>
-            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">Requisições</a>
-            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">Gestão Operacional</a>
-            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">Relatório Geral</a>
+            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">RequisiÃ§Ãµes</a>
+            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">GestÃ£o Operacional</a>
+            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
             
             
         
         <?php elseif($tab == 'aluguer'): ?>
             <!-- Sub-abas de Aluguer de Equipamentos -->
-            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e Máquinas</a>
+            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e MÃ¡quinas</a>
             <a href="?tab=aluguer&view=timesheets&mode=list" class="sub-tab-btn <?= $view == 'timesheets' ? 'active' : '' ?>">Timesheets</a>
             <a href="?tab=aluguer&view=pagamentos&mode=list" class="sub-tab-btn <?= $view == 'pagamentos' ? 'active' : '' ?>">Pagamentos</a>
             <a href="?tab=aluguer&view=clientes&mode=list" class="sub-tab-btn <?= $view == 'clientes' ? 'active' : '' ?>">Clientes</a>
@@ -3752,8 +3631,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label style="font-weight:800; font-size:12px; margin-right:6px;">Mostrar</label>
                         <select id="list-range" onchange="onRangeChange(this.value)">
                             <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
-                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Últimos 7</option>
-                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Últimos</option>
+                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Ãšltimos 7</option>
+                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Ãšltimos</option>
                                 <option value="monthly" <?= (($_GET['list_range'] ?? '') === 'monthly') ? 'selected' : '' ?>>Mensal</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'combustivel'): ?>
@@ -3770,16 +3649,16 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <option value="all" <?= (($filtro_consumo['range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php else: ?>
                                 <option value="view">Ver</option>
-                                <option value="last">Últimos</option>
+                                <option value="last">Ãšltimos</option>
                                 <option value="first">Primeiros</option>
-                                <option value="last7" selected>Últimos 7</option>
+                                <option value="last7" selected>Ãšltimos 7</option>
                                 <option value="all">Todos</option>
                             <?php endif; ?>
                         </select>
                         <input id="custom-number" type="number" min="1" placeholder="Dias" value="<?= htmlspecialchars((string) ($_GET['list_custom'] ?? '')) ?>" style="width:80px; <?= ((($tab == 'transporte' && $view == 'relatorio_atividades' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'combustivel' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'relatorio_consumo' && (($filtro_consumo['range'] ?? '') === 'custom'))) ? '' : 'display:none;') ?> padding:8px; border-radius:6px; border:1px solid #ccc;">
                         <button class="btn-mode" onclick="applyRange()" style="background:#eee; color:#333;">Aplicar</button>
                         
-                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e Gestão Frota -> Formulários Recebidos -->
+                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e GestÃ£o Frota -> FormulÃ¡rios Recebidos -->
                         <?php if($tab == 'transporte' && $view == 'entrada'): ?>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
                             <select onchange="filterByProject(this.value,'transporte','entrada')">
@@ -3862,7 +3741,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <button class="btn-mode" onclick="aplicarFiltrosRelatorioConsumo()" style="background:#f7f7f7; color:#333;"><i class="fa-solid fa-magnifying-glass"></i></button>
                         <?php endif; ?>
                         
-                        <!-- manter botão Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
+                        <!-- manter botÃ£o Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
                         <?php if(!($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'transporte' && $view == 'checklist')): ?>
                             <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-save" style="background: var(--vilcon-orange); margin-left:12px;">Adicionar Novo</a>
                         <?php endif; ?>
@@ -4037,7 +3916,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <th>Tipo</th>
                             <th>Data</th>
                             <th>Solicitante</th>
-                            <th>Ações</th>
+                            <th>AÃ§Ãµes</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -4206,7 +4085,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <td><?= !empty($rep['criado_em']) ? date('d/m/Y H:i', strtotime($rep['criado_em'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($rep['solicitante'] ?? '-') ?></td>
                                     <td>
-                                        <a href="/vilcon-systemon/public/app/modules/oficina/index.php?tab=oficina&view=pedidos_reparacao&mode=list" title="Ir para Oficina" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-screwdriver-wrench"></i></a>
+                                        <a href="/vilcon-systemon/public/app/modules/oficina/index.php" title="Ir para Oficina" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-screwdriver-wrench"></i></a>
                                         <a href="imprimir_pedido.php?id=<?= (int) $rep['id'] ?>" title="Imprimir" style="margin-right:8px; color:inherit;"><i class="fas fa-print"></i></a>
                                     </td>
                                 </tr>
@@ -4274,7 +4153,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     Agora o Gestor analisa a urgência e decide a viatura/máquina, convertendo automaticamente em Ordem de Serviço.
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <a href="index.php" class="btn-mode">Terminar</a>
+                    <a href="/vilcon-systemon/public/app/modules/dashboard/index.php" class="btn-mode">Terminar</a>
                     <a href="?tab=transporte&view=reservas&mode=form" class="btn-mode">Nova Reserva</a>
                 </div>
             </div>
@@ -4377,8 +4256,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Ordem de Serviço - Gestor de Transporte</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar à Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Ordem de ServiÃ§o - Gestor de Transporte</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
@@ -4386,7 +4265,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <form method="POST" class="form-grid">
                     <div class="section-title">1. Detalhes - Gestor de Transporte</div>
                     <div class="form-group">
-                        <label>Número OS</label>
+                        <label>NÃºmero OS</label>
                         <input type="text" value="<?= htmlspecialchars($proximo_id_os) ?>" readonly>
                     </div>
                     <div class="form-group">
@@ -4477,13 +4356,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Gestor de Transporte</label>
                         <input type="text" name="autorizado_por" required>
                     </div>
-                    <div class="section-title">2. Descrição do Serviço a ser Realizado</div>
+                    <div class="section-title">2. DescriÃ§Ã£o do ServiÃ§o a ser Realizado</div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição</label>
-                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviço..."></textarea>
+                        <label>DescriÃ§Ã£o</label>
+                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviÃ§o..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de Serviço</button>
+                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de ServiÃ§o</button>
                     </div>
                 </form>
             </div>
@@ -4537,7 +4416,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <label>Inspector</label>
                             <input type="text" name="inspector_chk" required>
                         </div>
-                        <div class="section-title">Itens do Checklist (✔ / ✖ / N/A)</div>
+                        <div class="section-title">Itens do Checklist (? / ? / N/A)</div>
                         <div style="grid-column: span 4;">
                             <table class="history-table">
                                 <thead>
@@ -4556,8 +4435,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                             <td>
                                                 <input type="hidden" name="resultado_item[<?= (int) $it['id'] ?>]" id="resultado_item_<?= (int) $it['id'] ?>" value="na">
                                                 <div style="display:flex; gap:6px; align-items:center;">
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">✔</button>
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">✖</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">?</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">?</button>
                                                     <button type="button" class="btn-mode active" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'na')" id="btn_na_<?= (int) $it['id'] ?>">N/A</button>
                                                 </div>
                                             </td>
@@ -5449,14 +5328,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Abastecimento - Formulários Recebidos</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar à Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Abastecimento - FormulÃ¡rios Recebidos</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <?php if(empty($os_form)): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de Serviço na lista para preencher o abastecimento.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de ServiÃ§o na lista para preencher o abastecimento.</div>
                 <?php else: ?>
                     <?php
                         $tipoServicoResumo = trim((string) ($os_form['tipo_servico'] ?? ''));
@@ -6402,7 +6281,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             if(tempoHumanoEl) tempoHumanoEl.readOnly = !manual;
             if(kmMomentoEl) kmMomentoEl.readOnly = !manual;
         }
-val
+
         async function reverseGeocode(lat, lon){
             const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
             const resp = await fetch(url);
@@ -6607,7 +6486,7 @@ val
             atualizarCustoRequisicao();
             guardarLocaisAutomaticamente();
         });
-        // ações existentes (mantidas)
+        // aÃ§Ãµes existentes (mantidas)
         function aprovarPedido(id){ if(confirm('Tem certeza que deseja aprovar este pedido?')) window.location.href = `aprovar_pedido.php?id=${id}`; }
         function rejeitarPedido(id){ const justificativa = prompt('Justificativa para rejeitar:'); if(justificativa) window.location.href = `rejeitar_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
         function pendentePedido(id){ const justificativa = prompt('Justificativa para pendente:'); if(justificativa) window.location.href = `pendente_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
@@ -6615,4 +6494,11 @@ val
 
 </body>
 </html>
+
+
+
+
+
+
+
 

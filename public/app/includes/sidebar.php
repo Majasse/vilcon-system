@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 $pagina_atual = $_SERVER['PHP_SELF'];
 ?>
 
@@ -18,53 +18,53 @@ $pagina_atual = $_SERVER['PHP_SELF'];
 
             
 
-            <a href="/vilcon-systemon/app/modules/dashboard/index.php"
+            <a href="/vilcon-systemon/public/app/modules/dashboard/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/dashboard/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-chart-pie"></i> Dashboard & BI
             </a>
 
-            <a href="/vilcon-systemon/app/modules/documental/index.php"
+            <a href="/vilcon-systemon/public/app/modules/documental/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/documental/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-folder-tree"></i> Gestão Documental
             </a>
 
-            <a href="/vilcon-systemon/app/modules/oficina/index.php"
+            <a href="/vilcon-systemon/public/app/modules/oficina/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/oficina/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-screwdriver-wrench"></i> Oficina
             </a>
 
-            <a href="/vilcon-systemon/app/modules/transporte/index.php"
+            <a href="/vilcon-systemon/public/app/modules/transporte/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/transporte/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-truck-ramp-box"></i> Transporte
             </a>
 
             
-            <a href="/vilcon-systemon/app/modules/rh/index.php"
+            <a href="/vilcon-systemon/public/app/modules/rh/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/rh/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-users-gear"></i> RH
             </a>
 
-            <a href="/vilcon-systemon/app/modules/seguranca/index.php"
+            <a href="/vilcon-systemon/public/app/modules/seguranca/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/seguranca/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-shield-halved"></i> Seguranca
             </a>
 
-            <a href="/vilcon-systemon/app/modules/logistica/index.php"
+            <a href="/vilcon-systemon/public/app/modules/logistica/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/logistica/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-boxes-packing"></i> Logística
             </a>
 
-            <a href="/vilcon-systemon/app/modules/aprovacoes/index.php"
+            <a href="/vilcon-systemon/public/app/modules/aprovacoes/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/aprovacoes/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-file-circle-check"></i> Aprovações
             </a>
 
-            <a href="/vilcon-systemon/app/modules/relatorios/index.php"
+            <a href="/vilcon-systemon/public/app/modules/relatorios/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/relatorios/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-chart-line"></i> Relatórios & BI
             </a>
 
-            <a href="/vilcon-systemon/app/modules/utilizadores/index.php"
+            <a href="/vilcon-systemon/public/app/modules/utilizadores/index.php"
                class="nav-link sub <?= (strpos($pagina_atual, '/utilizadores/') !== false) ? 'active' : '' ?>">
                 <i class="fa-solid fa-user-shield"></i> Utilizadores
             </a>
@@ -200,4 +200,9 @@ $pagina_atual = $_SERVER['PHP_SELF'];
     transform: scale(1.02);
 }
 </style>
+
+
+
+
+
 

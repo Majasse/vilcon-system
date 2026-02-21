@@ -1,11 +1,3 @@
 <?php
-require_once __DIR__ . '/bootstrap/init.php';
-require_once __DIR__ . '/application/context.php';
+require_once dirname(__DIR__, 4) . '/modulo3_transporte.php';
 
-$context = transporteBuildContext();
-$tab = $context['tab'];
-$view = $context['view'];
-$mode = $context['mode'];
-$proximo_id_os = $context['proximo_id_os'];
-
-require __DIR__ . '/presentation/pages/module.php';

@@ -602,6 +602,8 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             --logi-dark: #1a1a1a;
             --logi-soft: #fdf2e9;
             --logi-border: #f3c99f;
+            --vilcon-black: #1a1a1a;
+            --vilcon-orange: #f39c12;
         }
         body {
             background: #f8fafc !important;
@@ -627,12 +629,19 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
         }
         .logi-page { padding: 16px; background: transparent !important; }
         .logi-card { background: #fff !important; border: 1px solid #e5e7eb !important; border-radius: 12px; padding: 14px; }
-        .logi-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-        .logi-tab { text-decoration: none; padding: 8px 12px; border-radius: 999px; border: 1px solid #d1d5db; color: #334155 !important; background: #fff !important; font-size: 13px; }
-        .logi-tab.active { background: var(--logi-soft) !important; color: var(--logi-dark) !important; border-color: var(--logi-primary) !important; }
+        .logi-main-tabs { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
+        .tab-menu { display: flex; gap: 8px; flex-wrap: wrap; }
+        .tab-btn { padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 11px; border: 1px solid #ddd; color: #666 !important; text-transform: uppercase; transition: 0.3s; display: flex; align-items: center; gap: 8px; background:#fff; }
+        .tab-btn.active { background: var(--vilcon-orange); color: #fff !important; border-color: var(--vilcon-orange); }
+        .sub-tab-container { background: #eee; padding: 8px; border-radius: 8px; margin: 10px 0 12px 0; display: flex; gap: 5px; flex-wrap: wrap; }
+        .sub-tab-btn { padding: 8px 18px; border-radius: 5px; text-decoration: none; font-weight: 700; font-size: 10px; color: #555; text-transform: uppercase; transition: 0.2s; background:transparent; }
+        .sub-tab-btn.active { background: #fff; color: var(--vilcon-black); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .logi-kpis { display: grid; grid-template-columns: repeat(4,minmax(120px,1fr)); gap: 8px; margin-bottom: 10px; }
         .logi-kpi { border: 1px solid #e5e7eb; background: #f8fafc !important; border-radius: 10px; padding: 10px; font-size: 13px; color:#0f172a !important; }
         .logi-filters, .logi-form, .logi-inline-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .logi-inner-nav { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; padding-bottom:12px; border-bottom:1px dashed #ddd; flex-wrap:wrap; }
+        .logi-filters.fixed-position { margin-bottom: 0; align-items:center; }
+        .logi-filters.fixed-position input[name="q"] { min-width: 300px; }
         .logi-filters input, .logi-filters select, .logi-form input, .logi-form select, .logi-inline-form input, .logi-inline-form select {
             border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 13px; min-height: 36px;
         }
@@ -640,9 +649,9 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             border: 1px solid var(--logi-primary); border-radius: 8px; background: var(--logi-primary); color: #fff; padding: 8px 12px; font-size: 13px; cursor: pointer;
         }
         .logi-filters button:hover, .logi-form button:hover, .logi-inline-form button:hover, .logi-action-btn:hover { background: var(--logi-primary-dark); border-color: var(--logi-primary-dark); }
-        .logi-toggle { margin-bottom: 10px; display: flex; gap: 8px; }
-        .logi-toggle a { text-decoration: none; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; color: #334155; font-size: 13px; }
-        .logi-toggle a.active { background: var(--logi-soft); border-color: var(--logi-primary); color: var(--logi-dark); }
+        .mode-selector { margin-bottom: 10px; display: flex; gap: 10px; flex-wrap:wrap; }
+        .btn-mode { padding: 8px 15px; border-radius: 20px; font-size: 11px; font-weight: 700; text-decoration: none; text-transform: uppercase; border: 1px solid #ddd; color: #666; background: #fff; }
+        .btn-mode.active { background: var(--vilcon-black); color: #fff; border-color: var(--vilcon-black); }
         .logi-alert { border-radius: 8px; padding: 9px 10px; margin-bottom: 10px; font-size: 13px; }
         .logi-alert.error { color: #991b1b; background: #fee2e2; border: 1px solid #fecaca; }
         .logi-alert.success { color: #166534; background: #ecfdf3; border: 1px solid #bbf7d0; }
@@ -679,26 +688,27 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
     </div>
 
     <div class="dashboard-container logi-page">
-        <div class="logi-tabs">
-            <a href="?view=pedidos_oficina" class="logi-tab <?= $secao==='requisicoes' ? 'active' : '' ?>">Requisicoes</a>
-            <a href="?view=extratos" class="logi-tab <?= $secao==='financas' ? 'active' : '' ?>">Financas</a>
-            <a href="?view=pecas" class="logi-tab <?= $secao==='stock' ? 'active' : '' ?>">Controle de Stock</a>
-            <a href="?view=oper_uniforme" class="logi-tab <?= $secao==='operacional' ? 'active' : '' ?>">Logistica Operacional</a>
-            <a href="?view=budjet" class="logi-tab <?= $secao==='budjet' ? 'active' : '' ?>">Budjet</a>
-            <a href="?view=alertas" class="logi-tab <?= $secao==='alertas' ? 'active' : '' ?>">Alertas</a>
-            <a href="?view=relatorios" class="logi-tab <?= $view==='relatorios' ? 'active' : '' ?>">Relatorios</a>
+        <div class="logi-main-tabs">
+            <div class="tab-menu">
+                <a href="?view=pedidos_oficina&mode=list" class="tab-btn <?= $secao==='requisicoes' ? 'active' : '' ?>">Pedidos recebidos da Oficina</a>
+                <a href="?view=extratos&mode=list" class="tab-btn <?= $secao==='financas' ? 'active' : '' ?>">Financas</a>
+                <a href="?view=pecas&mode=list" class="tab-btn <?= $secao==='stock' ? 'active' : '' ?>">Controle de Stock</a>
+                <a href="?view=oper_uniforme&mode=list" class="tab-btn <?= $secao==='operacional' ? 'active' : '' ?>">Logistica Operacional</a>
+                <a href="?view=budjet&mode=list" class="tab-btn <?= $secao==='budjet' ? 'active' : '' ?>">Budjet</a>
+                <a href="?view=alertas&mode=list" class="tab-btn <?= $secao==='alertas' ? 'active' : '' ?>">Alertas</a>
+                <a href="?view=relatorios&mode=list" class="tab-btn <?= $view==='relatorios' ? 'active' : '' ?>">Relatorios</a>
+            </div>
         </div>
         <?php $opcoesSecao = opcoesSecaoLogistica($secao); ?>
-        <?php if(!empty($opcoesSecao) && $secao !== 'budjet'): ?>
-            <form method="GET" class="logi-filters" style="margin-top:-4px;">
-                <select name="view">
-                    <?php foreach($opcoesSecao as $k => $lbl): ?>
-                        <option value="<?= htmlspecialchars((string)$k) ?>" <?= $view===$k?'selected':'' ?>><?= htmlspecialchars((string)$lbl) ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="hidden" name="mode" value="<?= in_array($view,['relatorios','alertas','budjet','extratos','pedidos_oficina'],true)?'list':htmlspecialchars((string)$mode) ?>">
-                <button>Abrir</button>
-            </form>
+        <?php if(!empty($opcoesSecao) && $secao !== 'budjet' && $secao !== 'requisicoes'): ?>
+            <div class="sub-tab-container">
+                <?php foreach($opcoesSecao as $k => $lbl): ?>
+                    <a
+                        href="?view=<?= urlencode((string)$k) ?>&mode=list"
+                        class="sub-tab-btn <?= $view===$k ? 'active' : '' ?>"
+                    ><?= htmlspecialchars((string)$lbl) ?></a>
+                <?php endforeach; ?>
+            </div>
         <?php endif; ?>
 
         <div class="logi-card">
@@ -720,36 +730,38 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             <?php if($msg): ?><div class="logi-alert success"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
 
             <?php if($view !== 'budjet'): ?>
-                <form method="GET" class="logi-filters">
-                    <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
-                    <input type="hidden" name="mode" value="<?= htmlspecialchars((string)$mode) ?>">
-                    <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="<?= in_array($view,['requisicoes','pedidos_oficina'],true) ? 'Pesquisar por codigo, item ou responsavel' : 'Pesquisar' ?>">
-                <?php if(in_array($view,['requisicoes','pedidos_oficina'],true)): ?>
-                    <select name="status">
-                            <option value="todos">Status: Todos</option>
-                            <option value="pendente" <?= $status_filtro==='pendente'?'selected':'' ?>>Status: Pendente</option>
-                            <option value="aprovada" <?= $status_filtro==='aprovada'?'selected':'' ?>>Status: Aprovada</option>
-                            <option value="negada" <?= $status_filtro==='negada'?'selected':'' ?>>Status: Negada</option>
-                            <option value="em transito" <?= $status_filtro==='em transito'?'selected':'' ?>>Status: Em transito</option>
-                            <option value="entregue" <?= $status_filtro==='entregue'?'selected':'' ?>>Status: Entregue</option>
-                    </select>
-                <?php endif; ?>
-                <?php if($view==='requisicoes'): ?>
-                    <select name="departamento">
-                        <option value="todos">Departamento: Todos</option>
-                        <option value="oficina" <?= $departamento_filtro==='oficina'?'selected':'' ?>>Departamento: Oficina</option>
-                        <option value="transporte" <?= $departamento_filtro==='transporte'?'selected':'' ?>>Departamento: Transporte</option>
-                    </select>
-                <?php endif; ?>
-                <button>Aplicar</button>
-                    <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=<?= urlencode((string)$view) ?>&mode=<?= urlencode((string)$mode) ?>">Limpar</a>
-                </form>
+                <div class="logi-inner-nav">
+                    <form method="GET" class="logi-filters fixed-position">
+                        <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
+                        <input type="hidden" name="mode" value="<?= htmlspecialchars((string)$mode) ?>">
+                        <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="<?= in_array($view,['requisicoes','pedidos_oficina'],true) ? 'Pesquisar por codigo, item ou responsavel' : 'Pesquisar' ?>">
+                    <?php if(in_array($view,['requisicoes','pedidos_oficina'],true)): ?>
+                        <select name="status">
+                                <option value="todos">Status: Todos</option>
+                                <option value="pendente" <?= $status_filtro==='pendente'?'selected':'' ?>>Status: Pendente</option>
+                                <option value="aprovada" <?= $status_filtro==='aprovada'?'selected':'' ?>>Status: Aprovada</option>
+                                <option value="negada" <?= $status_filtro==='negada'?'selected':'' ?>>Status: Negada</option>
+                                <option value="em transito" <?= $status_filtro==='em transito'?'selected':'' ?>>Status: Em transito</option>
+                                <option value="entregue" <?= $status_filtro==='entregue'?'selected':'' ?>>Status: Entregue</option>
+                        </select>
+                    <?php endif; ?>
+                    <?php if($view==='requisicoes'): ?>
+                        <select name="departamento">
+                            <option value="todos">Departamento: Todos</option>
+                            <option value="oficina" <?= $departamento_filtro==='oficina'?'selected':'' ?>>Departamento: Oficina</option>
+                            <option value="transporte" <?= $departamento_filtro==='transporte'?'selected':'' ?>>Departamento: Transporte</option>
+                        </select>
+                    <?php endif; ?>
+                    <button class="btn-mode">Aplicar</button>
+                        <a class="btn-mode" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=<?= urlencode((string)$view) ?>&mode=<?= urlencode((string)$mode) ?>">Limpar</a>
+                    </form>
+                </div>
             <?php endif; ?>
 
             <?php if(in_array($view,['fornecedores','pecas','cotacoes','substituicoes','facturas','pagamentos','pecas_avariadas','oper_uniforme','oper_alimentacao','oper_portagem','oper_multas','oper_seguros','oper_taxas_radios','oper_extintores','oper_manutencoes'],true)): ?>
-                <div class="logi-toggle">
-                    <a class="<?= $mode==='list' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=list">Lista</a>
-                    <a class="<?= $mode==='form' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=form">Novo Registo</a>
+                <div class="mode-selector">
+                    <a class="btn-mode <?= $mode==='list' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=list">Lista</a>
+                    <a class="btn-mode <?= $mode==='form' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=form">Novo Registo</a>
                 </div>
             <?php endif; ?>
 
