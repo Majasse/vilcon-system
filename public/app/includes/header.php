@@ -1,8 +1,13 @@
-<?php
+﻿<?php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/user_profile_widget.php';
+require_once dirname(__DIR__) . '/core/access_control.php';
+
+if (isset($_SESSION['usuario_perfil'])) {
+    garantirAcessoModuloAtual((string)($_SERVER['SCRIPT_NAME'] ?? ''), (string)$_SESSION['usuario_perfil']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt">
@@ -14,16 +19,17 @@ require_once __DIR__ . '/user_profile_widget.php';
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/vilcon-bias-theme.css">
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
 
     <style>
         :root {
-            --bg-dark: #121212;
-            --sidebar-bg: #1e1e1e;
+            --bg-dark: #f3f4f6;
+            --sidebar-bg: #ffffff;
             --accent-orange: #e67e22;
-            --text-main: #ffffff;
-            --text-dim: #b3b3b3;
-            --card-bg: #252525;
-            --sidebar-hover: #2c2c2c;
+            --text-main: #111827;
+            --text-dim: #6b7280;
+            --card-bg: #ffffff;
+            --sidebar-hover: #f3f4f6;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -51,7 +57,7 @@ require_once __DIR__ . '/user_profile_widget.php';
             align-items: center;
             padding: 0 40px;
             background: var(--sidebar-bg);
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #e5e7eb;
         }
 
         .user-info { font-size: 14px; color: var(--text-dim); }
@@ -62,3 +68,11 @@ require_once __DIR__ . '/user_profile_widget.php';
 </head>
 <body>
 <?php renderUserProfileWidget(); ?>
+<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
+
+

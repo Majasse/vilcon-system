@@ -14,6 +14,9 @@ $tab = $_GET['tab'] ?? 'transporte';
 $view = $_GET['view'] ?? 'reservas'; 
 $mode = $_GET['mode'] ?? 'list'; 
 $registro_id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+if($tab === 'hse' && !isset($_GET['view'])) {
+    $view = 'checklist';
+}
 $erro_form = '';
 $os_form = null;
 
@@ -149,6 +152,44 @@ ensureColumnExists($pdo, 'transporte_reservas', 'urgencia_calculada_em', "dateti
 ensureColumnExists($pdo, 'transporte_reservas', 'ordem_servico_id', "int NULL AFTER `status`");
 ensureColumnExists($pdo, 'transporte_reservas', 'aprovado_por', "varchar(120) NULL AFTER `ordem_servico_id`");
 ensureColumnExists($pdo, 'transporte_reservas', 'aprovado_em', "datetime NULL AFTER `aprovado_por`");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_presencas (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo VARCHAR(30) NOT NULL,
+        data_presenca DATE NOT NULL,
+        pessoal_id INT NULL,
+        colaborador VARCHAR(180) NULL,
+        funcao VARCHAR(120) NULL,
+        empresa VARCHAR(120) NULL,
+        projeto VARCHAR(120) NULL,
+        hora_entrada TIME NULL,
+        hora_saida TIME NULL,
+        estado VARCHAR(40) NOT NULL DEFAULT 'Presente',
+        assinou_entrada TINYINT(1) NOT NULL DEFAULT 0,
+        assinou_saida TINYINT(1) NOT NULL DEFAULT 0,
+        observacoes VARCHAR(255) NULL,
+        registado_por VARCHAR(150) NULL,
+        enviado_rh TINYINT(1) NOT NULL DEFAULT 0,
+        enviado_em DATETIME NULL,
+        lista_fisica_anexo VARCHAR(255) NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_presenca_codigo (codigo),
+        INDEX idx_presenca_data (data_presenca),
+        INDEX idx_presenca_estado (estado)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'transporte_presencas', 'pessoal_id', "int NULL AFTER `data_presenca`");
+ensureColumnExists($pdo, 'transporte_presencas', 'assinou_entrada', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `estado`");
+ensureColumnExists($pdo, 'transporte_presencas', 'assinou_saida', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `assinou_entrada`");
+ensureColumnExists($pdo, 'transporte_presencas', 'enviado_rh', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `registado_por`");
+ensureColumnExists($pdo, 'transporte_presencas', 'enviado_em', "DATETIME NULL AFTER `enviado_rh`");
+ensureColumnExists($pdo, 'transporte_presencas', 'lista_fisica_anexo', "VARCHAR(255) NULL AFTER `enviado_em`");
+try {
+    $pdo->exec("ALTER TABLE transporte_presencas ADD UNIQUE KEY uniq_transp_presenca_dia_pessoal (data_presenca, pessoal_id)");
+} catch (Throwable $e) {
+    // indice pode ja existir
+}
 
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS transporte_relatorios_atividades (
@@ -1184,6 +1225,63 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'distance') {
     exit();
 }
 
+if(isset($_GET['doc']) && in_array((string) ($_GET['doc'] ?? ''), ['presenca_pdf','presenca_excel','presenca_word'], true)) {
+    $docTipoPres = (string) ($_GET['doc'] ?? 'presenca_pdf');
+    $dataDoc = trim((string) ($_GET['data_presenca'] ?? ''));
+    if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataDoc)) {
+        http_response_code(400);
+        echo 'Data invalida para lista de presenca.';
+        exit();
+    }
+
+    $docStmt = $pdo->prepare("
+        SELECT colaborador, funcao, hora_entrada, hora_saida, estado
+        FROM transporte_presencas
+        WHERE data_presenca = :data_presenca
+        ORDER BY colaborador ASC
+    ");
+    $docStmt->execute([':data_presenca' => $dataDoc]);
+    $rowsDoc = $docStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    if($docTipoPres === 'presenca_excel') {
+        header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="lista_presencas_' . $dataDoc . '.xls"');
+    } elseif($docTipoPres === 'presenca_word') {
+        header('Content-Type: application/msword; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="lista_presencas_' . $dataDoc . '.doc"');
+    } else {
+        header('Content-Type: text/html; charset=UTF-8');
+    }
+
+    echo '<!doctype html><html><head><meta charset="utf-8"><title>Lista de Presencas - ' . htmlspecialchars($dataDoc) . '</title>
+    <style>
+      body{font-family:Arial,sans-serif;color:#111}
+      .head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}
+      .title{font-size:18px;font-weight:800}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
+      th{background:#111;color:#f4b400}
+      tr:nth-child(even) td{background:#fff8e1}
+    </style></head><body>';
+    echo '<div class="head"><div class="title">Lista de Presencas - Transporte</div><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div></div>';
+    echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
+    if(empty($rowsDoc)) {
+        echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
+    } else {
+        foreach($rowsDoc as $r) {
+            echo '<tr>';
+            echo '<td>' . htmlspecialchars((string) ($r['colaborador'] ?? '-')) . '</td>';
+            echo '<td>' . htmlspecialchars((string) ($r['funcao'] ?? '-')) . '</td>';
+            echo '<td>' . htmlspecialchars(!empty($r['hora_entrada']) ? substr((string) $r['hora_entrada'], 0, 5) : '-') . '</td>';
+            echo '<td>' . htmlspecialchars(!empty($r['hora_saida']) ? substr((string) $r['hora_saida'], 0, 5) : '-') . '</td>';
+            echo '<td>' . htmlspecialchars((string) ($r['estado'] ?? '-')) . '</td>';
+            echo '</tr>';
+        }
+    }
+    echo '</tbody></table>' . ($docTipoPres === 'presenca_pdf' ? '<script>window.print();</script>' : '') . '</body></html>';
+    exit();
+}
+
 if(isset($_GET['doc']) && isset($_GET['id'])) {
     $tipoDoc = trim((string) ($_GET['doc'] ?? ''));
     $idDoc = (int) ($_GET['id'] ?? 0);
@@ -1243,6 +1341,189 @@ $proximo_id_os = "OS-" . date('Y') . "-" . str_pad((string) $nextId, 4, '0', STR
 // Handle form submissions (salvar_os / finalizar_os)
 if($_SERVER['REQUEST_METHOD'] === 'POST') {
     garantirPermissao($pdo, 'transporte', 'editar');
+
+    if(isset($_POST['acao_presencas']) && $_POST['acao_presencas'] === 'marcar_presenca_lote') {
+        $dataPresenca = trim((string) ($_POST['data_presenca'] ?? date('Y-m-d')));
+        $obsLote = $_POST['obs_lote'] ?? [];
+        $entradaLote = $_POST['entrada_lote'] ?? [];
+        $saidaLote = $_POST['saida_lote'] ?? [];
+        $horaEntradaLote = $_POST['hora_entrada_lote'] ?? [];
+        $horaSaidaLote = $_POST['hora_saida_lote'] ?? [];
+
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPresenca)) {
+            $erro_form = 'Data de presenca invalida.';
+        } else {
+            $bloqStmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM transporte_presencas
+                WHERE data_presenca = :data_presenca
+                  AND enviado_rh = 1
+            ");
+            $bloqStmt->execute([':data_presenca' => $dataPresenca]);
+            if((int) ($bloqStmt->fetchColumn() ?: 0) > 0) {
+                $erro_form = 'Esta lista ja foi enviada ao RH e esta bloqueada para edicao.';
+            }
+        }
+
+        if($erro_form === '') {
+            $colStmt = $pdo->query("
+                SELECT p.id, p.nome, c.nome AS cargo_nome
+                FROM pessoal p
+                LEFT JOIN cargos c ON c.id = p.cargo_id
+                WHERE p.estado = 'Activo'
+                ORDER BY p.nome ASC
+            ");
+            $colaboradores = $colStmt ? ($colStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+            $stmtBusca = $pdo->prepare("
+                SELECT id
+                FROM transporte_presencas
+                WHERE data_presenca = :data_presenca
+                  AND pessoal_id = :pessoal_id
+                ORDER BY id DESC
+                LIMIT 1
+            ");
+            $stmtInsert = $pdo->prepare("
+                INSERT INTO transporte_presencas
+                (codigo, data_presenca, pessoal_id, colaborador, funcao, empresa, projeto, hora_entrada, hora_saida, estado, assinou_entrada, assinou_saida, observacoes, registado_por, enviado_rh, enviado_em)
+                VALUES
+                (:codigo, :data_presenca, :pessoal_id, :colaborador, :funcao, :empresa, :projeto, :hora_entrada, :hora_saida, :estado, :assinou_entrada, :assinou_saida, :observacoes, :registado_por, 0, NULL)
+            ");
+            $stmtUpdate = $pdo->prepare("
+                UPDATE transporte_presencas
+                SET colaborador = :colaborador,
+                    funcao = :funcao,
+                    hora_entrada = :hora_entrada,
+                    hora_saida = :hora_saida,
+                    estado = :estado,
+                    assinou_entrada = :assinou_entrada,
+                    assinou_saida = :assinou_saida,
+                    observacoes = :observacoes,
+                    enviado_rh = 0,
+                    enviado_em = NULL
+                WHERE id = :id
+            ");
+
+            foreach($colaboradores as $col) {
+                $pid = (int) ($col['id'] ?? 0);
+                if($pid <= 0) continue;
+                $pidRaw = (string) $pid;
+                $assinouEntrada = is_array($entradaLote) && array_key_exists($pidRaw, $entradaLote) ? 1 : 0;
+                $assinouSaida = is_array($saidaLote) && array_key_exists($pidRaw, $saidaLote) ? 1 : 0;
+                $horaIn = is_array($horaEntradaLote) ? trim((string) ($horaEntradaLote[$pidRaw] ?? '')) : '';
+                $horaOut = is_array($horaSaidaLote) ? trim((string) ($horaSaidaLote[$pidRaw] ?? '')) : '';
+                if($assinouEntrada === 1 && $horaIn === '') $horaIn = '07:00';
+                if($assinouSaida === 1 && $horaOut === '') $horaOut = '16:00';
+                $obs = is_array($obsLote) ? trim((string) ($obsLote[$pidRaw] ?? '')) : '';
+                $estado = ($assinouEntrada === 1 || $assinouSaida === 1) ? 'Presente' : 'Ausente';
+
+                $stmtBusca->execute([
+                    ':data_presenca' => $dataPresenca,
+                    ':pessoal_id' => $pid
+                ]);
+                $existenteId = (int) ($stmtBusca->fetchColumn() ?: 0);
+
+                $paramsBase = [
+                    ':colaborador' => (string) ($col['nome'] ?? ''),
+                    ':funcao' => (string) ($col['cargo_nome'] ?? ''),
+                    ':hora_entrada' => $assinouEntrada === 1 && preg_match('/^\d{2}:\d{2}$/', $horaIn) ? ($horaIn . ':00') : null,
+                    ':hora_saida' => $assinouSaida === 1 && preg_match('/^\d{2}:\d{2}$/', $horaOut) ? ($horaOut . ':00') : null,
+                    ':estado' => $estado,
+                    ':assinou_entrada' => $assinouEntrada,
+                    ':assinou_saida' => $assinouSaida,
+                    ':observacoes' => $obs !== '' ? $obs : null
+                ];
+
+                if($existenteId > 0) {
+                    $paramsBase[':id'] = $existenteId;
+                    $stmtUpdate->execute($paramsBase);
+                } else {
+                    $nextPresStmtLocal = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_presencas");
+                    $nextPresIdLocal = (int) ($nextPresStmtLocal ? $nextPresStmtLocal->fetchColumn() : 1);
+                    $codigoPres = 'PRS-' . date('Y') . '-' . str_pad((string) $nextPresIdLocal, 4, '0', STR_PAD_LEFT);
+                    $stmtInsert->execute(array_merge($paramsBase, [
+                        ':codigo' => $codigoPres,
+                        ':data_presenca' => $dataPresenca,
+                        ':pessoal_id' => $pid,
+                        ':empresa' => 'Vilcon',
+                        ':projeto' => null,
+                        ':registado_por' => (string) ($_SESSION['usuario_nome'] ?? '')
+                    ]));
+                }
+            }
+
+            header("Location:?tab=transporte&view=presencas&mode=list&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade_lote=1");
+            exit();
+        }
+    }
+
+    if(isset($_POST['acao_presencas']) && $_POST['acao_presencas'] === 'enviar_rh') {
+        $dataEnvio = trim((string) ($_POST['data_presenca'] ?? date('Y-m-d')));
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataEnvio)) {
+            $erro_form = 'Data de envio invalida.';
+        } else {
+            $chkAnexoStmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM transporte_presencas
+                WHERE data_presenca = :data_presenca
+                  AND lista_fisica_anexo IS NOT NULL
+                  AND lista_fisica_anexo <> ''
+            ");
+            $chkAnexoStmt->execute([':data_presenca' => $dataEnvio]);
+            if((int) ($chkAnexoStmt->fetchColumn() ?: 0) === 0) {
+                $erro_form = 'Anexe primeiro a lista fisica para poder enviar ao RH.';
+            }
+        }
+
+        if($erro_form === '') {
+            $upEnvioRhStmt = $pdo->prepare("
+                UPDATE transporte_presencas
+                SET enviado_rh = 1,
+                    enviado_em = NOW()
+                WHERE data_presenca = :data_presenca
+            ");
+            $upEnvioRhStmt->execute([':data_presenca' => $dataEnvio]);
+            header("Location:?tab=transporte&view=presencas&mode=list&data_assiduidade=" . urlencode($dataEnvio) . "&sent_rh=1");
+            exit();
+        }
+    }
+
+    if(isset($_POST['acao_presencas']) && $_POST['acao_presencas'] === 'anexar_lista_fisica') {
+        $dataAnexo = trim((string) ($_POST['data_presenca'] ?? date('Y-m-d')));
+        if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataAnexo)) {
+            $erro_form = 'Data invalida para anexo da lista fisica.';
+        } else {
+            $chkBloqStmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM transporte_presencas
+                WHERE data_presenca = :data_presenca
+                  AND enviado_rh = 1
+            ");
+            $chkBloqStmt->execute([':data_presenca' => $dataAnexo]);
+            if((int) ($chkBloqStmt->fetchColumn() ?: 0) > 0) {
+                $erro_form = 'Esta lista ja foi enviada ao RH e nao pode mais receber anexo.';
+            }
+        }
+        if($erro_form === '') {
+            $up = processarAnexosUpload('lista_fisica_file', 'presencas_fisicas', 1);
+            if(!$up['ok'] || empty($up['files'][0])) {
+                $erro_form = (string) ($up['error'] ?? 'Falha ao anexar lista fisica.');
+            } else {
+                $anexoPath = (string) $up['files'][0];
+                $upAnexoStmt = $pdo->prepare("
+                    UPDATE transporte_presencas
+                    SET lista_fisica_anexo = :anexo
+                    WHERE data_presenca = :data_presenca
+                ");
+                $upAnexoStmt->execute([
+                    ':anexo' => $anexoPath,
+                    ':data_presenca' => $dataAnexo
+                ]);
+                header("Location:?tab=transporte&view=presencas&mode=list&data_assiduidade=" . urlencode($dataAnexo) . "&saved_anexo_fisico=1");
+                exit();
+            }
+        }
+    }
 
     if(isset($_POST['salvar_reserva'])) {
         $departamento = trim((string) ($_POST['departamento_reserva'] ?? ''));
@@ -1664,7 +1945,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // sem impacto: pedido principal ja foi salvo na oficina
                 }
 
-                header("Location:/vilcon-systemon/public/app/modules/oficina/index.php?tab=oficina&view=pedidos_reparacao&mode=list");
+                header("Location:?tab=transporte&view=pedido_reparacao&mode=list");
                 exit();
             } catch (Throwable $e) {
                 if($pdo->inTransaction()) {
@@ -1745,7 +2026,8 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
             }
 
-            header("Location:?tab=transporte&view=checklist&mode=list");
+            $tabChecklistRedirect = ($tab === 'hse') ? 'hse' : 'transporte';
+            header("Location:?tab={$tabChecklistRedirect}&view=checklist&mode=list");
             exit();
         }
     }
@@ -2694,6 +2976,86 @@ if($tab === 'transporte' && $view === 'pedido_reparacao' && $mode === 'list') {
     $lista_reparacao = $repStmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+$pedido_reparacao_detalhe = null;
+if($tab === 'transporte' && $view === 'pedido_reparacao' && $mode === 'detalhe') {
+    $pedidoIdDetalhe = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+    if($pedidoIdDetalhe > 0) {
+        $detStmt = $pdo->prepare("
+            SELECT id, codigo, viatura_id, matricula, condutor, km_atual, localizacao, avaria_reportada, prioridade, solicitante, pdf_anexo, status, criado_em
+            FROM transporte_pedidos_reparacao
+            WHERE id = :id
+            LIMIT 1
+        ");
+        $detStmt->execute([':id' => $pedidoIdDetalhe]);
+        $pedido_reparacao_detalhe = $detStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+}
+
+
+$veiculos_reparacao = [];
+if($tab === 'transporte' && $view === 'pedido_reparacao') {
+    $veiculos_map = [];
+
+    $veicFrotaStmt = $pdo->query("
+        SELECT
+            TRIM(COALESCE(NULLIF(a.matricula, ''), NULLIF(a.codigo, ''))) AS matricula,
+            TRIM(COALESCE(NULLIF(a.codigo, ''), NULLIF(a.descricao, ''))) AS viatura_id,
+            TRIM(COALESCE(a.descricao, '')) AS descricao,
+            '' AS condutor
+        FROM transporte_frota_ativos a
+        WHERE COALESCE(a.ativo, 1) = 1
+          AND COALESCE(NULLIF(TRIM(COALESCE(a.matricula, a.codigo, '')), ''), '') <> ''
+        ORDER BY TRIM(COALESCE(NULLIF(a.matricula, ''), NULLIF(a.codigo, ''))) ASC
+    ");
+    $frotaRows = $veicFrotaStmt ? ($veicFrotaStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach($frotaRows as $vr) {
+        $mat = strtoupper(trim((string) ($vr['matricula'] ?? '')));
+        if($mat === '') continue;
+        $veiculos_map[$mat] = [
+            'matricula' => $mat,
+            'viatura_id' => trim((string) ($vr['viatura_id'] ?? '')),
+            'descricao' => trim((string) ($vr['descricao'] ?? '')),
+            'condutor' => trim((string) ($vr['condutor'] ?? ''))
+        ];
+    }
+
+    $veicGuiasStmt = $pdo->query("
+        SELECT
+            TRIM(COALESCE(NULLIF(g.matricula, ''), NULLIF(g.viatura_id, ''))) AS matricula,
+            TRIM(COALESCE(NULLIF(g.viatura_id, ''), NULLIF(g.matricula, ''))) AS viatura_id,
+            '' AS descricao,
+            TRIM(COALESCE(g.condutor, '')) AS condutor
+        FROM transporte_guias g
+        WHERE COALESCE(NULLIF(TRIM(COALESCE(g.matricula, g.viatura_id, '')), ''), '') <> ''
+    ");
+    $guiasRows = $veicGuiasStmt ? ($veicGuiasStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach($guiasRows as $vr) {
+        $mat = strtoupper(trim((string) ($vr['matricula'] ?? '')));
+        if($mat === '') continue;
+        if(!isset($veiculos_map[$mat])) {
+            $veiculos_map[$mat] = [
+                'matricula' => $mat,
+                'viatura_id' => trim((string) ($vr['viatura_id'] ?? '')),
+                'descricao' => trim((string) ($vr['descricao'] ?? '')),
+                'condutor' => trim((string) ($vr['condutor'] ?? ''))
+            ];
+            continue;
+        }
+        if($veiculos_map[$mat]['viatura_id'] === '' && !empty($vr['viatura_id'])) {
+            $veiculos_map[$mat]['viatura_id'] = trim((string) $vr['viatura_id']);
+        }
+        if($veiculos_map[$mat]['descricao'] === '' && !empty($vr['descricao'])) {
+            $veiculos_map[$mat]['descricao'] = trim((string) $vr['descricao']);
+        }
+        if($veiculos_map[$mat]['condutor'] === '' && !empty($vr['condutor'])) {
+            $veiculos_map[$mat]['condutor'] = trim((string) $vr['condutor']);
+        }
+    }
+
+    ksort($veiculos_map, SORT_NATURAL | SORT_FLAG_CASE);
+    $veiculos_reparacao = array_values($veiculos_map);
+}
+
 $lista_reservas = [];
 if($tab === 'transporte' && $view === 'reservas' && $mode === 'list') {
     $resStmt = $pdo->query("
@@ -2793,7 +3155,7 @@ $itens_checklist_form = [];
 $template_checklist_form = null;
 $tipos_checklist = [];
 $projetos_checklist = [];
-if($tab === 'transporte' && $view === 'checklist') {
+if(($tab === 'hse' || $tab === 'transporte') && $view === 'checklist') {
     $filtroTipoChk = trim((string) ($_GET['tipo_equipamento'] ?? ''));
     $filtroProjetoChk = trim((string) ($_GET['project'] ?? ''));
 
@@ -2807,7 +3169,8 @@ if($tab === 'transporte' && $view === 'checklist') {
         ");
         $firstTplId = $firstTplStmt ? (int) $firstTplStmt->fetchColumn() : 0;
         if($firstTplId > 0) {
-            header("Location:?tab=transporte&view=checklist&mode=form&template_id=" . $firstTplId);
+            $tabChecklistRedirect = ($tab === 'hse') ? 'hse' : 'transporte';
+            header("Location:?tab={$tabChecklistRedirect}&view=checklist&mode=form&template_id=" . $firstTplId);
             exit();
         }
     }
@@ -3564,6 +3927,82 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         }
     }
 }
+
+$msg_presencas = '';
+$data_assiduidade_transporte = trim((string) ($_GET['data_assiduidade'] ?? date('Y-m-d')));
+$colaboradores_transporte = [];
+$lista_presencas = [];
+$presencas_por_colaborador = [];
+$listas_presenca_dias = [];
+$lista_presencas_historico = [];
+$hist_data_transporte = trim((string) ($_GET['hist_data'] ?? ''));
+$lista_presenca_enviada_rh = false;
+if($tab === 'transporte' && $view === 'presencas') {
+    if(isset($_GET['saved_assiduidade_lote']) && $_GET['saved_assiduidade_lote'] === '1') {
+        $msg_presencas = 'Lista de presenca guardada com sucesso.';
+    }
+    if(isset($_GET['saved_anexo_fisico']) && $_GET['saved_anexo_fisico'] === '1') {
+        $msg_presencas = 'Lista fisica anexada com sucesso.';
+    }
+    if(isset($_GET['sent_rh']) && $_GET['sent_rh'] === '1') {
+        $msg_presencas = 'Lista enviada para RH com sucesso.';
+    }
+    if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_assiduidade_transporte)) {
+        $data_assiduidade_transporte = date('Y-m-d');
+    }
+
+    $colStmt = $pdo->query("
+        SELECT p.id, p.numero, p.nome, c.nome AS cargo_nome
+        FROM pessoal p
+        LEFT JOIN cargos c ON c.id = p.cargo_id
+        WHERE p.estado = 'Activo'
+        ORDER BY p.nome ASC
+    ");
+    $colaboradores_transporte = $colStmt ? ($colStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $presDiaStmt = $pdo->prepare("
+        SELECT id, pessoal_id, colaborador, funcao, hora_entrada, hora_saida, assinou_entrada, assinou_saida, observacoes, enviado_rh
+        FROM transporte_presencas
+        WHERE data_presenca = :data_presenca
+        ORDER BY id DESC
+    ");
+    $presDiaStmt->execute([':data_presenca' => $data_assiduidade_transporte]);
+    $lista_presencas = $presDiaStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach($lista_presencas as $pr) {
+        $pid = (int) ($pr['pessoal_id'] ?? 0);
+        if($pid > 0 && !isset($presencas_por_colaborador[$pid])) $presencas_por_colaborador[$pid] = $pr;
+        if((int) ($pr['enviado_rh'] ?? 0) === 1) $lista_presenca_enviada_rh = true;
+    }
+
+    if($hist_data_transporte !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_data_transporte)) {
+        $histStmt = $pdo->prepare("
+            SELECT data_presenca, colaborador, funcao, hora_entrada, hora_saida, estado, enviado_rh
+            FROM transporte_presencas
+            WHERE data_presenca = :data_ref
+            ORDER BY colaborador ASC
+        ");
+        $histStmt->execute([':data_ref' => $hist_data_transporte]);
+        $lista_presencas_historico = $histStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    $diasStmt = $pdo->prepare("
+        SELECT
+            data_presenca,
+            COUNT(*) AS total_funcionarios,
+            SUM(CASE WHEN estado = 'Presente' THEN 1 ELSE 0 END) AS total_presentes,
+            SUM(CASE WHEN estado <> 'Presente' THEN 1 ELSE 0 END) AS total_ausentes,
+            MIN(enviado_rh) AS enviado_rh_todos,
+            MAX(CASE WHEN (lista_fisica_anexo IS NOT NULL AND lista_fisica_anexo <> '') THEN 1 ELSE 0 END) AS possui_anexo,
+            MAX(lista_fisica_anexo) AS lista_fisica_anexo
+        FROM transporte_presencas
+        WHERE data_presenca >= DATE_SUB(:data_base, INTERVAL 30 DAY)
+        GROUP BY data_presenca
+        ORDER BY data_presenca DESC
+    ");
+    $diasStmt->execute([':data_base' => $data_assiduidade_transporte]);
+    $listas_presenca_dias = $diasStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="pt">
@@ -3676,9 +4115,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
 <div class="main-content">
     <div class="header-section">
+        <?php if(false): ?>
         <div class="tab-menu">
             <!-- Aba principal Transporte -->
             <a href="?tab=transporte" class="tab-btn <?= $tab == 'transporte' ? 'active' : '' ?>"><i class="fas fa-route"></i> Transporte</a>
+            <a href="?tab=hse&view=checklist&mode=list" class="tab-btn <?= $tab == 'hse' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> HSE</a>
             
             <!-- Aba principal Gestão de Frota -->
             <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> Gestão de Frota</a>
@@ -3689,6 +4130,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             <!-- Nova Aba Frentista -->
             <a href="?tab=frentista" class="tab-btn <?= $tab == 'frentista' ? 'active' : '' ?>"><i class="fas fa-gas-pump"></i> Frentista</a>
         </div>
+        <?php endif; ?>
     </div>
 
     <div class="sub-tab-container">
@@ -3697,10 +4139,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             <a href="?tab=transporte&view=reservas&mode=list" class="sub-tab-btn <?= $view == 'reservas' ? 'active' : '' ?>">Reservas</a>
             <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de Serviço</a>
             <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de Reparação</a>
-            <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
+            <a href="?tab=transporte&view=presencas&mode=list" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de Presenças</a>
             <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano Manutenção</a>
             <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">Relatório Geral</a>
         
+        <?php elseif($tab == 'hse'): ?>
+            <a href="?tab=hse&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
         <?php elseif($tab == 'gestao_frota'): ?>
             <!-- Sub-abas de Gestão de Frota -->
             <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">Formulários Recebidos</a>
@@ -3729,7 +4173,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
     <?php
     // Mapa de views por tab
     $tab_map = [
-        'transporte' => ['reservas','entrada','pedido_reparacao','checklist','plano_manutencao','relatorio_atividades'],
+        'transporte' => ['reservas','entrada','pedido_reparacao','presencas','plano_manutencao','relatorio_atividades'],
+        'hse' => ['checklist'],
         'gestao_frota' => ['recebidos','combustivel','stock','requisicoes','operacional','relatorio_consumo','todos','pendentes','aprovados','rejeitados'],
         'aluguer' => ['viaturas_maquinas','timesheets','pagamentos','clientes'],
         'frentista' => ['lista','tarefas']
@@ -3738,6 +4183,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
     if($mode == 'list' && isset($tab_map[$tab]) && in_array($view, $tab_map[$tab])): ?>
         <div class="container">
             <div class="white-card">
+                <?php $ocultarAcoesListaPresencas = ($tab == 'transporte' && $view == 'presencas'); ?>
                 <div class="inner-nav" style="align-items: center;">
                     <h3 style="text-transform: uppercase;">
                         <?php
@@ -3749,6 +4195,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     </h3>
                     
                     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <?php if(!$ocultarAcoesListaPresencas): ?>
                         <label style="font-weight:800; font-size:12px; margin-right:6px;">Mostrar</label>
                         <select id="list-range" onchange="onRangeChange(this.value)">
                             <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
@@ -3778,6 +4225,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         </select>
                         <input id="custom-number" type="number" min="1" placeholder="Dias" value="<?= htmlspecialchars((string) ($_GET['list_custom'] ?? '')) ?>" style="width:80px; <?= ((($tab == 'transporte' && $view == 'relatorio_atividades' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'combustivel' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'relatorio_consumo' && (($filtro_consumo['range'] ?? '') === 'custom'))) ? '' : 'display:none;') ?> padding:8px; border-radius:6px; border:1px solid #ccc;">
                         <button class="btn-mode" onclick="applyRange()" style="background:#eee; color:#333;">Aplicar</button>
+                        <?php endif; ?>
                         
                         <!-- filtro por projecto: aparecer em Transporte -> Entrada e Gestão Frota -> Formulários Recebidos -->
                         <?php if($tab == 'transporte' && $view == 'entrada'): ?>
@@ -3799,7 +4247,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             </select>
                         <?php endif; ?>
 
-                        <?php if($tab == 'transporte' && $view == 'checklist'): ?>
+                        <?php if($tab == 'hse' && $view == 'checklist'): ?>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Máquina/Viatura</label>
                             <select onchange="filterByMachineChecklist(this.value)">
                                 <option value="">Todos</option>
@@ -3863,7 +4311,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <?php endif; ?>
                         
                         <!-- manter botão Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
-                        <?php if(!($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'transporte' && $view == 'checklist')): ?>
+                        <?php if(!$ocultarAcoesListaPresencas && !($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'hse' && $view == 'checklist')): ?>
                             <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-save" style="background: var(--vilcon-orange); margin-left:12px;">Adicionar Novo</a>
                         <?php endif; ?>
                     </div>
@@ -4030,15 +4478,28 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     </div>
                 <?php endif; ?>
                 
+                <?php if($tab == 'transporte' && $view == 'presencas'): ?>
+                    <?php require __DIR__ . '/app/modules/transporte/presencas_panel.php'; ?>
+                <?php else: ?>
                 <table class="history-table" id="list-table">
                     <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Tipo</th>
-                            <th>Data</th>
-                            <th>Solicitante</th>
-                            <th>Ações</th>
-                        </tr>
+                        <?php if($tab == 'transporte' && $view == 'pedido_reparacao'): ?>
+                            <tr>
+                                <th>ID</th>
+                                <th>Data</th>
+                                <th>Solicitante</th>
+                                <th>Estado do Pedido</th>
+                                <th>Ações</th>
+                            </tr>
+                        <?php else: ?>
+                            <tr>
+                                <th>ID</th>
+                                <th>Tipo</th>
+                                <th>Data</th>
+                                <th>Solicitante</th>
+                                <th>Ações</th>
+                            </tr>
+                        <?php endif; ?>
                     </thead>
                     <tbody>
                         <?php if($tab == 'gestao_frota' && $view == 'stock' && !empty($lista_stock_itens)): ?>
@@ -4185,7 +4646,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
-                        <?php elseif($tab == 'transporte' && $view == 'checklist' && !empty($lista_checklists)): ?>
+                        <?php elseif($tab == 'hse' && $view == 'checklist' && !empty($lista_checklists)): ?>
                             <?php foreach($lista_checklists as $chk): ?>
                                 <tr>
                                     <td><?= htmlspecialchars(codigoChecklistVisivel($chk['id'] ?? 0)) ?></td>
@@ -4193,21 +4654,39 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <td><?= !empty($chk['ultima_inspecao']) ? date('d/m/Y', strtotime((string) $chk['ultima_inspecao'])) : '-' ?></td>
                                     <td><?= htmlspecialchars(limparTituloChecklist((string) ($chk['nome'] ?? '-'))) ?></td>
                                     <td>
-                                        <a href="?tab=transporte&view=checklist&mode=form&template_id=<?= (int) $chk['id'] ?>" title="Preencher Checklist" style="margin-right:8px; color:var(--success);"><i class="fas fa-clipboard-check"></i></a>
+                                        <a href="?tab=hse&view=checklist&mode=form&template_id=<?= (int) $chk['id'] ?>" title="Preencher Checklist" style="margin-right:8px; color:var(--success);"><i class="fas fa-clipboard-check"></i></a>
                                         <span style="font-size:11px; color:#666;">Registos: <?= (int) ($chk['total_registos'] ?? 0) ?></span>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php elseif($tab == 'transporte' && $view == 'pedido_reparacao' && !empty($lista_reparacao)): ?>
                             <?php foreach($lista_reparacao as $rep): ?>
+                                <?php
+                                    $statusRaw = trim((string) ($rep['status'] ?? ''));
+                                    if($statusRaw === '') $statusRaw = 'Enviado para Oficina';
+                                    $statusNorm = strtolower($statusRaw);
+                                    $estadoPedido = 'Em espera de aceitação';
+                                    if(strpos($statusNorm, 'andamento') !== false || strpos($statusNorm, 'progresso') !== false) {
+                                        $estadoPedido = 'Em andamento';
+                                    } elseif(strpos($statusNorm, 'aceit') !== false || strpos($statusNorm, 'aprov') !== false) {
+                                        $estadoPedido = 'Aceito';
+                                    } elseif(strpos($statusNorm, 'rejeit') !== false) {
+                                        $estadoPedido = 'Rejeitado';
+                                    } elseif(strpos($statusNorm, 'conclu') !== false || strpos($statusNorm, 'finaliz') !== false || strpos($statusNorm, 'fechad') !== false) {
+                                        $estadoPedido = 'Concluído';
+                                    } elseif(strpos($statusNorm, 'enviado') !== false || strpos($statusNorm, 'pendente') !== false) {
+                                        $estadoPedido = 'Em espera de aceitação';
+                                    }
+                                ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rep['codigo'] ?? ('PR-' . (int) $rep['id']))) ?></td>
-                                    <td>Pedido de Reparação</td>
                                     <td><?= !empty($rep['criado_em']) ? date('d/m/Y H:i', strtotime($rep['criado_em'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($rep['solicitante'] ?? '-') ?></td>
                                     <td>
-                                        <a href="/vilcon-systemon/public/app/modules/oficina/index.php?tab=oficina&view=pedidos_reparacao&mode=list" title="Ir para Oficina" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-screwdriver-wrench"></i></a>
-                                        <a href="imprimir_pedido.php?id=<?= (int) $rep['id'] ?>" title="Imprimir" style="margin-right:8px; color:inherit;"><i class="fas fa-print"></i></a>
+                                        <span style="font-weight:700; color:#555;"><?= htmlspecialchars($estadoPedido) ?></span>
+                                    </td>
+                                    <td>
+                                        <a href="?tab=transporte&view=pedido_reparacao&mode=detalhe&id=<?= (int) ($rep['id'] ?? 0) ?>" style="display:inline-block; padding:6px 10px; border-radius:7px; background:#111827; color:#fff; text-decoration:none; font-size:11px; font-weight:700;">Ver detalhes</a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -4259,6 +4738,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <?php endif; ?>
                     </tbody>
                 </table>
+                <?php endif; ?>
             </div>
         </div>
     <?php endif; ?>
@@ -4277,6 +4757,62 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     <a href="index.php" class="btn-mode">Terminar</a>
                     <a href="?tab=transporte&view=reservas&mode=form" class="btn-mode">Nova Reserva</a>
                 </div>
+            </div>
+        </div>
+    <?php endif; ?>
+    <?php if($mode == 'detalhe' && $tab == 'transporte' && $view == 'pedido_reparacao'): ?>
+        <div class="container">
+            <div class="white-card" style="max-width:980px;">
+                <div class="inner-nav">
+                    <h3 style="text-transform: uppercase;">Detalhes do Pedido de Reparacao</h3>
+                    <div style="display:flex; gap:8px;">
+                        <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="btn-mode">Voltar a Lista</a>
+                    </div>
+                </div>
+                <?php if(!$pedido_reparacao_detalhe): ?>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:12px; border-radius:8px; font-weight:700;">Pedido nao encontrado.</div>
+                <?php else: ?>
+                    <?php
+                        $statusRawDet = trim((string) ($pedido_reparacao_detalhe['status'] ?? ''));
+                        if($statusRawDet === '') $statusRawDet = 'Enviado para Oficina';
+                        $statusNormDet = strtolower($statusRawDet);
+                        $estadoPedidoDet = 'Em espera de aceitação';
+                        if(strpos($statusNormDet, 'andamento') !== false || strpos($statusNormDet, 'progresso') !== false) {
+                            $estadoPedidoDet = 'Em andamento';
+                        } elseif(strpos($statusNormDet, 'aceit') !== false || strpos($statusNormDet, 'aprov') !== false) {
+                            $estadoPedidoDet = 'Aceito';
+                        } elseif(strpos($statusNormDet, 'rejeit') !== false) {
+                            $estadoPedidoDet = 'Rejeitado';
+                        } elseif(strpos($statusNormDet, 'conclu') !== false || strpos($statusNormDet, 'finaliz') !== false || strpos($statusNormDet, 'fechad') !== false) {
+                            $estadoPedidoDet = 'Concluído';
+                        }
+                        $anexoDet = trim((string) ($pedido_reparacao_detalhe['pdf_anexo'] ?? ''));
+                    ?>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Codigo</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['codigo'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Data</label><input type="text" value="<?= !empty($pedido_reparacao_detalhe['criado_em']) ? htmlspecialchars(date('d/m/Y H:i', strtotime((string) $pedido_reparacao_detalhe['criado_em']))) : '-' ?>" readonly></div>
+                        <div class="form-group"><label>Solicitante</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['solicitante'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Estado do Pedido</label><input type="text" value="<?= htmlspecialchars($estadoPedidoDet) ?>" readonly></div>
+                        <div class="form-group"><label>Viatura/Equipamento</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['viatura_id'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Matricula</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['matricula'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Condutor</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['condutor'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>KM Atual</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['km_atual'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Localizacao</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['localizacao'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group"><label>Prioridade</label><input type="text" value="<?= htmlspecialchars((string) ($pedido_reparacao_detalhe['prioridade'] ?? '-')) ?>" readonly></div>
+                        <div class="form-group" style="grid-column: span 4;">
+                            <label>Avaria reportada</label>
+                            <textarea rows="4" readonly><?= htmlspecialchars((string) ($pedido_reparacao_detalhe['avaria_reportada'] ?? '-')) ?></textarea>
+                        </div>
+                        <div class="form-group" style="grid-column: span 4;">
+                            <label>Anexo</label>
+                            <?php if($anexoDet !== ''): ?>
+                                <a class="btn-mode" target="_blank" href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoDet, '/')) ?>">Ver anexo</a>
+                            <?php else: ?>
+                                <input type="text" value="Sem anexo" readonly>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     <?php endif; ?>
@@ -4489,13 +5025,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             </div>
         </div>
     <?php endif; ?>
-    <?php if($mode == 'form' && $tab == 'transporte' && $view == 'checklist'): ?>
+    <?php if($mode == 'form' && $tab == 'hse' && $view == 'checklist'): ?>
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
                     <h3 style="text-transform: uppercase;">Checklist - Validação</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=checklist&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=hse&view=checklist&mode=list" class="btn-mode">Voltar à Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4596,15 +5132,20 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     <div class="section-title">Dados da Viatura / Máquina</div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
-                        <input type="text" name="viatura_id_rep" required placeholder="Ex: AF-582-MC">
+                        <input type="text" id="viatura_id_rep" name="viatura_id_rep" required placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
                         <label>Matrícula</label>
-                        <input type="text" name="matricula_rep" placeholder="Ex: AF-582-MC">
+                        <input type="text" id="matricula_rep" name="matricula_rep" list="matricula_rep_list" placeholder="Ex: AF-582-MC" autocomplete="off" oninput="this.value = this.value.toUpperCase()">
+                        <datalist id="matricula_rep_list">
+                            <?php foreach($veiculos_reparacao as $vr): ?>
+                                <option value="<?= htmlspecialchars((string) ($vr['matricula'] ?? '')) ?>"><?= htmlspecialchars((string) ((($vr['viatura_id'] ?? '') . (!empty($vr['descricao']) ? ' | ' . $vr['descricao'] : '')))) ?></option>
+                            <?php endforeach; ?>
+                        </datalist>
                     </div>
                     <div class="form-group">
                         <label>Condutor</label>
-                        <input type="text" name="condutor_rep" required>
+                        <input type="text" id="condutor_rep" name="condutor_rep" required>
                     </div>
                     <div class="form-group">
                         <label>KM Atual</label>
@@ -5745,7 +6286,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
         function filterByMachineChecklist(tipo){
             const params = new URLSearchParams(window.location.search);
-            params.set('tab', 'transporte');
+            params.set('tab', 'hse');
             params.set('view', 'checklist');
             params.set('mode', 'list');
             if(tipo) params.set('tipo_equipamento', tipo); else params.delete('tipo_equipamento');
@@ -5759,7 +6300,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
         function filterByChecklistProject(projeto){
             const params = new URLSearchParams(window.location.search);
-            params.set('tab', 'transporte');
+            params.set('tab', 'hse');
             params.set('view', 'checklist');
             params.set('mode', 'list');
             if(projeto && projeto.trim()){
@@ -6615,4 +7156,6 @@ val
 
 </body>
 </html>
+
+
 

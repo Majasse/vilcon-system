@@ -20,6 +20,8 @@ $views = [
     'seguranca' => 'seguranca/seguranca_view.php',
     'elevacao' => 'elevacao/elevacao_view.php',
     'compra_venda' => 'compra_venda/compra_venda_view.php',
+    'alertas' => 'seguranca/seguranca_view.php',
+    'relatorios' => 'historico/historico_view.php',
 ];
 
 $tema_por_view = [
@@ -29,6 +31,8 @@ $tema_por_view = [
     'seguranca' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
     'elevacao' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
     'compra_venda' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'alertas' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
+    'relatorios' => ['primary' => '#1f2937', 'soft' => '#e5e7eb'],
 ];
 $tema_atual = $tema_por_view[$view] ?? ['primary' => '#1f2937', 'soft' => '#e5e7eb'];
 
@@ -310,9 +314,10 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
             <a class="tab <?= $view === 'ativos' ? 'active' : '' ?>" href="?view=ativos">Ativos</a>
             <a class="tab <?= $view === 'projetos' ? 'active' : '' ?>" href="?view=projetos">Projetos</a>
             <a class="tab <?= $view === 'pessoal' ? 'active' : '' ?>" href="?view=pessoal">Pessoal</a>
-            <a class="tab <?= $view === 'seguranca' ? 'active' : '' ?>" href="?view=seguranca">Seguranca</a>
             <a class="tab <?= $view === 'elevacao' ? 'active' : '' ?>" href="?view=elevacao">Elevacao</a>
             <a class="tab <?= $view === 'compra_venda' ? 'active' : '' ?>" href="?view=compra_venda">Compra/Venda</a>
+            <a class="tab <?= $view === 'alertas' ? 'active' : '' ?>" href="?view=alertas">Alertas</a>
+            <a class="tab <?= $view === 'relatorios' ? 'active' : '' ?>" href="?view=relatorios">Relatorios</a>
         </div>
 
         <div class="card">

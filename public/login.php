@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require_once(__DIR__ . '/../app/config/db.php');
 
@@ -16,17 +16,70 @@ function garantirColunaUltimoLogin($pdo) {
     }
 }
 
+function gerarUsernamePadrao($nome) {
+    $partes = preg_split('/\s+/', trim((string)$nome)) ?: [];
+    $primeiroNome = $partes[0] ?? 'User';
+    $primeiroNome = preg_replace('/[^a-z0-9]/i', '', $primeiroNome) ?: 'User';
+    return 'V' . $primeiroNome;
+}
+
+function garantirColunaUsername($pdo) {
+    static $verificadoUsername = false;
+    if ($verificadoUsername) {
+        return;
+    }
+    $verificadoUsername = true;
+
+    $stmt = $pdo->query("SHOW COLUMNS FROM usuarios LIKE 'username'");
+    $coluna = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$coluna) {
+        $pdo->exec("ALTER TABLE usuarios ADD COLUMN username VARCHAR(80) NULL AFTER nome");
+    }
+
+    $idx = $pdo->query("SHOW INDEX FROM usuarios WHERE Key_name = 'idx_usuarios_username'")->fetch(PDO::FETCH_ASSOC);
+    if (!$idx) {
+        $pdo->exec("CREATE UNIQUE INDEX idx_usuarios_username ON usuarios (username)");
+    }
+
+    $semUsername = $pdo->query("SELECT id, nome FROM usuarios WHERE username IS NULL OR username = ''")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $upd = $pdo->prepare("UPDATE usuarios SET username = :username WHERE id = :id");
+    foreach ($semUsername as $u) {
+        $base = gerarUsernamePadrao((string)($u['nome'] ?? ''));
+        $cand = $base;
+        $n = 1;
+        while (true) {
+            $chk = $pdo->prepare("SELECT COUNT(*) FROM usuarios WHERE username = :username AND id <> :id");
+            $chk->execute([
+                'username' => $cand,
+                'id' => (int)$u['id'],
+            ]);
+            if ((int)$chk->fetchColumn() === 0) {
+                break;
+            }
+            $n++;
+            $cand = $base . $n;
+        }
+        $upd->execute([
+            'username' => $cand,
+            'id' => (int)$u['id'],
+        ]);
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $email = trim((string)($_POST['email'] ?? ''));
+    $username = trim((string)($_POST['username'] ?? ''));
     $senha = (string)($_POST['senha'] ?? '');
+    $usernameInput = $username;
+
+    garantirColunaUsername($pdo);
 
     $sql = "SELECT * FROM usuarios
-            WHERE email = :email
+            WHERE username = :username
             AND senha = :senha
             AND status = 'Ativo'";
     $stmt = $pdo->prepare($sql);
     $stmt->execute([
-        'email' => $email,
+        'username' => $username,
         'senha' => $senha,
     ]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -55,19 +108,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } else {
         try {
             $usuarioFalhouId = null;
-            if ($email !== '') {
-                $stmtUserEmail = $pdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
-                $stmtUserEmail->execute(['email' => $email]);
-                $usuarioFalhouId = (int)($stmtUserEmail->fetchColumn() ?: 0);
+            if ($username !== '') {
+                $stmtUser = $pdo->prepare('SELECT id FROM usuarios WHERE username = :username LIMIT 1');
+                $stmtUser->execute(['username' => $username]);
+                $usuarioFalhouId = (int)($stmtUser->fetchColumn() ?: 0);
                 if ($usuarioFalhouId <= 0) {
                     $usuarioFalhouId = null;
                 }
             }
-            registrarAcaoSistema($pdo, 'LOGIN FALHOU: ' . $email, 'auth', $usuarioFalhouId);
+            registrarAcaoSistema($pdo, 'LOGIN FALHOU: ' . $username, 'auth', $usuarioFalhouId);
         } catch (Throwable $e) {
             // Nao bloquear fluxo em falha de auditoria.
         }
-        $erro = 'E-mail ou palavra-passe incorretos!';
+        $erro = 'Username ou palavra-passe incorretos!';
     }
 }
 ?>
@@ -155,6 +208,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             font-size: 16px;
             color: #333;
         }
+        .password-wrap {
+            position: relative;
+        }
+        .password-wrap input {
+            padding-right: 46px;
+        }
+        .toggle-password {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 34px;
+            height: 34px;
+            border: none;
+            border-radius: 6px;
+            background: #f1f5f9;
+            color: #334155;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .toggle-password:hover {
+            background: #e2e8f0;
+        }
 
         .btn-submit {
             background: #e67e22;
@@ -183,8 +261,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             font-size: 14px;
         }
     </style>
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
 </head>
 <body>
+
+<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
 
 <div class="login-screen">
 
@@ -209,13 +295,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         <form method="POST">
             <div class="input-group">
-                <label>E-mail</label>
-                <input type="email" name="email" placeholder="nome@vilcon.com" required>
+                <label>Username</label>
+                <input type="text" name="username" placeholder="Ex: VMichael" required value="<?= htmlspecialchars((string)($usernameInput ?? '')) ?>">
             </div>
 
             <div class="input-group">
                 <label>Palavra-passe</label>
-                <input type="password" name="senha" placeholder="********" required>
+                <div class="password-wrap">
+                    <input id="senha-input" type="password" name="senha" placeholder="********" required>
+                    <button type="button" class="toggle-password" id="toggle-password" aria-label="Mostrar senha" aria-pressed="false">
+                        <span id="toggle-password-icon">👁</span>
+                    </button>
+                </div>
             </div>
 
             <button type="submit" class="btn-submit">
@@ -226,5 +317,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 </div>
 
+    <script>
+        (function () {
+            var senhaInput = document.getElementById('senha-input');
+            var toggleBtn = document.getElementById('toggle-password');
+            var icon = document.getElementById('toggle-password-icon');
+            if (!senhaInput || !toggleBtn || !icon) return;
+
+            toggleBtn.addEventListener('click', function () {
+                var isPassword = senhaInput.type === 'password';
+                senhaInput.type = isPassword ? 'text' : 'password';
+                toggleBtn.setAttribute('aria-pressed', isPassword ? 'true' : 'false');
+                toggleBtn.setAttribute('aria-label', isPassword ? 'Ocultar senha' : 'Mostrar senha');
+                icon.textContent = isPassword ? '🙈' : '👁';
+            });
+        })();
+    </script>
+    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
 </body>
 </html>
+

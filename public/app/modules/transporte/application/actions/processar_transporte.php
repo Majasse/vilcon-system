@@ -1,15 +1,15 @@
-<?php 
+﻿<?php 
 session_start();
 
 require_once __DIR__ . '/../app/config/db.php';
 
-/* Proteção de sessão */
+/* ProteÃ§Ã£o de sessÃ£o */
 if (!isset($_SESSION['usuario_id'])) {
     header("Location: login.php");
     exit;
 }
 
-/* Variáveis de controlo */
+/* VariÃ¡veis de controlo */
 $tab  = $_GET['tab']  ?? 'transporte';
 $view = $_GET['view'] ?? 'entrada';
 $mode = $_GET['mode'] ?? 'list';
@@ -162,9 +162,16 @@ define('BASE_URL', '/vilcon-systemon/public');
             color: #fff;
         }
     </style>
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
 </head>
 
-<body>
+
+<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
 
 <div class="sidebar">
     <div class="sidebar-logo">
@@ -189,12 +196,12 @@ define('BASE_URL', '/vilcon-systemon/public');
     <div class="sub-tab-container">
         <?php
         $subtabs = [
-            'entrada' => 'Ordem de Serviço',
-            'pedido_reparacao' => 'Pedido de Reparação',
+            'entrada' => 'Ordem de ServiÃ§o',
+            'pedido_reparacao' => 'Pedido de ReparaÃ§Ã£o',
             'checklist' => 'Checklist',
-            'plano_manutencao' => 'Plano Manutenção',
+            'plano_manutencao' => 'Plano ManutenÃ§Ã£o',
             'avarias' => 'Registo Avarias',
-            'relatorio_atividades' => 'Relatório Atividades'
+            'relatorio_atividades' => 'RelatÃ³rio Atividades'
         ];
 
         foreach ($subtabs as $key => $label):
@@ -230,6 +237,8 @@ define('BASE_URL', '/vilcon-systemon/public');
 
 </div>
 
+    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
 </body>
 </html>
+
 

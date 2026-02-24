@@ -11,7 +11,7 @@
     <a href="?tab=<?= urlencode((string)($tab ?? 'oficina')) ?>&view=requisicoes&mode=list&aplicar=1" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">Requisicoes</a>
     <a href="?tab=<?= urlencode((string)($tab ?? 'oficina')) ?>&view=manutencao&mode=list&aplicar=1" class="sub-tab-btn <?= $view == 'manutencao' ? 'active' : '' ?>">Manutenção</a>
     <a href="?view=checklist" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
-    <a href="?view=assiduidade" class="sub-tab-btn <?= $view == 'assiduidade' ? 'active' : '' ?>">Assiduidade</a>
+    <a href="?tab=<?= urlencode((string)($tab ?? 'oficina')) ?>&view=presencas&mode=list&aplicar=1" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de Presencas</a>
     <a href="?tab=<?= urlencode((string)($tab ?? 'oficina')) ?>&view=avarias&mode=list&aplicar=1" class="sub-tab-btn <?= $view == 'avarias' ? 'active' : '' ?>">Avarias</a>
     <a href="?view=relatorios" class="sub-tab-btn <?= $view == 'relatorios' ? 'active' : '' ?>">Relatórios</a>
 </div>

@@ -13,6 +13,9 @@ if (!isset($_SESSION['usuario_id'])) {
 $tab = $_GET['tab'] ?? 'oficina';
 $view = $_GET['view'] ?? 'ordens_servico';
 $mode = $_GET['mode'] ?? 'home';
+if ($view === 'assiduidade') {
+    $view = 'presencas';
+}
 if (!in_array($mode, ['home', 'list', 'form', 'detalhe'], true)) {
     $mode = 'home';
 }
@@ -59,9 +62,9 @@ $msg_pedidos = null;
 $msg_requisicoes = null;
 $msg_manutencao = null;
 $msg_avarias = null;
-$msg_assiduidade = null;
+$msg_presencas = null;
 
-$erro_assiduidade = null;
+$erro_presencas = null;
 $filtro_pedidos_datas = ['inicio' => '', 'fim' => ''];
 $filtro_os_datas = ['inicio' => '', 'fim' => ''];
 $hojeOficina = new DateTimeImmutable('today');
@@ -72,15 +75,13 @@ $data_assiduidade = trim((string)($_GET['data_assiduidade'] ?? date('Y-m-d')));
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_assiduidade)) {
     $data_assiduidade = date('Y-m-d');
 }
-$assiduidade_periodo = strtolower(trim((string)($_GET['ap_periodo'] ?? 'diario')));
-if (!in_array($assiduidade_periodo, ['diario', 'semanal', 'mensal'], true)) {
-    $assiduidade_periodo = 'diario';
-}
-$assiduidade_intervalo = ['inicio' => $data_assiduidade, 'fim' => $data_assiduidade, 'label' => 'Diario'];
 $colaboradores_oficina = [];
 $presencas_oficina = [];
 $presencas_por_colaborador = [];
-$assiduidade_lista_preenchida = false;
+$lista_presenca_enviada_rh = false;
+$lista_presencas_historico = [];
+$listas_presenca_dias = [];
+$hist_data_oficina = trim((string)($_GET['hist_data'] ?? ''));
 
 function normalizarStatusPedido($valor) {
     $v = strtolower(trim((string)$valor));
@@ -329,6 +330,7 @@ function garantirEstruturasOficina(PDO $pdo): void {
         $garantirColuna($pdo, 'oficina_presencas_rh', 'assinou_saida', 'TINYINT(1) NOT NULL DEFAULT 0');
         $garantirColuna($pdo, 'oficina_presencas_rh', 'hora_entrada', 'TIME NULL');
         $garantirColuna($pdo, 'oficina_presencas_rh', 'hora_saida', 'TIME NULL');
+        $garantirColuna($pdo, 'oficina_presencas_rh', 'lista_fisica_anexo', 'VARCHAR(255) NULL');
 
         $garantirColuna($pdo, 'logistica_requisicoes', 'origem_modulo', "VARCHAR(40) NOT NULL DEFAULT 'logistica'");
         $garantirColuna($pdo, 'logistica_requisicoes', 'categoria_item', 'VARCHAR(40) NULL');
@@ -459,7 +461,7 @@ try {
     $erro_manutencao = $e->getMessage();
     $erro_avarias = $e->getMessage();
     $erro_relatorios = $e->getMessage();
-    $erro_assiduidade = $e->getMessage();
+    $erro_presencas = $e->getMessage();
 }
 
 if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_os_manual') {
@@ -805,7 +807,12 @@ if ($view === 'pedidos_reparacao') {
                     $pdo->commit();
 
                     $msg_pedidos = "Pedido #{$pedidoId} enviado para Logistica com os materiais necessarios.";
-                    header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}&detalhe_lista=requisicoes");
+                    $returnMode = trim((string)($_POST['return_mode'] ?? 'detalhe'));
+                    if ($returnMode === 'list') {
+                        header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=list");
+                    } else {
+                        header("Location: ?tab={$tab}&view=pedidos_reparacao&mode=detalhe&id={$pedidoId}&detalhe_lista=requisicoes");
+                    }
                     exit;
                 }
             }
@@ -1188,46 +1195,161 @@ if ($view === 'ordens_servico') {
     }
 }
 
-if ($view === 'assiduidade') {
-    $dtAssRef = new DateTimeImmutable($data_assiduidade);
-    if ($assiduidade_periodo === 'semanal') {
-        $diaSemana = (int)$dtAssRef->format('N');
-        $dtInicio = $dtAssRef->modify('-' . ($diaSemana - 1) . ' days');
-        $dtFim = $dtInicio->modify('+6 days');
-        $assiduidade_intervalo = [
-            'inicio' => $dtInicio->format('Y-m-d'),
-            'fim' => $dtFim->format('Y-m-d'),
-            'label' => 'Semanal',
-        ];
-    } elseif ($assiduidade_periodo === 'mensal') {
-        $assiduidade_intervalo = [
-            'inicio' => $dtAssRef->modify('first day of this month')->format('Y-m-d'),
-            'fim' => $dtAssRef->modify('last day of this month')->format('Y-m-d'),
-            'label' => 'Mensal',
-        ];
-    } else {
-        $assiduidade_intervalo = [
-            'inicio' => $data_assiduidade,
-            'fim' => $data_assiduidade,
-            'label' => 'Diario',
-        ];
+if ($view === 'presencas') {
+    if (!function_exists('processarAnexoListaFisicaOficina')) {
+        function processarAnexoListaFisicaOficina(string $campo, string $subPasta): array {
+            if (!isset($_FILES[$campo])) return ['ok' => false, 'error' => 'Selecione um ficheiro para anexar.'];
+            $f = $_FILES[$campo];
+            $nome = is_array($f['name'] ?? null) ? (string) (($f['name'][0] ?? '')) : (string) ($f['name'] ?? '');
+            $tmp = is_array($f['tmp_name'] ?? null) ? (string) (($f['tmp_name'][0] ?? '')) : (string) ($f['tmp_name'] ?? '');
+            $err = is_array($f['error'] ?? null) ? (int) (($f['error'][0] ?? UPLOAD_ERR_NO_FILE)) : (int) ($f['error'] ?? UPLOAD_ERR_NO_FILE);
+            $size = is_array($f['size'] ?? null) ? (int) (($f['size'][0] ?? 0)) : (int) ($f['size'] ?? 0);
+
+            if ($err !== UPLOAD_ERR_OK || $nome === '' || $tmp === '') {
+                return ['ok' => false, 'error' => 'Selecione um ficheiro valido para anexar.'];
+            }
+            if ($size <= 0 || $size > (10 * 1024 * 1024)) {
+                return ['ok' => false, 'error' => 'Ficheiro invalido ou acima de 10MB.'];
+            }
+
+            $ext = strtolower((string) pathinfo($nome, PATHINFO_EXTENSION));
+            $permitidos = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif'];
+            if (!in_array($ext, $permitidos, true)) {
+                return ['ok' => false, 'error' => 'Formato nao permitido. Use PDF/JPG/PNG/WEBP/GIF.'];
+            }
+
+            $baseDir = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . trim($subPasta, '\\/');
+            if (!is_dir($baseDir) && !@mkdir($baseDir, 0777, true)) {
+                return ['ok' => false, 'error' => 'Nao foi possivel criar diretorio de anexos.'];
+            }
+
+            $baseNome = preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) pathinfo($nome, PATHINFO_FILENAME));
+            if ($baseNome === '') $baseNome = 'anexo';
+            $nomeFinal = date('Ymd_His') . '_' . $baseNome . '.' . $ext;
+            $destinoAbs = $baseDir . DIRECTORY_SEPARATOR . $nomeFinal;
+            if (!@move_uploaded_file($tmp, $destinoAbs)) {
+                return ['ok' => false, 'error' => 'Nao foi possivel salvar o anexo no servidor.'];
+            }
+
+            return ['ok' => true, 'path' => 'uploads/' . trim($subPasta, '\\/') . '/' . $nomeFinal];
+        }
     }
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao'])) {
-        $acao = trim((string)$_POST['acao']);
+    if (isset($_GET['doc']) && in_array((string) $_GET['doc'], ['presenca_pdf', 'presenca_excel', 'presenca_word'], true)) {
+        $docTipoPres = (string) ($_GET['doc'] ?? 'presenca_pdf');
+        $dataDoc = trim((string) ($_GET['data_presenca'] ?? ''));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataDoc)) {
+            http_response_code(400);
+            echo 'Data invalida para lista de presenca.';
+            exit;
+        }
 
+        $docStmt = $pdo->prepare("
+            SELECT p.nome AS colaborador, c.nome AS cargo_nome, apr.hora_entrada, apr.hora_saida, apr.status_presenca
+            FROM oficina_presencas_rh apr
+            INNER JOIN pessoal p ON p.id = apr.pessoal_id
+            LEFT JOIN cargos c ON c.id = p.cargo_id
+            WHERE apr.data_presenca = :data_presenca
+            ORDER BY p.nome ASC
+        ");
+        $docStmt->execute([':data_presenca' => $dataDoc]);
+        $rowsDoc = $docStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        if ($docTipoPres === 'presenca_excel') {
+            header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="lista_presencas_oficina_' . $dataDoc . '.xls"');
+        } elseif ($docTipoPres === 'presenca_word') {
+            header('Content-Type: application/msword; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="lista_presencas_oficina_' . $dataDoc . '.doc"');
+        } else {
+            header('Content-Type: text/html; charset=UTF-8');
+        }
+
+        echo '<!doctype html><html><head><meta charset="utf-8"><title>Lista de Presencas - Oficina</title>
+        <style>
+            body{font-family:Arial,sans-serif;color:#111}
+            .head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}
+            .title{font-size:18px;font-weight:800}
+            table{width:100%;border-collapse:collapse}
+            th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
+            th{background:#111;color:#f4b400}
+            tr:nth-child(even) td{background:#fff8e1}
+        </style></head><body>';
+        echo '<div class="head"><div class="title">Lista de Presencas - Oficina</div><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div></div>';
+        echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
+        if (empty($rowsDoc)) {
+            echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
+        } else {
+            foreach ($rowsDoc as $r) {
+                echo '<tr>';
+                echo '<td>' . htmlspecialchars((string) ($r['colaborador'] ?? '-')) . '</td>';
+                echo '<td>' . htmlspecialchars((string) ($r['cargo_nome'] ?? '-')) . '</td>';
+                echo '<td>' . htmlspecialchars(!empty($r['hora_entrada']) ? substr((string) $r['hora_entrada'], 0, 5) : '-') . '</td>';
+                echo '<td>' . htmlspecialchars(!empty($r['hora_saida']) ? substr((string) $r['hora_saida'], 0, 5) : '-') . '</td>';
+                echo '<td>' . htmlspecialchars((string) ($r['status_presenca'] ?? '-')) . '</td>';
+                echo '</tr>';
+            }
+        }
+        echo '</tbody></table>' . ($docTipoPres === 'presenca_pdf' ? '<script>window.print();</script>' : '') . '</body></html>';
+        exit;
+    }
+
+    try {
+        $stmtCol = $pdo->query("
+            SELECT p.id, p.numero, p.nome, c.nome AS cargo_nome
+            FROM pessoal p
+            LEFT JOIN cargos c ON c.id = p.cargo_id
+            WHERE p.estado = 'Activo'
+              AND (
+                LOWER(COALESCE(c.nome, '')) LIKE '%mec%'
+                OR LOWER(COALESCE(c.nome, '')) LIKE '%electric%'
+                OR LOWER(COALESCE(c.nome, '')) LIKE '%pintor%'
+                OR LOWER(COALESCE(c.nome, '')) LIKE '%oficina%'
+                OR LOWER(COALESCE(c.nome, '')) LIKE '%bate chapa%'
+                OR LOWER(COALESCE(c.nome, '')) LIKE '%serralh%'
+              )
+            ORDER BY p.nome ASC
+        ");
+        $colaboradores_oficina = $stmtCol->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        if (count($colaboradores_oficina) === 0) {
+            $stmtFallback = $pdo->query("
+                SELECT p.id, p.numero, p.nome, c.nome AS cargo_nome
+                FROM pessoal p
+                LEFT JOIN cargos c ON c.id = p.cargo_id
+                WHERE p.estado = 'Activo'
+                ORDER BY p.nome ASC
+            ");
+            $colaboradores_oficina = $stmtFallback->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+    } catch (Throwable $e) {
+        $erro_presencas = 'Nao foi possivel carregar funcionarios da oficina.';
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acao_presencas'])) {
+        $acao = trim((string) $_POST['acao_presencas']);
         try {
             if ($acao === 'marcar_presenca_lote') {
-                $dataPresenca = trim((string)($_POST['data_presenca'] ?? date('Y-m-d')));
+                $dataPresenca = trim((string) ($_POST['data_presenca'] ?? date('Y-m-d')));
                 $obsLote = $_POST['obs_lote'] ?? [];
                 $entradaLote = $_POST['entrada_lote'] ?? [];
                 $saidaLote = $_POST['saida_lote'] ?? [];
+                $horaEntradaLote = $_POST['hora_entrada_lote'] ?? [];
+                $horaSaidaLote = $_POST['hora_saida_lote'] ?? [];
 
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPresenca)) {
                     throw new RuntimeException('Data de presenca invalida.');
                 }
-                if (count($colaboradores_oficina) === 0) {
-                    throw new RuntimeException('Nenhum colaborador foi enviado para marcacao.');
+
+                $bloqStmt = $pdo->prepare("
+                    SELECT COUNT(*)
+                    FROM oficina_presencas_rh
+                    WHERE data_presenca = :data_presenca
+                      AND enviado_rh = 1
+                ");
+                $bloqStmt->execute([':data_presenca' => $dataPresenca]);
+                if ((int) ($bloqStmt->fetchColumn() ?: 0) > 0) {
+                    throw new RuntimeException('Esta lista ja foi enviada ao RH e esta bloqueada para edicao.');
                 }
 
                 $stmtBusca = $pdo->prepare("
@@ -1240,111 +1362,119 @@ if ($view === 'assiduidade') {
                 ");
                 $stmtInsert = $pdo->prepare("
                     INSERT INTO oficina_presencas_rh
-                        (data_presenca, pessoal_id, status_presenca, assinou_entrada, assinou_saida, observacoes, criado_por)
+                    (data_presenca, pessoal_id, status_presenca, assinou_entrada, assinou_saida, hora_entrada, hora_saida, observacoes, enviado_rh, enviado_em, criado_por)
                     VALUES
-                        (:data_presenca, :pessoal_id, :status_presenca, :assinou_entrada, :assinou_saida, :observacoes, :criado_por)
+                    (:data_presenca, :pessoal_id, :status_presenca, :assinou_entrada, :assinou_saida, :hora_entrada, :hora_saida, :observacoes, 0, NULL, :criado_por)
                 ");
                 $stmtUpdate = $pdo->prepare("
                     UPDATE oficina_presencas_rh
                     SET status_presenca = :status_presenca,
                         assinou_entrada = :assinou_entrada,
                         assinou_saida = :assinou_saida,
-                        observacoes = :observacoes
+                        hora_entrada = :hora_entrada,
+                        hora_saida = :hora_saida,
+                        observacoes = :observacoes,
+                        enviado_rh = 0,
+                        enviado_em = NULL
                     WHERE id = :id
                 ");
 
                 foreach ($colaboradores_oficina as $colaborador) {
-                    $pessoalId = (int)($colaborador['id'] ?? 0);
-                    $pessoalIdRaw = (string)$pessoalId;
-                    if ($pessoalId <= 0) {
-                        continue;
-                    }
-                    $observacoes = '';
-                    if (is_array($obsLote) && array_key_exists($pessoalIdRaw, $obsLote)) {
-                        $observacoes = trim((string)$obsLote[$pessoalIdRaw]);
-                    }
-                    $assinouEntrada = is_array($entradaLote) && array_key_exists($pessoalIdRaw, $entradaLote) ? 1 : 0;
-                    $assinouSaida = is_array($saidaLote) && array_key_exists($pessoalIdRaw, $saidaLote) ? 1 : 0;
+                    $pessoalId = (int) ($colaborador['id'] ?? 0);
+                    if ($pessoalId <= 0) continue;
+                    $pidRaw = (string) $pessoalId;
+
+                    $assinouEntrada = is_array($entradaLote) && array_key_exists($pidRaw, $entradaLote) ? 1 : 0;
+                    $assinouSaida = is_array($saidaLote) && array_key_exists($pidRaw, $saidaLote) ? 1 : 0;
                     $statusPresenca = statusAssiduidadePorAssinatura($assinouEntrada, $assinouSaida);
+                    $horaIn = is_array($horaEntradaLote) ? trim((string) ($horaEntradaLote[$pidRaw] ?? '')) : '';
+                    $horaOut = is_array($horaSaidaLote) ? trim((string) ($horaSaidaLote[$pidRaw] ?? '')) : '';
+                    if ($assinouEntrada === 1 && $horaIn === '') $horaIn = '07:00';
+                    if ($assinouSaida === 1 && $horaOut === '') $horaOut = '16:00';
+                    $obs = is_array($obsLote) ? trim((string) ($obsLote[$pidRaw] ?? '')) : '';
 
                     $stmtBusca->execute([
-                        'data_presenca' => $dataPresenca,
-                        'pessoal_id' => $pessoalId,
+                        ':data_presenca' => $dataPresenca,
+                        ':pessoal_id' => $pessoalId,
                     ]);
-                    $existenteId = (int)($stmtBusca->fetchColumn() ?: 0);
+                    $existenteId = (int) ($stmtBusca->fetchColumn() ?: 0);
+
+                    $params = [
+                        ':status_presenca' => $statusPresenca,
+                        ':assinou_entrada' => $assinouEntrada,
+                        ':assinou_saida' => $assinouSaida,
+                        ':hora_entrada' => $assinouEntrada === 1 && preg_match('/^\d{2}:\d{2}$/', $horaIn) ? ($horaIn . ':00') : null,
+                        ':hora_saida' => $assinouSaida === 1 && preg_match('/^\d{2}:\d{2}$/', $horaOut) ? ($horaOut . ':00') : null,
+                        ':observacoes' => $obs !== '' ? $obs : null,
+                    ];
 
                     if ($existenteId > 0) {
-                        $stmtUpdate->execute([
-                            'status_presenca' => $statusPresenca,
-                            'assinou_entrada' => $assinouEntrada,
-                            'assinou_saida' => $assinouSaida,
-                            'observacoes' => $observacoes !== '' ? $observacoes : null,
-                            'id' => $existenteId,
-                        ]);
+                        $params[':id'] = $existenteId;
+                        $stmtUpdate->execute($params);
                     } else {
-                        $stmtInsert->execute([
-                            'data_presenca' => $dataPresenca,
-                            'pessoal_id' => $pessoalId,
-                            'status_presenca' => $statusPresenca,
-                            'assinou_entrada' => $assinouEntrada,
-                            'assinou_saida' => $assinouSaida,
-                            'observacoes' => $observacoes !== '' ? $observacoes : null,
-                            'criado_por' => (int)($_SESSION['usuario_id'] ?? 0),
-                        ]);
+                        $params[':data_presenca'] = $dataPresenca;
+                        $params[':pessoal_id'] = $pessoalId;
+                        $params[':criado_por'] = (int) ($_SESSION['usuario_id'] ?? 0);
+                        $stmtInsert->execute($params);
                     }
                 }
 
-                // Ao guardar marcacoes do dia, envia automaticamente para o RH.
-                $stmtEnvioAuto = $pdo->prepare("
-                    UPDATE oficina_presencas_rh
-                    SET enviado_rh = 1,
-                        enviado_em = NOW()
-                    WHERE data_presenca = :data_presenca
-                ");
-                $stmtEnvioAuto->execute(['data_presenca' => $dataPresenca]);
-
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade_lote=1&sent_rh=1");
+                header("Location: ?tab={$tab}&view=presencas&mode=list&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade_lote=1");
                 exit;
             }
 
-            if ($acao === 'marcar_presenca') {
-                $pessoalId = (int)($_POST['pessoal_id'] ?? 0);
-                $dataPresenca = trim((string)($_POST['data_presenca'] ?? date('Y-m-d')));
-                $assinouEntrada = isset($_POST['assinou_entrada']) ? 1 : 0;
-                $assinouSaida = isset($_POST['assinou_saida']) ? 1 : 0;
-                $observacoes = trim((string)($_POST['observacoes'] ?? ''));
+            if ($acao === 'anexar_lista_fisica') {
+                $dataAnexo = trim((string) ($_POST['data_presenca'] ?? date('Y-m-d')));
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataAnexo)) {
+                    throw new RuntimeException('Data invalida para anexo.');
+                }
 
-                if ($pessoalId <= 0) {
-                    throw new RuntimeException('Selecione o funcionario da oficina.');
-                }
-                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPresenca)) {
-                    throw new RuntimeException('Data de presenca invalida.');
-                }
-                $statusPresenca = statusAssiduidadePorAssinatura($assinouEntrada, $assinouSaida);
-                $stmt = $pdo->prepare("
-                    INSERT INTO oficina_presencas_rh
-                        (data_presenca, pessoal_id, status_presenca, assinou_entrada, assinou_saida, observacoes, criado_por)
-                    VALUES
-                        (:data_presenca, :pessoal_id, :status_presenca, :assinou_entrada, :assinou_saida, :observacoes, :criado_por)
+                $bloqStmt = $pdo->prepare("
+                    SELECT COUNT(*)
+                    FROM oficina_presencas_rh
+                    WHERE data_presenca = :data_presenca
+                      AND enviado_rh = 1
                 ");
-                $stmt->execute([
-                    'data_presenca' => $dataPresenca,
-                    'pessoal_id' => $pessoalId,
-                    'status_presenca' => $statusPresenca,
-                    'assinou_entrada' => $assinouEntrada,
-                    'assinou_saida' => $assinouSaida,
-                    'observacoes' => $observacoes !== '' ? $observacoes : null,
-                    'criado_por' => (int)($_SESSION['usuario_id'] ?? 0),
+                $bloqStmt->execute([':data_presenca' => $dataAnexo]);
+                if ((int) ($bloqStmt->fetchColumn() ?: 0) > 0) {
+                    throw new RuntimeException('Esta lista ja foi enviada ao RH e nao aceita novo anexo.');
+                }
+
+                $up = processarAnexoListaFisicaOficina('lista_fisica_file', 'presencas_fisicas');
+                if (empty($up['ok'])) {
+                    throw new RuntimeException((string) ($up['error'] ?? 'Falha ao anexar lista fisica.'));
+                }
+
+                $upStmt = $pdo->prepare("
+                    UPDATE oficina_presencas_rh
+                    SET lista_fisica_anexo = :anexo
+                    WHERE data_presenca = :data_presenca
+                ");
+                $upStmt->execute([
+                    ':anexo' => (string) $up['path'],
+                    ':data_presenca' => $dataAnexo,
                 ]);
 
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataPresenca) . "&saved_assiduidade=1");
+                header("Location: ?tab={$tab}&view=presencas&mode=list&data_assiduidade=" . urlencode($dataAnexo) . "&saved_anexo_fisico=1");
                 exit;
             }
 
             if ($acao === 'enviar_rh') {
-                $dataEnvio = trim((string)($_POST['data_presenca'] ?? $data_assiduidade));
+                $dataEnvio = trim((string) ($_POST['data_presenca'] ?? $data_assiduidade));
                 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataEnvio)) {
                     throw new RuntimeException('Data de envio invalida.');
+                }
+
+                $chkAnexoStmt = $pdo->prepare("
+                    SELECT COUNT(*)
+                    FROM oficina_presencas_rh
+                    WHERE data_presenca = :data_presenca
+                      AND lista_fisica_anexo IS NOT NULL
+                      AND lista_fisica_anexo <> ''
+                ");
+                $chkAnexoStmt->execute([':data_presenca' => $dataEnvio]);
+                if ((int) ($chkAnexoStmt->fetchColumn() ?: 0) === 0) {
+                    throw new RuntimeException('Anexe primeiro a lista fisica para poder enviar ao RH.');
                 }
 
                 $stmt = $pdo->prepare("
@@ -1352,88 +1482,81 @@ if ($view === 'assiduidade') {
                     SET enviado_rh = 1,
                         enviado_em = NOW()
                     WHERE data_presenca = :data_presenca
-                      AND enviado_rh = 0
                 ");
-                $stmt->execute(['data_presenca' => $dataEnvio]);
+                $stmt->execute([':data_presenca' => $dataEnvio]);
 
-                header("Location: ?tab={$tab}&view=assiduidade&mode=list&ap_periodo=" . urlencode($assiduidade_periodo) . "&data_assiduidade=" . urlencode($dataEnvio) . "&sent_rh=1");
+                header("Location: ?tab={$tab}&view=presencas&mode=list&data_assiduidade=" . urlencode($dataEnvio) . "&sent_rh=1");
                 exit;
             }
         } catch (Throwable $e) {
-            $erro_assiduidade = "Nao foi possivel processar a assiduidade: " . $e->getMessage();
+            $erro_presencas = 'Nao foi possivel processar presencas: ' . $e->getMessage();
         }
     }
 
-    if (isset($_GET['saved_assiduidade']) && $_GET['saved_assiduidade'] === '1') {
-        $msg_assiduidade = 'Presenca registada com sucesso.';
-    }
     if (isset($_GET['saved_assiduidade_lote']) && $_GET['saved_assiduidade_lote'] === '1') {
-        $msg_assiduidade = 'Lista de presenca guardada com sucesso.';
+        $msg_presencas = 'Lista de presenca guardada com sucesso.';
+    }
+    if (isset($_GET['saved_anexo_fisico']) && $_GET['saved_anexo_fisico'] === '1') {
+        $msg_presencas = 'Lista fisica anexada com sucesso.';
     }
     if (isset($_GET['sent_rh']) && $_GET['sent_rh'] === '1') {
-        $msg_assiduidade = 'Lista de presenca enviada automaticamente ao RH.';
+        $msg_presencas = 'Lista enviada para RH com sucesso.';
     }
 
     try {
-        $stmtCol = $pdo->query("
-            SELECT p.id, p.numero, p.nome, c.nome AS cargo_nome
-            FROM pessoal p
-            LEFT JOIN cargos c ON c.id = p.cargo_id
-            WHERE p.estado = 'Activo'
-            ORDER BY p.nome ASC
-        ");
-        $colaboradores_oficina = $stmtCol->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-        $stmtAss = $pdo->prepare("
+        $presDiaStmt = $pdo->prepare("
             SELECT
-                apr.id,
-                apr.pessoal_id,
-                apr.data_presenca,
-                apr.status_presenca,
-                apr.assinou_entrada,
-                apr.assinou_saida,
-                apr.observacoes,
-                apr.enviado_rh,
-                apr.enviado_em,
-                p.numero,
-                p.nome,
-                c.nome AS cargo_nome
+                apr.id, apr.pessoal_id, apr.hora_entrada, apr.hora_saida,
+                apr.assinou_entrada, apr.assinou_saida, apr.observacoes, apr.enviado_rh,
+                apr.lista_fisica_anexo
             FROM oficina_presencas_rh apr
-            INNER JOIN pessoal p ON p.id = apr.pessoal_id
-            LEFT JOIN cargos c ON c.id = p.cargo_id
-            WHERE apr.data_presenca BETWEEN :data_inicio AND :data_fim
-            ORDER BY apr.data_presenca DESC, p.nome ASC, apr.id DESC
+            WHERE apr.data_presenca = :data_presenca
+            ORDER BY apr.id DESC
         ");
-        $stmtAss->execute([
-            'data_inicio' => $assiduidade_intervalo['inicio'],
-            'data_fim' => $assiduidade_intervalo['fim'],
-        ]);
-        $presencas_oficina = $stmtAss->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $presDiaStmt->execute([':data_presenca' => $data_assiduidade]);
+        $presencas_oficina = $presDiaStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $presencas_por_colaborador = [];
         foreach ($presencas_oficina as $pr) {
-            if ((string)($pr['data_presenca'] ?? '') !== $data_assiduidade) {
-                continue;
-            }
-            $pid = (int)($pr['pessoal_id'] ?? 0);
-            if ($pid <= 0 || isset($presencas_por_colaborador[$pid])) {
-                continue;
-            }
-            $presencas_por_colaborador[$pid] = [
-                'status_presenca' => (string)($pr['status_presenca'] ?? 'Presente'),
-                'assinou_entrada' => (int)($pr['assinou_entrada'] ?? 0),
-                'assinou_saida' => (int)($pr['assinou_saida'] ?? 0),
-                'observacoes' => (string)($pr['observacoes'] ?? ''),
-            ];
+            $pid = (int) ($pr['pessoal_id'] ?? 0);
+            if ($pid <= 0 || isset($presencas_por_colaborador[$pid])) continue;
+            $presencas_por_colaborador[$pid] = $pr;
+            if ((int) ($pr['enviado_rh'] ?? 0) === 1) $lista_presenca_enviada_rh = true;
         }
 
-        if ($assiduidade_periodo === 'diario') {
-            $totalColaboradores = count($colaboradores_oficina);
-            $totalMarcados = count($presencas_por_colaborador);
-            $assiduidade_lista_preenchida = $totalColaboradores > 0 && $totalMarcados >= $totalColaboradores;
+        if ($hist_data_oficina !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_data_oficina)) {
+            $histStmt = $pdo->prepare("
+                SELECT apr.data_presenca, p.nome AS colaborador, c.nome AS cargo_nome, apr.hora_entrada, apr.hora_saida, apr.status_presenca, apr.enviado_rh
+                FROM oficina_presencas_rh apr
+                INNER JOIN pessoal p ON p.id = apr.pessoal_id
+                LEFT JOIN cargos c ON c.id = p.cargo_id
+                WHERE apr.data_presenca = :data_ref
+                ORDER BY p.nome ASC
+            ");
+            $histStmt->execute([':data_ref' => $hist_data_oficina]);
+            $lista_presencas_historico = $histStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         }
+
+        $diasStmt = $pdo->prepare("
+            SELECT
+                data_presenca,
+                COUNT(*) AS total_funcionarios,
+                SUM(CASE WHEN status_presenca = 'Presente' THEN 1 ELSE 0 END) AS total_presentes,
+                SUM(CASE WHEN status_presenca <> 'Presente' THEN 1 ELSE 0 END) AS total_ausentes,
+                MIN(enviado_rh) AS enviado_rh_todos,
+                MAX(CASE WHEN (lista_fisica_anexo IS NOT NULL AND lista_fisica_anexo <> '') THEN 1 ELSE 0 END) AS possui_anexo,
+                MAX(lista_fisica_anexo) AS lista_fisica_anexo
+            FROM oficina_presencas_rh
+            WHERE data_presenca >= DATE_SUB(:data_base, INTERVAL 30 DAY)
+            GROUP BY data_presenca
+            ORDER BY data_presenca DESC
+        ");
+        $diasStmt->execute([':data_base' => $data_assiduidade]);
+        $listas_presenca_dias = $diasStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     } catch (Throwable $e) {
-        $erro_assiduidade = "Nao foi possivel carregar a assiduidade da oficina.";
+        if ($erro_presencas === null) {
+            $erro_presencas = 'Nao foi possivel carregar listas de presencas.';
+        }
     }
 }
 
@@ -1861,6 +1984,136 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 white-space: nowrap;
                 padding: 10px 8px;
                 font-size: 12px;
+            }
+            .pedidos-table-wrap.no-box {
+                border: none;
+                border-radius: 0;
+                background: transparent;
+                overflow-x: auto;
+            }
+            .pedidos-table-wrap.no-box .table {
+                min-width: 100%;
+                table-layout: auto;
+            }
+            .pedidos-table-wrap.no-box .table th,
+            .pedidos-table-wrap.no-box .table td {
+                white-space: nowrap;
+                word-break: normal;
+            }
+            .white-card.white-card-pedidos {
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                padding: 0;
+            }
+            .white-card.white-card-pedidos .pedidos-table-wrap.no-box .table th,
+            .white-card.white-card-pedidos .pedidos-table-wrap.no-box .table td {
+                padding: 12px 10px;
+            }
+            .avarias-shell {
+                background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                padding: 14px;
+                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+            }
+            .avarias-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 12px;
+                flex-wrap: wrap;
+            }
+            .avarias-head-left {
+                display: grid;
+                gap: 4px;
+            }
+            .avarias-title {
+                font-size: 16px;
+                color: #0f172a;
+                font-weight: 800;
+                line-height: 1.1;
+            }
+            .avarias-subtitle {
+                font-size: 12px;
+                color: #64748b;
+            }
+            .avarias-count {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 999px;
+                padding: 6px 10px;
+                background: #fff7ed;
+                border: 1px solid #fed7aa;
+                color: #9a3412;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            .avarias-table-wrap {
+                width: 100%;
+                overflow-x: auto;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                background: #ffffff;
+            }
+            .avarias-table-wrap .table {
+                min-width: 100%;
+                margin: 0;
+                border-collapse: separate;
+                border-spacing: 0;
+            }
+            .avarias-table-wrap .table thead th {
+                white-space: nowrap;
+                padding: 11px 10px;
+                font-size: 11px;
+                letter-spacing: .3px;
+                text-transform: uppercase;
+                color: #334155;
+                background: #f8fafc;
+                border-bottom: 1px solid #e2e8f0;
+            }
+            .avarias-table-wrap .table td {
+                white-space: nowrap;
+                padding: 11px 10px;
+                font-size: 12px;
+                border-bottom: 1px solid #f1f5f9;
+            }
+            .avarias-table-wrap .table tbody tr:nth-child(even) {
+                background: #fcfdff;
+            }
+            .avarias-table-wrap .table tbody tr:hover {
+                background: #f8fafc;
+            }
+            .avarias-table-wrap .table tbody tr:last-child td {
+                border-bottom: none;
+            }
+            .avarias-id-badge {
+                display: inline-flex;
+                min-width: 28px;
+                justify-content: center;
+                border-radius: 999px;
+                padding: 3px 8px;
+                background: #e0f2fe;
+                color: #075985;
+                font-weight: 700;
+            }
+            .avarias-origem-badge {
+                display: inline-flex;
+                align-items: center;
+                border-radius: 999px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .avarias-origem-badge.pedido {
+                background: #dcfce7;
+                color: #166534;
+            }
+            .avarias-origem-badge.manual {
+                background: #fef3c7;
+                color: #92400e;
             }
             .pedido-desc {
                 max-width: 280px;
@@ -2298,10 +2551,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 .relatorio-filtros { grid-template-columns: 1fr 1fr; }
             }
         </style>
-        <div class="white-card">
-            <?php if ($view !== 'relatorios'): ?>
+        <?php $classe_card_oficina = ($view === 'pedidos_reparacao' && $mode === 'list') ? ' white-card-pedidos' : ''; ?>
+        <div class="white-card<?= $classe_card_oficina ?>">
+            <?php if ($view !== 'relatorios' && $view !== 'presencas'): ?>
                 <div class="module-entry">
-                    <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>&mode=list" class="module-entry-btn lista"><i class="fas fa-list"></i> Lista</a>
                     <?php if (!in_array($view, ['pedidos_reparacao', 'manutencao'], true)): ?>
                         <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>&mode=form" class="module-entry-btn form"><i class="fas fa-plus"></i> Adicionar</a>
                     <?php endif; ?>
@@ -2314,7 +2567,7 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 </div>
             <?php else: ?>
                 <div class="module-modal" id="oficina-main-modal">
-                    <?php if ($view !== 'relatorios' && $view !== 'pedidos_reparacao' && $view !== 'ordens_servico' && $view !== 'requisicoes' && $view !== 'manutencao' && $view !== 'avarias'): ?>
+                    <?php if ($view !== 'relatorios' && $view !== 'pedidos_reparacao' && $view !== 'ordens_servico' && $view !== 'requisicoes' && $view !== 'manutencao' && $view !== 'avarias' && $view !== 'presencas'): ?>
                         <div class="module-modal-header">
                             <h4>Oficina - <?= htmlspecialchars((string)$view) ?></h4>
                             <div class="module-modal-actions">
@@ -2331,7 +2584,8 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             $view !== 'ordens_servico' &&
                             $view !== 'requisicoes' &&
                             $view !== 'manutencao' &&
-                            $view !== 'avarias'
+                            $view !== 'avarias' &&
+                            $view !== 'presencas'
                         ): ?>
                         <div class="list-tools" style="margin-bottom:10px;">
                             <div class="search-group">
@@ -2622,68 +2876,35 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             <button class="btn-save" style="background:var(--danger);width:100%;">Guardar Manutencao</button>
                         </div>
                     </form>
-                <?php elseif ($view == 'assiduidade'): ?>
-                    <h3>Marcacao de Presenca da Oficina</h3>
-                    <p style="font-size:12px; color:#6b7280;">Registe a presenca diaria e, no fim do dia, envie a lista ao RH.</p>
-                    <?php if ($erro_assiduidade): ?>
-                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_assiduidade) ?></p>
-                    <?php endif; ?>
-                    <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=form&ap_periodo=<?= urlencode((string)$assiduidade_periodo) ?>&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>">
-                        <input type="hidden" name="acao" value="marcar_presenca">
-                        <input type="hidden" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
-                        <div class="form-group">
-                            <label>Funcionario da Oficina</label>
-                            <select name="pessoal_id" required>
-                                <option value="">Selecione</option>
-                                <?php foreach ($colaboradores_oficina as $col): ?>
-                                    <option value="<?= (int)$col['id'] ?>">
-                                        <?= htmlspecialchars((string)$col['nome']) ?> (<?= htmlspecialchars((string)($col['cargo_nome'] ?? '-')) ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Assinou Entrada</label>
-                            <label style="display:flex;align-items:center;gap:6px;font-weight:400;">
-                                <input type="checkbox" name="assinou_entrada" value="1"> Sim
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>Assinou Saida</label>
-                            <label style="display:flex;align-items:center;gap:6px;font-weight:400;">
-                                <input type="checkbox" name="assinou_saida" value="1"> Sim
-                            </label>
-                        </div>
-                        <div class="form-group">
-                            <label>Observacoes</label>
-                            <input type="text" name="observacoes" placeholder="Opcional">
-                        </div>
-                        <div style="grid-column:span 4;">
-                            <button class="btn-save" style="background:#111827;width:100%;">Registar Presenca</button>
-                        </div>
-                    </form>
+                <?php elseif ($view == 'presencas'): ?>
+                    <h3>Controle de Presencas - Oficina</h3>
+                    <p style="font-size:12px; color:#6b7280;">Use a vista de lista para marcar entrada/saida, anexar lista fisica e enviar para RH.</p>
+                    <a class="btn-save" style="display:inline-block;background:#111827;" href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>">Abrir controle</a>
                 <?php elseif ($view == 'avarias'): ?>
                     <h3>Registo de Avaria</h3>
-                    <p style="font-size:12px; color:#6b7280;">Registe uma nova avaria/incidente. Pode gerar OS automaticamente no mesmo passo.</p>
+                    <p style="font-size:12px; color:#6b7280;">Registe uma nova avaria/incidente e, se necessario, gere a Ordem de Servico no mesmo passo.</p>
                     <?php if ($erro_avarias): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_avarias) ?></p>
+                    <?php endif; ?>
+                    <?php if ($msg_avarias): ?>
+                        <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_avarias) ?></p>
                     <?php endif; ?>
                     <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=avarias&mode=form">
                         <input type="hidden" name="acao" value="criar_avaria">
                         <div class="form-group">
-                            <label>ativo_matricula</label>
-                            <input type="text" name="ativo_matricula" required>
+                            <label>Matricula do Ativo</label>
+                            <input type="text" name="ativo_matricula" placeholder="Ex: AGD - 220" required>
                         </div>
                         <div class="form-group">
-                            <label>tipo_equipamento</label>
-                            <input type="text" name="tipo_equipamento" required>
+                            <label>Tipo de Equipamento</label>
+                            <input type="text" name="tipo_equipamento" placeholder="Ex: Sino Truck" required>
                         </div>
                         <div class="form-group">
-                            <label>data_evento</label>
+                            <label>Data do Evento</label>
                             <input type="date" name="data_evento" value="<?= date('Y-m-d') ?>" required>
                         </div>
                         <div class="form-group">
-                            <label>prioridade</label>
+                            <label>Prioridade</label>
                             <select name="prioridade">
                                 <option>Normal</option>
                                 <option>Alta</option>
@@ -2691,15 +2912,15 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>gerar_os</label>
+                            <label>Gerar Ordem de Servico</label>
                             <select name="criar_os">
                                 <option value="1">Sim</option>
                                 <option value="0">Nao</option>
                             </select>
                         </div>
                         <div class="form-group" style="grid-column:span 4;">
-                            <label>descricao</label>
-                            <textarea name="descricao" rows="4" required></textarea>
+                            <label>Descricao da Avaria</label>
+                            <textarea name="descricao" rows="4" placeholder="Descreva o problema encontrado..." required></textarea>
                         </div>
                         <div style="grid-column:span 4;">
                             <button class="btn-save" style="background:#dc2626;width:100%;">Registar Avaria</button>
@@ -2719,7 +2940,8 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 <?php if ($pedido_reparacao_detalhe): ?>
                     <?php
                         $pedidoIdDetalheUi = (int)($pedido_reparacao_detalhe['id'] ?? 0);
-                        $statusDetalhe = statusPedidoLabel(normalizarStatusPedido((string)($pedido_reparacao_detalhe['status'] ?? 'Pendente')));
+                        $statusDetalheNormalizado = normalizarStatusPedido((string)($pedido_reparacao_detalhe['status'] ?? 'Pendente'));
+                        $statusDetalhe = statusPedidoLabel($statusDetalheNormalizado);
                     ?>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h3 style="margin:0;">Detalhes do Pedido #<?= $pedidoIdDetalheUi ?></h3>
@@ -2757,11 +2979,13 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <div class="section-card" style="margin-bottom:12px;">
                         <h4 style="margin-top:0;">Acoes do Pedido</h4>
                         <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                            <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>">
-                                <input type="hidden" name="acao" value="aceitar_detalhe">
-                                <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
-                                <button type="submit" class="btn-modern primary">Aceitar pedido</button>
-                            </form>
+                            <?php if ($statusDetalheNormalizado === 'pendente'): ?>
+                                <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>">
+                                    <input type="hidden" name="acao" value="aceitar_detalhe">
+                                    <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
+                                    <button type="submit" class="btn-modern primary">Aceitar pedido</button>
+                                </form>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -2866,6 +3090,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         modal.addEventListener('click', function(e) {
                             if (e.target === modal) modal.classList.remove('open');
                         });
+                        var params = new URLSearchParams(window.location.search);
+                        if (params.get('open_material') === '1') {
+                            modal.classList.add('open');
+                        }
                     })();
                     </script>
 
@@ -2878,20 +3106,20 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_pedidos): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_pedidos) ?></p>
                     <?php endif; ?>
-                    <div class="pedidos-table-wrap">
+                    <div class="pedidos-table-wrap no-box">
                     <table class="table">
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>ativo_matricula</th>
-                                <th>tipo_equipamento</th>
-                                <th>descricao_avaria</th>
-                                <th>localizacao</th>
-                                <th>solicitante</th>
-                                <th>data_pedido</th>
+                                <th>Matrícula</th>
+                                <th>Tipo de Equipamento</th>
+                                <th>Descrição da Avaria</th>
+                                <th>Localização</th>
+                                <th>Solicitante</th>
+                                <th>Data do Pedido</th>
                                 <th>Prioridade</th>
                                 <th>Status</th>
-                                <th>Acoes</th>
+                                <th>Ações</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2920,7 +3148,16 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                         <td><span class="pill <?= badgeClassePrioridade($prioridade) ?>"><?= htmlspecialchars((string)$prioridade) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus($statusLabel) ?>"><?= htmlspecialchars((string)$statusLabel) ?></span></td>
                                         <td>
-                                            <a class="btn-acao" style="background:#111827; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>">Ver detalhes</a>
+                                            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                                <a class="btn-acao" style="background:#111827; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>">Ver detalhes</a>
+                                                <a class="btn-acao" style="background:#1f6feb; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>&open_material=1">Adicionar material</a>
+                                                <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=list" style="margin:0;">
+                                                    <input type="hidden" name="acao" value="enviar_logistica_detalhe">
+                                                    <input type="hidden" name="pedido_id" value="<?= (int)campo($p, ['id']) ?>">
+                                                    <input type="hidden" name="return_mode" value="list">
+                                                    <button type="submit" class="btn-acao" style="background:#8b5cf6;">Mandar Logistica</button>
+                                                </form>
+                                            </div>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -3087,103 +3324,84 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_avarias): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_avarias) ?></p>
                     <?php endif; ?>
-                    <div class="pedidos-table-wrap">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>ativo_matricula</th>
-                                <th>tipo_equipamento</th>
-                                <th>descricao</th>
-                                <th>data_evento</th>
-                                <th>origem</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (count($avarias) === 0): ?>
-                                <tr><td colspan="6" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
-                            <?php else: ?>
-                                <?php foreach ($avarias as $a): ?>
+                    <div class="avarias-shell">
+                        <div class="avarias-head">
+                            <div class="avarias-head-left">
+                                <div class="avarias-title">Historico de Avarias</div>
+                                <div class="avarias-subtitle">Registos de ocorrencias por viatura/equipamento.</div>
+                            </div>
+                            <span class="avarias-count"><?= count($avarias) ?> registo(s)</span>
+                        </div>
+                        <div class="avarias-table-wrap">
+                            <table class="table">
+                                <thead>
                                     <tr>
-                                        <td><?= htmlspecialchars((string)campo($a, ['id'])) ?></td>
-                                        <td><?= htmlspecialchars((string)campo($a, ['ativo_matricula'])) ?></td>
-                                        <td><?= htmlspecialchars((string)campo($a, ['tipo_equipamento'])) ?></td>
-                                        <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($a, ['descricao'])) ?>"><?= htmlspecialchars((string)campo($a, ['descricao'])) ?></span></td>
-                                        <td><?= htmlspecialchars((string)campo($a, ['data_evento'])) ?></td>
-                                        <td><?= htmlspecialchars((string)campo($a, ['origem_tipo'])) ?></td>
+                                        <th>ID</th>
+                                        <th>Matricula</th>
+                                        <th>Equipamento</th>
+                                        <th>Descricao</th>
+                                        <th>Data do Evento</th>
+                                        <th>Origem</th>
                                     </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                    </div>
-                <?php elseif ($view == 'assiduidade'): ?>
-                    <div class="screen-title-row">
-                        <div>
-                            <h3>Lista de Presenca - Oficina</h3>
-                            <p class="screen-subtitle">Presencas diarias com marcacao de entrada/saida e consulta por dia, semana e mes.</p>
+                                </thead>
+                                <tbody>
+                                    <?php if (count($avarias) === 0): ?>
+                                        <tr><td colspan="6" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para mostrar.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($avarias as $a): ?>
+                                            <?php
+                                                $origemAvariaRaw = (string)campo($a, ['origem_tipo']);
+                                                $origemAvaria = $origemAvariaRaw === 'PEDIDO_REPARACAO' ? 'Pedido de Reparacao' : ($origemAvariaRaw !== '' ? $origemAvariaRaw : 'Manual');
+                                                $dataEventoAvaria = (string)campo($a, ['data_evento']);
+                                                if ($dataEventoAvaria !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataEventoAvaria)) {
+                                                    $dataEventoAvaria = date('d/m/Y', strtotime($dataEventoAvaria));
+                                                }
+                                            ?>
+                                            <tr>
+                                                <td><span class="avarias-id-badge"><?= htmlspecialchars((string)campo($a, ['id'])) ?></span></td>
+                                                <td><?= htmlspecialchars((string)campo($a, ['ativo_matricula'])) ?></td>
+                                                <td><?= htmlspecialchars((string)campo($a, ['tipo_equipamento'])) ?></td>
+                                                <td><span class="pedido-desc" title="<?= htmlspecialchars((string)campo($a, ['descricao'])) ?>"><?= htmlspecialchars((string)campo($a, ['descricao'])) ?></span></td>
+                                                <td><?= htmlspecialchars($dataEventoAvaria !== '' ? $dataEventoAvaria : '-') ?></td>
+                                                <td><span class="avarias-origem-badge <?= $origemAvariaRaw === 'PEDIDO_REPARACAO' ? 'pedido' : 'manual' ?>"><?= htmlspecialchars($origemAvaria) ?></span></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
                         </div>
-                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                            <div class="tag-soft"><i class="fa-solid fa-user-check"></i> Periodo <?= htmlspecialchars((string)$assiduidade_intervalo['label']) ?>: <?= htmlspecialchars((string)$assiduidade_intervalo['inicio']) ?> a <?= htmlspecialchars((string)$assiduidade_intervalo['fim']) ?></div>
-                            <?php if ($assiduidade_periodo === 'diario' && $assiduidade_lista_preenchida): ?>
-                                <div class="tag-soft" style="border-color:#fdba74;background:#fff7ed;color:#9a3412;">
-                                    <i class="fa-solid fa-circle-check"></i> Lista preenchida e enviada ao RH
-                                </div>
-                            <?php endif; ?>
-                        </div>
                     </div>
-                    <?php if ($erro_assiduidade): ?>
-                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_assiduidade) ?></p>
+                <?php elseif ($view == 'presencas'): ?>
+                    <?php if ($erro_presencas): ?>
+                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars((string)$erro_presencas) ?></p>
                     <?php endif; ?>
-                    <?php if ($msg_assiduidade): ?>
-                        <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_assiduidade) ?></p>
+                    <?php if ($msg_presencas): ?>
+                        <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars((string)$msg_presencas) ?></p>
                     <?php endif; ?>
 
                     <form method="GET" action="" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
                         <input type="hidden" name="tab" value="<?= htmlspecialchars((string)$tab) ?>">
-                        <input type="hidden" name="view" value="assiduidade">
+                        <input type="hidden" name="view" value="presencas">
                         <input type="hidden" name="mode" value="list">
                         <input type="hidden" name="aplicar" value="1">
                         <div class="form-group" style="margin:0;">
-                            <label>Periodo da Lista</label>
-                            <select name="ap_periodo">
-                                <option value="diario" <?= $assiduidade_periodo === 'diario' ? 'selected' : '' ?>>Diario</option>
-                                <option value="semanal" <?= $assiduidade_periodo === 'semanal' ? 'selected' : '' ?>>Semanal</option>
-                                <option value="mensal" <?= $assiduidade_periodo === 'mensal' ? 'selected' : '' ?>>Mensal</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="margin:0;">
-                            <label>Data de Referencia</label>
+                            <label>Data da Lista</label>
                             <input type="date" name="data_assiduidade" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
                         </div>
-                        <button type="submit" class="btn-save" style="background:#111827;">Ver Lista</button>
+                        <button type="submit" class="btn-save" style="background:#111827;">Carregar Lista</button>
+                        <button type="button" class="btn-save" style="background:#0f766e;" onclick="abrirTelaListasPresencasOficina()"><i class="fa-solid fa-list-check"></i> Ver listas de presencas</button>
                     </form>
 
-                    <?php if ($assiduidade_periodo === 'diario'): ?>
-                    <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=assiduidade&mode=list&ap_periodo=<?= urlencode((string)$assiduidade_periodo) ?>&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>" style="margin-bottom:12px;">
-                        <input type="hidden" name="acao" value="marcar_presenca_lote">
+                    <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode((string)$data_assiduidade) ?>" style="margin-bottom:14px;">
+                        <input type="hidden" name="acao_presencas" value="marcar_presenca_lote">
                         <input type="hidden" name="data_presenca" value="<?= htmlspecialchars((string)$data_assiduidade) ?>">
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-                            <div style="font-size:12px; color:#374151; font-weight:700;">
-                                Marcacao diaria de presenca (dia de referencia: <?= htmlspecialchars((string)$data_assiduidade) ?>)
-                            </div>
+                            <div style="font-size:12px; color:#374151; font-weight:700;">Marque entrada/saida conforme a folha fisica do dia.</div>
                             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                                <button type="button" class="btn-save js-ass-all-entry" style="background:#0ea5e9;">
-                                    <i class="fa-solid fa-right-to-bracket"></i> Marcar entrada todos
-                                </button>
-                                <button type="button" class="btn-save js-ass-all-exit" style="background:#14b8a6;">
-                                    <i class="fa-solid fa-right-from-bracket"></i> Marcar saida todos
-                                </button>
-                                <button type="button" class="btn-save js-ass-clear-entry" style="background:#9ca3af;">
-                                    Desmarcar entrada
-                                </button>
-                                <button type="button" class="btn-save js-ass-clear-exit" style="background:#9ca3af;">
-                                    Desmarcar saida
-                                </button>
+                                <button type="button" class="btn-save" onclick="marcarTodosPresentesOficina(event)" style="background:#0ea5e9;" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>>Marcar todos presentes</button>
+                                <button type="button" class="btn-save" onclick="marcarTodosAusentesOficina(event)" style="background:#9ca3af;" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>>Marcar todos ausentes</button>
                             </div>
-                            <button type="submit" class="btn-save" style="background:#111827;">
-                                <i class="fa-solid fa-check-double"></i> Guardar Marcacoes da Lista
-                            </button>
+                            <button type="submit" class="btn-save" style="background:#111827;" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>>Salvar lista</button>
                         </div>
                         <div class="pedidos-table-wrap">
                             <table class="table">
@@ -3192,32 +3410,36 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                         <th>Numero</th>
                                         <th>Nome</th>
                                         <th>Cargo</th>
-                                        <th>Assinou Entrada</th>
-                                        <th>Assinou Saida</th>
+                                        <th>Entrada</th>
+                                        <th>Hora Entrada</th>
+                                        <th>Saida</th>
+                                        <th>Hora Saida</th>
                                         <th>Observacoes</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (count($colaboradores_oficina) === 0): ?>
-                                        <tr><td colspan="6" style="text-align:center;color:#6b7280;padding:12px;">Sem colaboradores da oficina para marcacao.</td></tr>
+                                        <tr><td colspan="8" style="text-align:center;color:#6b7280;padding:12px;">Sem funcionarios da oficina para marcacao.</td></tr>
                                     <?php else: ?>
                                         <?php foreach ($colaboradores_oficina as $col): ?>
                                             <?php
                                                 $pid = (int)($col['id'] ?? 0);
                                                 $atual = $presencas_por_colaborador[$pid] ?? null;
-                                                $assinouEntradaAtual = (int)($atual['assinou_entrada'] ?? 0) === 1;
-                                                $assinouSaidaAtual = (int)($atual['assinou_saida'] ?? 0) === 1;
+                                                $inChecked = (int)($atual['assinou_entrada'] ?? 0) === 1;
+                                                $outChecked = (int)($atual['assinou_saida'] ?? 0) === 1;
+                                                $horaIn = !empty($atual['hora_entrada']) ? substr((string)$atual['hora_entrada'], 0, 5) : '07:00';
+                                                $horaOut = !empty($atual['hora_saida']) ? substr((string)$atual['hora_saida'], 0, 5) : '16:00';
                                                 $obsAtual = (string)($atual['observacoes'] ?? '');
                                             ?>
                                             <tr>
                                                 <td><?= htmlspecialchars((string)($col['numero'] ?? '-')) ?></td>
                                                 <td><?= htmlspecialchars((string)($col['nome'] ?? '-')) ?></td>
                                                 <td><?= htmlspecialchars((string)($col['cargo_nome'] ?? '-')) ?></td>
-                                                <td><input type="checkbox" class="js-ass-entry" name="entrada_lote[<?= $pid ?>]" value="1" <?= $assinouEntradaAtual ? 'checked' : '' ?>></td>
-                                                <td><input type="checkbox" class="js-ass-exit" name="saida_lote[<?= $pid ?>]" value="1" <?= $assinouSaidaAtual ? 'checked' : '' ?>></td>
-                                                <td>
-                                                    <input type="text" name="obs_lote[<?= $pid ?>]" value="<?= htmlspecialchars($obsAtual) ?>" placeholder="Opcional" style="min-width:180px;">
-                                                </td>
+                                                <td><input type="checkbox" class="js-pres-entry" name="entrada_lote[<?= $pid ?>]" value="1" <?= $inChecked ? 'checked' : '' ?> <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>></td>
+                                                <td><input type="time" class="js-pres-entry-time" name="hora_entrada_lote[<?= $pid ?>]" value="<?= htmlspecialchars($horaIn) ?>" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>></td>
+                                                <td><input type="checkbox" class="js-pres-exit" name="saida_lote[<?= $pid ?>]" value="1" <?= $outChecked ? 'checked' : '' ?> <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>></td>
+                                                <td><input type="time" class="js-pres-exit-time" name="hora_saida_lote[<?= $pid ?>]" value="<?= htmlspecialchars($horaOut) ?>" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>></td>
+                                                <td><input type="text" name="obs_lote[<?= $pid ?>]" value="<?= htmlspecialchars($obsAtual) ?>" placeholder="Opcional" <?= $lista_presenca_enviada_rh ? 'disabled' : '' ?>></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
@@ -3225,64 +3447,126 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             </table>
                         </div>
                     </form>
-                    <?php endif; ?>
 
-                    <?php if ($assiduidade_periodo !== 'diario'): ?>
-                    <div class="pedidos-table-wrap">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Data</th>
-                                <th>Numero</th>
-                                <th>Nome</th>
-                                <th>Cargo</th>
-                                <th>Assinou Entrada</th>
-                                <th>Assinou Saida</th>
-                                <th>Observacoes</th>
-                                <th>Enviado RH</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (count($presencas_oficina) === 0): ?>
-                                <tr><td colspan="9" style="text-align:center;color:#6b7280;padding:12px;">Sem registos de presenca para o periodo selecionado.</td></tr>
-                            <?php else: ?>
-                                <?php foreach ($presencas_oficina as $pr): ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars((string)($pr['id'] ?? '-')) ?></td>
-                                        <td><?= htmlspecialchars((string)($pr['data_presenca'] ?? '-')) ?></td>
-                                        <td><?= htmlspecialchars((string)($pr['numero'] ?? '-')) ?></td>
-                                        <td><?= htmlspecialchars((string)($pr['nome'] ?? '-')) ?></td>
-                                        <td><?= htmlspecialchars((string)($pr['cargo_nome'] ?? '-')) ?></td>
-                                        <td>
-                                            <?php if ((int)($pr['assinou_entrada'] ?? 0) === 1): ?>
-                                                <span class="pill ok">Sim</span>
-                                            <?php else: ?>
-                                                <span class="pill warn">Nao</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ((int)($pr['assinou_saida'] ?? 0) === 1): ?>
-                                                <span class="pill ok">Sim</span>
-                                            <?php else: ?>
-                                                <span class="pill warn">Nao</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars((string)($pr['observacoes'] ?? '-')) ?></td>
-                                        <td>
-                                            <?php if ((int)($pr['enviado_rh'] ?? 0) === 1): ?>
-                                                <span class="pill ok">Sim</span>
-                                            <?php else: ?>
-                                                <span class="pill warn">Nao</span>
-                                            <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                    <div id="painel-listas-presencas-oficina" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(15,23,42,0.6); padding:24px; overflow:auto;">
+                        <div style="max-width:1200px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #dbe3ed; padding:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <div style="font-size:13px; font-weight:800; color:#334155;">Listas de Presencas (ultimos 30 dias)</div>
+                                <button type="button" class="btn-save" style="background:#334155;" onclick="fecharTelaListasPresencasOficina()"><i class="fa-solid fa-xmark"></i> Fechar tela</button>
+                            </div>
+                            <div class="pedidos-table-wrap no-box">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Lista</th>
+                                            <th>Total Funcionarios</th>
+                                            <th>Presentes</th>
+                                            <th>Ausentes</th>
+                                            <th>Lista Fisica</th>
+                                            <th>Enviado RH</th>
+                                            <th>Acoes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($listas_presenca_dias)): ?>
+                                            <tr><td colspan="7" style="text-align:center;color:#777;">Sem listas de presenca no periodo.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($listas_presenca_dias as $ld): ?>
+                                                <?php
+                                                    $dataLista = (string)($ld['data_presenca'] ?? '');
+                                                    $enviadoTodos = (int)($ld['enviado_rh_todos'] ?? 0) === 1;
+                                                    $possuiAnexo = (int)($ld['possui_anexo'] ?? 0) === 1;
+                                                    $anexoPathLista = (string)($ld['lista_fisica_anexo'] ?? '');
+                                                ?>
+                                                <tr>
+                                                    <td><?= !empty($dataLista) ? ('Lista ' . date('d/m/Y', strtotime($dataLista))) : '-' ?></td>
+                                                    <td><?= (int)($ld['total_funcionarios'] ?? 0) ?></td>
+                                                    <td><?= (int)($ld['total_presentes'] ?? 0) ?></td>
+                                                    <td><?= (int)($ld['total_ausentes'] ?? 0) ?></td>
+                                                    <td>
+                                                        <?php if ($possuiAnexo && $anexoPathLista !== ''): ?>
+                                                            <a href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-save" style="font-size:10px;background:#0f766e;">Ver anexo</a>
+                                                        <?php else: ?>
+                                                            <span style="font-size:11px; color:#b91c1c; font-weight:700;">Nao anexada</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td><?= $enviadoTodos ? 'Sim' : 'Nao' ?></td>
+                                                    <td>
+                                                        <a href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode($dataLista) ?>&hist_data=<?= urlencode($dataLista) ?>" class="btn-save" style="font-size:10px;background:#334155;">Ver historico</a>
+                                                        <?php if (!$enviadoTodos): ?>
+                                                            <form method="POST" enctype="multipart/form-data" action="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode($dataLista) ?>" style="display:inline; margin-left:6px;">
+                                                                <input type="hidden" name="acao_presencas" value="anexar_lista_fisica">
+                                                                <input type="hidden" name="data_presenca" value="<?= htmlspecialchars($dataLista) ?>">
+                                                                <input type="file" name="lista_fisica_file[]" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif" style="font-size:10px; width:150px;" required>
+                                                                <button type="submit" class="btn-save" style="font-size:10px;background:#0369a1;">Anexar lista</button>
+                                                            </form>
+                                                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode($dataLista) ?>" class="btn-save" style="font-size:10px;background:#111827;">Editar</a>
+                                                            <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&data_assiduidade=<?= urlencode($dataLista) ?>" style="display:inline; margin-left:6px;">
+                                                                <input type="hidden" name="acao_presencas" value="enviar_rh">
+                                                                <input type="hidden" name="data_presenca" value="<?= htmlspecialchars($dataLista) ?>">
+                                                                <button type="submit" class="btn-save" style="font-size:10px;background:#7c3aed;" <?= $possuiAnexo ? '' : 'disabled title="Anexe primeiro a lista fisica"' ?>>Enviar RH</button>
+                                                            </form>
+                                                        <?php else: ?>
+                                                            <span style="font-size:11px; color:#64748b; font-weight:700;">Bloqueada apos envio</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                    <?php endif; ?>
+
+                    <div id="painel-lista-dia-presencas-oficina" style="display:none; position:fixed; inset:0; z-index:1100; background:rgba(15,23,42,0.68); padding:24px; overflow:auto;">
+                        <div style="max-width:1150px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #dbe3ed; padding:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+                                <div style="font-size:13px; font-weight:800; color:#334155;">Lista de Presencas - <?= $hist_data_oficina !== '' ? htmlspecialchars(date('d/m/Y', strtotime($hist_data_oficina))) : '' ?></div>
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                    <?php if ($hist_data_oficina !== ''): ?>
+                                        <a class="btn-save" style="background:#c2410c;" target="_blank" href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&doc=presenca_pdf&data_presenca=<?= urlencode($hist_data_oficina) ?>"><i class="fa-solid fa-file-pdf"></i> Baixar PDF</a>
+                                        <a class="btn-save" style="background:#166534;" target="_blank" href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&doc=presenca_excel&data_presenca=<?= urlencode($hist_data_oficina) ?>"><i class="fa-solid fa-file-excel"></i> Baixar Excel</a>
+                                        <a class="btn-save" style="background:#1d4ed8;" target="_blank" href="?tab=<?= urlencode((string)$tab) ?>&view=presencas&mode=list&doc=presenca_word&data_presenca=<?= urlencode($hist_data_oficina) ?>"><i class="fa-solid fa-file-word"></i> Baixar Word</a>
+                                    <?php endif; ?>
+                                    <button type="button" class="btn-save" style="background:#334155;" onclick="fecharTelaListaDiaPresencasOficina()"><i class="fa-solid fa-xmark"></i> Fechar tela</button>
+                                </div>
+                            </div>
+
+                            <div class="pedidos-table-wrap">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Data</th>
+                                            <th>Funcionario</th>
+                                            <th>Cargo</th>
+                                            <th>Entrada</th>
+                                            <th>Saida</th>
+                                            <th>Estado</th>
+                                            <th>Enviado RH</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($lista_presencas_historico)): ?>
+                                            <tr><td colspan="7" style="text-align:center;color:#6b7280;padding:12px;">Sem registos para esta lista.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($lista_presencas_historico as $prh): ?>
+                                                <tr>
+                                                    <td><?= !empty($prh['data_presenca']) ? htmlspecialchars(date('d/m/Y', strtotime((string)$prh['data_presenca']))) : '-' ?></td>
+                                                    <td><?= htmlspecialchars((string)($prh['colaborador'] ?? '-')) ?></td>
+                                                    <td><?= htmlspecialchars((string)($prh['cargo_nome'] ?? '-')) ?></td>
+                                                    <td><?= !empty($prh['hora_entrada']) ? htmlspecialchars(substr((string)$prh['hora_entrada'], 0, 5)) : '-' ?></td>
+                                                    <td><?= !empty($prh['hora_saida']) ? htmlspecialchars(substr((string)$prh['hora_saida'], 0, 5)) : '-' ?></td>
+                                                    <td><?= htmlspecialchars((string)($prh['status_presenca'] ?? '-')) ?></td>
+                                                    <td><?= (int)($prh['enviado_rh'] ?? 0) === 1 ? 'Sim' : 'Nao' ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 <?php elseif ($view == 'relatorios'): ?>
                     <?php
                         $total_os_periodo = (int)($relatorio_resumo_periodo['total_os'] ?? 0);
@@ -4115,35 +4399,60 @@ function inicializarAbasRelatorioOficina() {
     });
 }
 
-function inicializarAcoesAssiduidadeLote() {
-    document.querySelectorAll('.white-card').forEach(function(card) {
-        var marcarEntrada = card.querySelector('.js-ass-all-entry');
-        var marcarSaida = card.querySelector('.js-ass-all-exit');
-        var limparEntrada = card.querySelector('.js-ass-clear-entry');
-        var limparSaida = card.querySelector('.js-ass-clear-exit');
-        var entradas = card.querySelectorAll('.js-ass-entry');
-        var saidas = card.querySelectorAll('.js-ass-exit');
+function abrirTelaListasPresencasOficina() {
+    var el = document.getElementById('painel-listas-presencas-oficina');
+    if (!el) return;
+    el.style.display = 'block';
+}
 
-        if (marcarEntrada) {
-            marcarEntrada.addEventListener('click', function() {
-                entradas.forEach(function(cb) { cb.checked = true; });
-            });
-        }
-        if (marcarSaida) {
-            marcarSaida.addEventListener('click', function() {
-                saidas.forEach(function(cb) { cb.checked = true; });
-            });
-        }
-        if (limparEntrada) {
-            limparEntrada.addEventListener('click', function() {
-                entradas.forEach(function(cb) { cb.checked = false; });
-            });
-        }
-        if (limparSaida) {
-            limparSaida.addEventListener('click', function() {
-                saidas.forEach(function(cb) { cb.checked = false; });
-            });
-        }
+function fecharTelaListasPresencasOficina() {
+    var el = document.getElementById('painel-listas-presencas-oficina');
+    if (!el) return;
+    el.style.display = 'none';
+}
+
+function abrirTelaListaDiaPresencasOficina() {
+    var el = document.getElementById('painel-lista-dia-presencas-oficina');
+    if (!el) return;
+    el.style.display = 'block';
+}
+
+function fecharTelaListaDiaPresencasOficina() {
+    var el = document.getElementById('painel-lista-dia-presencas-oficina');
+    if (!el) return;
+    el.style.display = 'none';
+}
+
+function linhasPresencasOficina() {
+    return Array.from(document.querySelectorAll('input.js-pres-entry')).map(function(entryEl) {
+        var row = entryEl.closest('tr');
+        return {
+            entry: entryEl,
+            exit: row ? row.querySelector('input.js-pres-exit') : null,
+            entryTime: row ? row.querySelector('input.js-pres-entry-time') : null,
+            exitTime: row ? row.querySelector('input.js-pres-exit-time') : null
+        };
+    });
+}
+
+function marcarTodosPresentesOficina(ev) {
+    if (ev) ev.preventDefault();
+    linhasPresencasOficina().forEach(function(l) {
+        if (!l.entry || l.entry.disabled) return;
+        l.entry.checked = true;
+        if (l.exit && !l.exit.disabled) l.exit.checked = true;
+        if (l.entryTime && !l.entryTime.disabled && !l.entryTime.value) l.entryTime.value = '07:00';
+        if (l.exitTime && !l.exitTime.disabled && !l.exitTime.value) l.exitTime.value = '16:00';
+    });
+}
+
+function marcarTodosAusentesOficina(ev) {
+    if (ev) ev.preventDefault();
+    linhasPresencasOficina().forEach(function(l) {
+        if (l.entry && !l.entry.disabled) l.entry.checked = false;
+        if (l.exit && !l.exit.disabled) l.exit.checked = false;
+        if (l.entryTime && !l.entryTime.disabled) l.entryTime.value = '';
+        if (l.exitTime && !l.exitTime.disabled) l.exitTime.value = '';
     });
 }
 
@@ -4289,9 +4598,27 @@ document.querySelectorAll('.btn-export').forEach(function(btn) {
     });
 });
 
+document.addEventListener('click', function(ev) {
+    var el = document.getElementById('painel-listas-presencas-oficina');
+    if (!el || el.style.display !== 'block') return;
+    if (ev.target === el) fecharTelaListasPresencasOficina();
+});
+
+document.addEventListener('click', function(ev) {
+    var el = document.getElementById('painel-lista-dia-presencas-oficina');
+    if (!el || el.style.display !== 'block') return;
+    if (ev.target === el) fecharTelaListaDiaPresencasOficina();
+});
+
+<?php if ($view === 'presencas' && $hist_data_oficina !== ''): ?>
+document.addEventListener('DOMContentLoaded', function() {
+    abrirTelaListasPresencasOficina();
+    abrirTelaListaDiaPresencasOficina();
+});
+<?php endif; ?>
+
 inicializarFiltrosOficina();
 inicializarAbasRelatorioOficina();
-inicializarAcoesAssiduidadeLote();
 inicializarBaixarRelatorioOficina();
 </script>
 

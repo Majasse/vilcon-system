@@ -1,0 +1,57 @@
+.vilcon-loader-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(17, 24, 39, 0.16);
+    backdrop-filter: blur(1px);
+    z-index: 99999;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.vilcon-loader-overlay.is-visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: all;
+}
+
+.vilcon-loader-spinner {
+    position: relative;
+    width: 96px;
+    height: 96px;
+}
+
+.vilcon-loader-spinner span {
+    --bar-color: #f6b157;
+    position: absolute;
+    left: 42px;
+    top: 4px;
+    width: 12px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--bar-color);
+    transform-origin: 6px 44px;
+    animation: vilcon-loader-fade 1s linear infinite;
+}
+
+.vilcon-loader-spinner span:nth-child(1) { transform: rotate(0deg); animation-delay: -0.9167s; --bar-color: #f39c12; }
+.vilcon-loader-spinner span:nth-child(2) { transform: rotate(30deg); animation-delay: -0.8334s; --bar-color: #f4a225; }
+.vilcon-loader-spinner span:nth-child(3) { transform: rotate(60deg); animation-delay: -0.7501s; --bar-color: #f5a838; }
+.vilcon-loader-spinner span:nth-child(4) { transform: rotate(90deg); animation-delay: -0.6668s; --bar-color: #f6ae4a; }
+.vilcon-loader-spinner span:nth-child(5) { transform: rotate(120deg); animation-delay: -0.5835s; --bar-color: #f7b45d; }
+.vilcon-loader-spinner span:nth-child(6) { transform: rotate(150deg); animation-delay: -0.5002s; --bar-color: #f8ba70; }
+.vilcon-loader-spinner span:nth-child(7) { transform: rotate(180deg); animation-delay: -0.4169s; --bar-color: #f8be7b; }
+.vilcon-loader-spinner span:nth-child(8) { transform: rotate(210deg); animation-delay: -0.3336s; --bar-color: #f9c286; }
+.vilcon-loader-spinner span:nth-child(9) { transform: rotate(240deg); animation-delay: -0.2503s; --bar-color: #fac793; }
+.vilcon-loader-spinner span:nth-child(10) { transform: rotate(270deg); animation-delay: -0.167s; --bar-color: #fbcc9f; }
+.vilcon-loader-spinner span:nth-child(11) { transform: rotate(300deg); animation-delay: -0.0837s; --bar-color: #fcd2ad; }
+.vilcon-loader-spinner span:nth-child(12) { transform: rotate(330deg); animation-delay: 0s; --bar-color: #fdd8bb; }
+
+@keyframes vilcon-loader-fade {
+    0% { opacity: 1; }
+    100% { opacity: 0.2; }
+}

@@ -12,15 +12,22 @@ if (!isset($_SESSION['usuario_id'])) {
 
 $page_title = 'RH | Vilcon System';
 $view = $_GET['view'] ?? 'colaboradores';
-$mode = $_GET['mode'] ?? 'home';
-if (!in_array($mode, ['home', 'list'], true)) {
-    $mode = 'home';
+if ($view === 'assiduidade') {
+    $view = 'presencas';
 }
-$aplicar_lista = isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1';
+$mode = $_GET['mode'] ?? 'list';
+if (!in_array($mode, ['home', 'list'], true)) {
+    $mode = 'list';
+}
+$aplicar_lista = (string)($_GET['aplicar'] ?? '1') === '1';
 $q = trim((string)($_GET['q'] ?? ''));
 $cargo_id = isset($_GET['cargo_id']) ? (int)$_GET['cargo_id'] : 0;
 $funcionario_id = isset($_GET['funcionario_id']) ? (int)$_GET['funcionario_id'] : 0;
-$data_assiduidade = trim((string)($_GET['data_assiduidade'] ?? date('Y-m-d')));
+$data_presencas = trim((string)($_GET['data_presencas'] ?? ($_GET['data_assiduidade'] ?? date('Y-m-d'))));
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_presencas)) {
+    $data_presencas = date('Y-m-d');
+}
+$hist_data_rh = trim((string)($_GET['hist_data'] ?? ''));
 $avaliacao_inicio = trim((string)($_GET['avaliacao_inicio'] ?? date('Y-m-01')));
 $avaliacao_fim = trim((string)($_GET['avaliacao_fim'] ?? date('Y-m-d')));
 
@@ -39,7 +46,7 @@ $totais_avaliacao = [
     'fraco' => 0,
 ];
 
-function garantirTabelaAssiduidadeRh(PDO $pdo): void {
+function garantirTabelaPresencasRh(PDO $pdo): void {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS oficina_presencas_rh (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -116,13 +123,20 @@ function classificarNotaFinal(float $notaFinal): array {
 }
 
 try {
-    garantirTabelaAssiduidadeRh($pdo);
+    garantirTabelaPresencasRh($pdo);
 
     $cargos = $pdo->query("SELECT id, nome FROM cargos ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     $sql = "
         SELECT p.id, p.numero, p.nome, p.estado, p.created_at, p.cargo_id, c.nome AS cargo_nome
         FROM pessoal p
+        INNER JOIN (
+            SELECT
+                COALESCE(NULLIF(numero, 0), id) AS chave_unica,
+                MAX(id) AS id_mais_recente
+            FROM pessoal
+            GROUP BY COALESCE(NULLIF(numero, 0), id)
+        ) ult ON ult.id_mais_recente = p.id
         LEFT JOIN cargos c ON c.id = p.cargo_id
         WHERE 1=1
     ";
@@ -168,42 +182,50 @@ try {
     $erro = 'Nao foi possivel carregar os dados de RH.';
 }
 
-$assiduidade_lista = [];
-$totais_assiduidade = ['total' => 0, 'presente' => 0, 'atraso' => 0, 'falta' => 0, 'dispensa' => 0];
+$listas_presenca_dias = [];
+$lista_presencas_historico_rh = [];
 
-if ($view === 'assiduidade' && $erro === null) {
+if ($view === 'presencas' && $erro === null) {
     try {
-        $sqlAss = "
+        $sqlDias = "
             SELECT
-                apr.id,
                 apr.data_presenca,
-                apr.status_presenca,
-                apr.observacoes,
-                apr.enviado_em,
-                p.numero,
-                p.nome,
-                c.nome AS cargo_nome
+                COUNT(*) AS total_funcionarios,
+                SUM(CASE WHEN apr.status_presenca = 'Presente' THEN 1 ELSE 0 END) AS total_presentes,
+                SUM(CASE WHEN apr.status_presenca <> 'Presente' THEN 1 ELSE 0 END) AS total_ausentes,
+                MIN(apr.enviado_rh) AS enviado_rh_todos,
+                MAX(CASE WHEN (apr.lista_fisica_anexo IS NOT NULL AND apr.lista_fisica_anexo <> '') THEN 1 ELSE 0 END) AS possui_anexo,
+                MAX(apr.lista_fisica_anexo) AS lista_fisica_anexo
             FROM oficina_presencas_rh apr
-            INNER JOIN pessoal p ON p.id = apr.pessoal_id
-            LEFT JOIN cargos c ON c.id = p.cargo_id
-            WHERE apr.enviado_rh = 1
-              AND apr.data_presenca = :data_presenca
-            ORDER BY p.nome ASC, apr.id DESC
+            WHERE apr.data_presenca >= DATE_SUB(:data_base, INTERVAL 30 DAY)
+            GROUP BY apr.data_presenca
+            ORDER BY apr.data_presenca DESC
         ";
-        $stmtAss = $pdo->prepare($sqlAss);
-        $stmtAss->execute(['data_presenca' => $data_assiduidade]);
-        $assiduidade_lista = $stmtAss->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $stmtDias = $pdo->prepare($sqlDias);
+        $stmtDias->execute(['data_base' => date('Y-m-d')]);
+        $listas_presenca_dias = $stmtDias->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        foreach ($assiduidade_lista as $a) {
-            $totais_assiduidade['total']++;
-            $s = strtolower((string)($a['status_presenca'] ?? ''));
-            if ($s === 'presente') $totais_assiduidade['presente']++;
-            elseif ($s === 'atraso') $totais_assiduidade['atraso']++;
-            elseif ($s === 'falta') $totais_assiduidade['falta']++;
-            elseif ($s === 'dispensa') $totais_assiduidade['dispensa']++;
+        if ($hist_data_rh !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $hist_data_rh)) {
+            $histStmt = $pdo->prepare("
+                SELECT
+                    apr.data_presenca,
+                    p.nome AS colaborador,
+                    c.nome AS cargo_nome,
+                    apr.hora_entrada,
+                    apr.hora_saida,
+                    apr.status_presenca,
+                    apr.enviado_rh
+                FROM oficina_presencas_rh apr
+                INNER JOIN pessoal p ON p.id = apr.pessoal_id
+                LEFT JOIN cargos c ON c.id = p.cargo_id
+                WHERE apr.data_presenca = :data_ref
+                ORDER BY p.nome ASC
+            ");
+            $histStmt->execute([':data_ref' => $hist_data_rh]);
+            $lista_presencas_historico_rh = $histStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         }
     } catch (Throwable $e) {
-        $erro = 'Nao foi possivel carregar a assiduidade recebida da Oficina.';
+        $erro = 'Nao foi possivel carregar o controle de presencas recebido da Oficina.';
     }
 }
 
@@ -506,42 +528,12 @@ if ($view === 'avaliacao' && $erro === null) {
         </style>
 
         <div class="tabs">
-            <a class="tab <?= $view === 'colaboradores' ? 'active' : '' ?>" href="?view=colaboradores&mode=home">Colaboradores</a>
-            <a class="tab <?= $view === 'assiduidade' ? 'active' : '' ?>" href="?view=assiduidade&mode=home">Assiduidade</a>
-            <a class="tab <?= $view === 'recrutamento' ? 'active' : '' ?>" href="?view=recrutamento&mode=home">Recrutamento</a>
-            <a class="tab <?= $view === 'ferias' ? 'active' : '' ?>" href="?view=ferias&mode=home">Ferias</a>
-            <a class="tab <?= $view === 'avaliacao' ? 'active' : '' ?>" href="?view=avaliacao&mode=home">Avaliacao</a>
+            <a class="tab <?= $view === 'presencas' ? 'active' : '' ?>" href="?view=presencas&mode=list&aplicar=1">Controle de Presencas</a>
+            <a class="tab <?= $view === 'avaliacao' ? 'active' : '' ?>" href="?view=avaliacao&mode=list&aplicar=1">Avaliacao</a>
         </div>
 
         <div class="card">
-            <div class="module-entry">
-                <a href="?view=<?= urlencode((string)$view) ?>&mode=list" class="module-entry-btn"><i class="fas fa-list"></i> Abrir tela</a>
-            </div>
-
-            <?php if ($mode === 'home'): ?>
-                <div style="border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb; font-size:12px; color:#6b7280;">
-                    A lista do RH so aparece apos abrir a tela e aplicar os filtros.
-                </div>
-            <?php else: ?>
-                <div class="module-modal" id="rh-main-modal">
-                    <div class="module-modal-header">
-                        <h4>RH - <?= htmlspecialchars((string)$view) ?></h4>
-                        <div class="module-modal-actions">
-                            <button type="button" class="module-modal-btn min" id="btn-min-rh">Minimizar</button>
-                            <a href="?view=<?= urlencode((string)$view) ?>&mode=home" class="module-modal-btn close">Fechar</a>
-                        </div>
-                    </div>
-                    <div class="module-modal-body" id="rh-main-body">
-                        <?php if (!$aplicar_lista): ?>
-                            <div style="border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#f9fafb; margin-bottom:12px;">
-                                <form method="GET" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
-                                    <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
-                                    <input type="hidden" name="mode" value="list">
-                                    <input type="hidden" name="aplicar" value="1">
-                                    <button type="submit" class="btn-export" style="background:#111827;color:#fff;border-color:#111827;">Aplicar filtro</button>
-                                </form>
-                            </div>
-                        <?php else: ?>
+            <div id="rh-main-body">
             <?php if ($erro !== null): ?>
                 <p class="muted"><?= htmlspecialchars($erro) ?></p>
             <?php elseif ($view === 'colaboradores'): ?>
@@ -738,7 +730,7 @@ if ($view === 'avaliacao' && $erro === null) {
                                 <th><i class="fa-solid fa-comments"></i> Comunicacao</th>
                                 <th><i class="fa-solid fa-lightbulb"></i> Proatividade</th>
                                 <th><i class="fa-solid fa-bullseye"></i> Metas</th>
-                                <th><i class="fa-solid fa-calendar-check"></i> Assiduidade</th>
+                                <th><i class="fa-solid fa-calendar-check"></i> Presencas</th>
                                 <th><i class="fa-solid fa-ranking-star"></i> Nota</th>
                                 <th><i class="fa-solid fa-shield-halved"></i> Classe</th>
                             </tr>
@@ -782,77 +774,131 @@ if ($view === 'avaliacao' && $erro === null) {
                     </table>
                 </div>
 
-            <?php elseif ($view === 'assiduidade'): ?>
-                <form method="GET" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:14px;">
-                    <input type="hidden" name="view" value="assiduidade">
-                    <input type="hidden" name="mode" value="list">
-                    <input type="hidden" name="aplicar" value="1">
-                    <div>
-                        <label style="display:block; font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:5px;">Data</label>
-                        <input type="date" name="data_assiduidade" value="<?= htmlspecialchars($data_assiduidade) ?>" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:8px;">
-                    </div>
-                    <button type="submit" style="background:#111827; color:#fff; border:none; padding:8px 12px; border-radius:8px; font-size:11px; font-weight:700;">Carregar lista enviada pela Oficina</button>
-                </form>
-
-                <div class="kpi-row">
-                    <div class="kpi"><div class="k">Total</div><div class="v"><?= (int)$totais_assiduidade['total'] ?></div></div>
-                    <div class="kpi"><div class="k">Presentes</div><div class="v"><?= (int)$totais_assiduidade['presente'] ?></div></div>
-                    <div class="kpi"><div class="k">Atrasos</div><div class="v"><?= (int)$totais_assiduidade['atraso'] ?></div></div>
-                    <div class="kpi"><div class="k">Faltas</div><div class="v"><?= (int)$totais_assiduidade['falta'] ?></div></div>
-                    <div class="kpi"><div class="k">Dispensas</div><div class="v"><?= (int)$totais_assiduidade['dispensa'] ?></div></div>
+            <?php elseif ($view === 'presencas'): ?>
+                <div id="painel-listas-presencas-rh" style="margin-top:4px;">
+                        <div style="font-size:13px; font-weight:800; color:#334155; margin-bottom:10px;">Listas de Presencas (ultimos 30 dias)</div>
+                        <div style="overflow:auto;">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Lista</th>
+                                        <th>Total Funcionarios</th>
+                                        <th>Presentes</th>
+                                        <th>Ausentes</th>
+                                        <th>Lista Fisica</th>
+                                        <th>Enviado RH</th>
+                                        <th>Acoes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($listas_presenca_dias)): ?>
+                                        <tr><td colspan="7" class="muted">Sem listas de presenca no periodo.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($listas_presenca_dias as $ld): ?>
+                                            <?php
+                                                $dataLista = (string)($ld['data_presenca'] ?? '');
+                                                $enviadoTodos = (int)($ld['enviado_rh_todos'] ?? 0) === 1;
+                                                $possuiAnexo = (int)($ld['possui_anexo'] ?? 0) === 1;
+                                                $anexoPathLista = (string)($ld['lista_fisica_anexo'] ?? '');
+                                            ?>
+                                            <tr>
+                                                <td><?= !empty($dataLista) ? ('Lista ' . date('d/m/Y', strtotime($dataLista))) : '-' ?></td>
+                                                <td><?= (int)($ld['total_funcionarios'] ?? 0) ?></td>
+                                                <td><?= (int)($ld['total_presentes'] ?? 0) ?></td>
+                                                <td><?= (int)($ld['total_ausentes'] ?? 0) ?></td>
+                                                <td>
+                                                    <?php if ($possuiAnexo && $anexoPathLista !== ''): ?>
+                                                        <a href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-export" style="font-size:10px;background:#0f766e;color:#fff;border-color:#0f766e;">Ver anexo</a>
+                                                    <?php else: ?>
+                                                        <span style="font-size:11px; color:#b91c1c; font-weight:700;">Nao anexada</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?= $enviadoTodos ? 'Sim' : 'Nao' ?></td>
+                                                <td>
+                                                    <a href="?view=presencas&mode=list&aplicar=1&hist_data=<?= urlencode($dataLista) ?>" class="btn-export" style="font-size:10px;background:#334155;color:#fff;border-color:#334155;">Ver historico</a>
+                                                    <?php if ($enviadoTodos): ?>
+                                                        <span style="font-size:11px; color:#64748b; font-weight:700; margin-left:6px;">Bloqueada apos envio</span>
+                                                    <?php else: ?>
+                                                        <span style="font-size:11px; color:#92400e; font-weight:700; margin-left:6px;">Pendente envio</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
                 </div>
-
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Numero</th>
-                            <th>Nome</th>
-                            <th>Cargo</th>
-                            <th>Status</th>
-                            <th>Observacoes</th>
-                            <th>Enviado Em</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (count($assiduidade_lista) === 0): ?>
-                            <tr><td colspan="6" class="muted">Sem presencas enviadas da Oficina para a data selecionada.</td></tr>
-                        <?php else: ?>
-                            <?php foreach ($assiduidade_lista as $a): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars((string)($a['numero'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string)($a['nome'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string)($a['cargo_nome'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string)($a['status_presenca'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string)($a['observacoes'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string)($a['enviado_em'] ?? '-')) ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+                <div id="painel-lista-dia-presencas-rh" style="display:none; position:fixed; inset:0; z-index:1100; background:rgba(15,23,42,0.68); padding:24px; overflow:auto;">
+                    <div style="max-width:1150px; margin:0 auto; background:#fff; border-radius:12px; border:1px solid #dbe3ed; padding:14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+                            <div style="font-size:13px; font-weight:800; color:#334155;">Lista de Presencas - <?= $hist_data_rh !== '' ? htmlspecialchars(date('d/m/Y', strtotime($hist_data_rh))) : '' ?></div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="button" class="btn-export" style="background:#c2410c; color:#fff; border-color:#c2410c;" onclick="baixarListaDiaPresencasRh('pdf')"><i class="fa-solid fa-file-pdf"></i> Baixar PDF</button>
+                                <button type="button" class="btn-export" style="background:#166534; color:#fff; border-color:#166534;" onclick="baixarListaDiaPresencasRh('excel')"><i class="fa-solid fa-file-excel"></i> Baixar Excel</button>
+                                <button type="button" class="btn-export" style="background:#1d4ed8; color:#fff; border-color:#1d4ed8;" onclick="baixarListaDiaPresencasRh('word')"><i class="fa-solid fa-file-word"></i> Baixar Word</button>
+                                <button type="button" class="btn-export" style="background:#334155; color:#fff; border-color:#334155;" onclick="fecharTelaListaDiaPresencasRh()"><i class="fa-solid fa-xmark"></i> Fechar tela</button>
+                            </div>
+                        </div>
+                        <div style="overflow:auto;">
+                            <table class="table" id="rh-presencas-dia-table">
+                                <thead>
+                                    <tr>
+                                        <th>Data</th>
+                                        <th>Funcionario</th>
+                                        <th>Cargo</th>
+                                        <th>Entrada</th>
+                                        <th>Saida</th>
+                                        <th>Estado</th>
+                                        <th>Enviado RH</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($lista_presencas_historico_rh)): ?>
+                                        <tr><td colspan="7" class="muted">Sem registos para esta lista.</td></tr>
+                                    <?php else: ?>
+                                        <?php foreach ($lista_presencas_historico_rh as $prh): ?>
+                                            <tr>
+                                                <td><?= !empty($prh['data_presenca']) ? htmlspecialchars(date('d/m/Y', strtotime((string)$prh['data_presenca']))) : '-' ?></td>
+                                                <td><?= htmlspecialchars((string)($prh['colaborador'] ?? '-')) ?></td>
+                                                <td><?= htmlspecialchars((string)($prh['cargo_nome'] ?? '-')) ?></td>
+                                                <td><?= !empty($prh['hora_entrada']) ? htmlspecialchars(substr((string)$prh['hora_entrada'], 0, 5)) : '-' ?></td>
+                                                <td><?= !empty($prh['hora_saida']) ? htmlspecialchars(substr((string)$prh['hora_saida'], 0, 5)) : '-' ?></td>
+                                                <td><?= htmlspecialchars((string)($prh['status_presenca'] ?? '-')) ?></td>
+                                                <td><?= (int)($prh['enviado_rh'] ?? 0) === 1 ? 'Sim' : 'Nao' ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             <?php else: ?>
                 <p class="muted">Vista em desenvolvimento.</p>
             <?php endif; ?>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            <?php endif; ?>
+            </div>
         </div>
     </div>
 </div>
 
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
 <script>
-(function() {
-    var btnMin = document.getElementById('btn-min-rh');
-    if (!btnMin) return;
-    btnMin.addEventListener('click', function() {
-        var modal = document.getElementById('rh-main-modal');
-        if (!modal) return;
-        modal.classList.toggle('minimized');
-        btnMin.textContent = modal.classList.contains('minimized') ? 'Restaurar' : 'Minimizar';
-    });
-})();
+function abrirTelaListaDiaPresencasRh() {
+    var el = document.getElementById('painel-lista-dia-presencas-rh');
+    if (!el) return;
+    el.style.display = 'block';
+}
+
+function fecharTelaListaDiaPresencasRh() {
+    var el = document.getElementById('painel-lista-dia-presencas-rh');
+    if (el) el.style.display = 'none';
+    try {
+        var url = new URL(window.location.href);
+        url.searchParams.delete('hist_data');
+        window.history.replaceState({}, '', url.toString());
+    } catch (e) {}
+}
 
 function nomeArquivoRh(base, ext) {
     var data = new Date();
@@ -869,6 +915,19 @@ function exportarExcelRh(tabela, base) {
     var link = document.createElement('a');
     link.href = url;
     link.download = nomeArquivoRh(base, 'xls');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function exportarWordRh(tabela, base) {
+    var html = '<html><head><meta charset="UTF-8"></head><body>' + tabela.outerHTML + '</body></html>';
+    var blob = new Blob([html], { type: 'application/msword;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = nomeArquivoRh(base, 'doc');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -939,6 +998,23 @@ function exportarPdfRh(tabela, titulo) {
     janela.print();
 }
 
+function baixarListaDiaPresencasRh(tipo) {
+    var tabela = document.getElementById('rh-presencas-dia-table');
+    if (!tabela) {
+        alert('Tabela da lista diaria nao encontrada.');
+        return;
+    }
+    if (tipo === 'excel') {
+        exportarExcelRh(tabela, 'rh_lista_presencas');
+        return;
+    }
+    if (tipo === 'word') {
+        exportarWordRh(tabela, 'rh_lista_presencas');
+        return;
+    }
+    exportarPdfRh(tabela, 'RH_LISTA_PRESENCAS');
+}
+
 document.querySelectorAll('[data-rh-export]').forEach(function(btn) {
     btn.addEventListener('click', function() {
         var tableId = btn.getAttribute('data-rh-table') || 'rh-colaboradores-table';
@@ -956,4 +1032,16 @@ document.querySelectorAll('[data-rh-export]').forEach(function(btn) {
         }
     });
 });
+
+document.addEventListener('click', function(ev) {
+    var el = document.getElementById('painel-lista-dia-presencas-rh');
+    if (!el || el.style.display !== 'block') return;
+    if (ev.target === el) fecharTelaListaDiaPresencasRh();
+});
+
+<?php if ($view === 'presencas' && $hist_data_rh !== ''): ?>
+document.addEventListener('DOMContentLoaded', function() {
+    abrirTelaListaDiaPresencasRh();
+});
+<?php endif; ?>
 </script>

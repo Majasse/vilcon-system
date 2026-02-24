@@ -50,7 +50,7 @@ function detalheModuloPorParametros($modulo, array $params) {
     if ($modulo === 'Oficina') {
         if ($view === 'pedidos_reparacao') return 'Pedidos de reparacao';
         if ($view === 'ordens_servico') return 'Ordens de servico';
-        if ($view === 'assiduidade') return 'Assiduidade';
+        if ($view === 'presencas' || $view === 'assiduidade') return 'Controle de presencas';
     }
     if ($modulo === 'Armazem') {
         if ($view === 'stock') return 'Stock';

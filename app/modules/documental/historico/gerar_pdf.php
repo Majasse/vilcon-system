@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -66,8 +66,15 @@ $titulo = 'DOCUMENTAL HISTORICO';
         tbody td { border: 1px solid #d1d5db; padding: 8px; font-size: 11px; color: #111111; }
         tbody tr:nth-child(even) td { background: #fff8e1; }
     </style>
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
 </head>
-<body>
+
+<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
     <div class="pdf-wrap">
         <div class="pdf-header">
             <div class="pdf-strip"></div>
@@ -116,5 +123,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
             window.print();
         });
     </script>
+    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
 </body>
 </html>
+

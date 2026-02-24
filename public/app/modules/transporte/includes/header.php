@@ -1,8 +1,13 @@
-<?php
+﻿<?php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once dirname(__DIR__, 3) . '/includes/user_profile_widget.php';
+require_once dirname(__DIR__, 3) . '/core/access_control.php';
+
+if (isset($_SESSION['usuario_perfil'])) {
+    garantirAcessoModuloAtual((string)($_SERVER['SCRIPT_NAME'] ?? ''), (string)$_SESSION['usuario_perfil']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt">
@@ -13,6 +18,7 @@ require_once dirname(__DIR__, 3) . '/includes/user_profile_widget.php';
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/vilcon-bias-theme.css">
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
     <style>
         :root {
             --vilcon-black: #1a1a1a;
@@ -54,3 +60,11 @@ require_once dirname(__DIR__, 3) . '/includes/user_profile_widget.php';
 </head>
 <body>
 <?php renderUserProfileWidget(); ?>
+<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
+
+
