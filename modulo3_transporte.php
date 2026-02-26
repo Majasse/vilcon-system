@@ -1,4 +1,4 @@
-<?php 
+﻿<?php 
 session_start();
 if (!headers_sent()) {
     header('Content-Type: text/html; charset=UTF-8');
@@ -24,7 +24,22 @@ function ensureColumnExists(PDO $pdo, string $table, string $column, string $def
     $stmt = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :column");
     $stmt->execute([':column' => $column]);
     if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
-        $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+        try {
+            $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+        } catch (PDOException $e) {
+            $message = $e->getMessage();
+            $isMissingAfterColumn = str_contains($message, "Unknown column")
+                && str_contains($message, " in '") ;
+            if (!$isMissingAfterColumn || stripos($definition, ' AFTER ') === false) {
+                throw $e;
+            }
+
+            $safeDefinition = preg_replace('/\s+AFTER\s+`[^`]+`/i', '', $definition);
+            if (!is_string($safeDefinition) || trim($safeDefinition) === '') {
+                throw $e;
+            }
+            $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $safeDefinition");
+        }
     }
 }
 
@@ -180,6 +195,7 @@ $pdo->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 ensureColumnExists($pdo, 'transporte_presencas', 'pessoal_id', "int NULL AFTER `data_presenca`");
+ensureColumnExists($pdo, 'transporte_presencas', 'estado', "VARCHAR(40) NOT NULL DEFAULT 'Presente'");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_entrada', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `estado`");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_saida', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `assinou_entrada`");
 ensureColumnExists($pdo, 'transporte_presencas', 'enviado_rh', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `registado_por`");
@@ -474,11 +490,11 @@ function seedStockItensBasicos(PDO $pdo): void {
     $itens = [
         ['STK-DIESEL-BOMBA', 'Diesel - Bomba Vilcon', 'Combustivel', 'L', 0, 1000, 0, 'Bomba Principal'],
         ['STK-GASOLINA', 'Gasolina', 'Combustivel', 'L', 0, 500, 0, 'Bomba Secundaria'],
-        ['STK-OLEO-15W40', 'Óleo Motor 15W40', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
-        ['STK-OLEO-HID', 'Óleo Hidráulico', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
+        ['STK-OLEO-15W40', 'Ã“leo Motor 15W40', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
+        ['STK-OLEO-HID', 'Ã“leo HidrÃ¡ulico', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
         ['STK-LUB-GRAXA', 'Graxa Lubrificante', 'Lubrificante', 'KG', 0, 40, 0, 'Armazem TO'],
-        ['STK-ATF', 'Óleo Transmissão ATF', 'Lubrificante', 'L', 0, 60, 0, 'Armazem TO'],
-        ['STK-FLUIDO-FREIO', 'Fluido de Travão', 'Lubrificante', 'L', 0, 30, 0, 'Armazem TO'],
+        ['STK-ATF', 'Ã“leo TransmissÃ£o ATF', 'Lubrificante', 'L', 0, 60, 0, 'Armazem TO'],
+        ['STK-FLUIDO-FREIO', 'Fluido de TravÃ£o', 'Lubrificante', 'L', 0, 30, 0, 'Armazem TO'],
         ['STK-ADBLUE', 'AdBlue / Ureia', 'Aditivo', 'L', 0, 80, 0, 'Armazem TO']
     ];
 
@@ -518,7 +534,7 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
     $maxSize = 10 * 1024 * 1024; // 10MB
     $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . trim($subPasta, '\\/');
     if(!is_dir($baseDir) && !@mkdir($baseDir, 0777, true)) {
-        return ['ok' => false, 'error' => 'Não foi possível criar diretório de anexos'];
+        return ['ok' => false, 'error' => 'NÃ£o foi possÃ­vel criar diretÃ³rio de anexos'];
     }
 
     $salvos = [];
@@ -530,11 +546,11 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
         $size = (int) ($sizes[$i] ?? 0);
         if($err === UPLOAD_ERR_NO_FILE || $nomeOrig === '') continue;
         if($err !== UPLOAD_ERR_OK) return ['ok' => false, 'error' => 'Falha no upload de anexo'];
-        if($size <= 0 || $size > $maxSize) return ['ok' => false, 'error' => 'Anexo inválido ou acima de 10MB'];
+        if($size <= 0 || $size > $maxSize) return ['ok' => false, 'error' => 'Anexo invÃ¡lido ou acima de 10MB'];
 
         $ext = strtolower((string) pathinfo($nomeOrig, PATHINFO_EXTENSION));
         if(!in_array($ext, $permitidos, true)) {
-            return ['ok' => false, 'error' => 'Formato não permitido. Use PDF/JPG/PNG/WEBP/GIF'];
+            return ['ok' => false, 'error' => 'Formato nÃ£o permitido. Use PDF/JPG/PNG/WEBP/GIF'];
         }
 
         $baseNome = preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) pathinfo($nomeOrig, PATHINFO_FILENAME));
@@ -542,7 +558,7 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
         $nomeFinal = date('Ymd_His') . '_' . $i . '_' . $baseNome . '.' . $ext;
         $destinoAbs = $baseDir . DIRECTORY_SEPARATOR . $nomeFinal;
         if(!@move_uploaded_file($tmp, $destinoAbs)) {
-            return ['ok' => false, 'error' => 'Não foi possível salvar anexo no servidor'];
+            return ['ok' => false, 'error' => 'NÃ£o foi possÃ­vel salvar anexo no servidor'];
         }
         $salvos[] = 'uploads/' . trim($subPasta, '\\/') . '/' . $nomeFinal;
     }
@@ -693,7 +709,7 @@ function registrarMovimentoStock(
     ?string $dataMovimento = null
 ): array {
     if($itemId <= 0 || $quantidade < 0) {
-        return ['ok' => false, 'error' => 'Dados de movimento inválidos'];
+        return ['ok' => false, 'error' => 'Dados de movimento invÃ¡lidos'];
     }
     $tipo = trim($tipoMovimento);
     if(!in_array($tipo, ['Entrada','Saida','Ajuste'], true)) {
@@ -703,7 +719,7 @@ function registrarMovimentoStock(
     $stItem = $pdo->prepare("SELECT stock_atual FROM transporte_stock_itens WHERE id = :id LIMIT 1");
     $stItem->execute([':id' => $itemId]);
     $item = $stItem->fetch(PDO::FETCH_ASSOC);
-    if(!$item) return ['ok' => false, 'error' => 'Item de stock não encontrado'];
+    if(!$item) return ['ok' => false, 'error' => 'Item de stock nÃ£o encontrado'];
 
     $stockAtual = (float) ($item['stock_atual'] ?? 0);
     $novoSaldo = $stockAtual;
@@ -784,13 +800,13 @@ function detectarTipoEquipamentoChecklist(string $nome): string {
         'grader' => 'Niveladora',
         'niveladora' => 'Niveladora',
         'tlb' => 'TLB',
-        'pa carregadora' => 'Pá Carregadora',
-        'wheel loader' => 'Pá Carregadora',
+        'pa carregadora' => 'PÃ¡ Carregadora',
+        'wheel loader' => 'PÃ¡ Carregadora',
         'gru' => 'Grua',
         'tipper truck' => 'Basculante',
         'water bowser' => 'Water Bowser',
-        'camião cavalo' => 'Camião Cavalo',
-        'camiao cavalo' => 'Camião Cavalo',
+        'camiÃ£o cavalo' => 'CamiÃ£o Cavalo',
+        'camiao cavalo' => 'CamiÃ£o Cavalo',
         'generator' => 'Gerador',
         'tractor' => 'Tractor',
         'forklift' => 'Forklift',
@@ -818,17 +834,254 @@ function detectarPeriodicidadeChecklist(string $nome): string {
 
 function itensPadraoChecklist(): array {
     return [
-        'Nível de óleo do motor',
-        'Nível de água/radiador',
-        'Nível de combustível',
+        'Nivel de oleo do motor',
+        'Nivel de agua/radiador',
+        'Nivel de combustivel',
         'Estado de pneus/esteiras',
         'Sistema de travagem',
-        'Luzes e sinalização',
-        'Buzina e alarme de ré',
+        'Luzes e sinalizacao',
+        'Buzina e alarme de re',
         'Extintor e kit de primeiros socorros',
-        'Vazamentos visíveis',
-        'Documentação e limpeza geral'
+        'Vazamentos visiveis',
+        'Documentacao e limpeza geral'
     ];
+}
+
+function itensChecklistPorTemplate(string $codigo, string $nome = ''): array {
+    $codigoNorm = strtoupper(trim($codigo));
+    $nomeNorm = strtolower(trim($nome));
+    if ($codigoNorm === 'VIL.F.QAS.31' || strpos($nomeNorm, 'hand tools') !== false) {
+        return [
+            'There are tools in sufficient numbers to meet the needs of development of the work / Existem ferramentas em numero suficiente para atender as necessidades de desenvolvimento do trabalho',
+            'Appropriate tools are provided only to the development of the work / Ferramentas adequadas sao fornecidas apenas para o desenvolvimento do trabalho',
+            'The tooling does not allow damaged tools being delivered to workers / A ferramentaria nao permite que ferramentas danificadas sejam entregues aos trabalhadores',
+            'Workers have the habit and guidance to inform tooling about damage in tools / Os trabalhadores tem o habito e a orientacao de informar o ferramental sobre os danos ocorridos nas ferramentas',
+            'The existing safety standard does not allow use of inadequate or damaged tooling / A norma de seguranca vigente nao permite a utilizacao de ferramental inadequado ou danificado',
+            'Hammers, finials and other impact tools do not show signs of burrs or chipping / Martelos, remates e outras ferramentas de impacto nao apresentam sinais de rebarbas ou lascas',
+            'Hammers, finials and other impact tools do not show signs of burrs or defects / Martelos, remates e outras ferramentas de impacto nao apresentam sinais de rebarbas ou defeitos',
+            'Tools are transported and stored in appropriate boxes / As ferramentas sao transportadas e armazenadas em caixas apropriadas',
+            'Users of tools are properly advised about techniques for correct use / Os usuarios das ferramentas sao devidamente orientados sobre as tecnicas adequadas para o uso correto',
+            'The tooling provides monthly replacement and/or maintenance of damaged tools / A ferramentaria preve a substituicao mensal e/ou manutencao de ferramentas danificadas',
+            'Management does not allow use of inappropriate or damaged tools / A gerencia nao permite o uso de ferramentas inadequadas ou danificadas',
+            'Every tool used in electrical services is properly insulated / Todas as ferramentas utilizadas nos servicos de eletricidade sao devidamente isoladas',
+            'The company maintains regular training for proper use of tools / A empresa mantem cursos regulares de orientacao para o uso adequado das ferramentas',
+            'Power tools controlled by tooling are reviewed and inspected before and after use / Ferramentas eletricas controladas por ferramentaria sao revisadas e inspecionadas antes e depois do uso',
+            'Electrical extensions are reviewed so there are no exposed wires or ends without plugs / As extensoes eletricas sao revisadas para que nao haja fios descobertos ou pontas sem plugues'
+        ];
+    }
+    if ($codigoNorm === 'VIL.F.QAS.34' || strpos($nomeNorm, 'hammer drill') !== false || strpos($nomeNorm, 'perfuracao de percurso') !== false) {
+        return [
+            '1. O cabo eletrico em bom estado e seguro de usar? / Is the electrical cord in good condition and safe to use?',
+            '2. Bloqueio da broca em bom estado? / Drill lock in good condition?',
+            '3. O operador sempre usa EPI indicado para a atividade? / The operator always uses PPE indicated for the activity?',
+            '4. O operador e treinado para operar o equipamento? / Is the operator trained to operate the equipment?',
+            '5. O equipamento esta em boas condicoes, livre de pega quebrada e partes partidas? / Equipment is in good condition, free from broken handles and broken parts?',
+            '6. Broca deve estar em boas condicoes? / Drill must be in good condition?',
+            '7. Os cabos eletricos estao livres de costuras e fios expostos? / Are electrical cables free from seams and exposed wires?',
+            '8. O equipamento esta livre de vibracao e ruido incomum quando em operacao? / Is the equipment free from vibration and unusual noise when in operation?',
+            '9. Fire extinguisher n. / Extintor de incendio n.',
+            '10. Foi feita a pre-avaliacao de risco? / Has a pre-risk assessment been carried out?',
+            '11. A maquina tem um interruptor de controlo individual? / Does the machine have an individual control switch?',
+            '12. Nenhum material inflamavel por perto? / No flammable materials nearby?',
+            '13. Interruptores em ordem? / Switches in order?',
+            '14. Pistola em estado de conservacao e segura? / Pistol in good condition and safe?',
+            '15. A limpeza e mantida em torno do berbequim? / Is cleanliness maintained around the drill?',
+            '16. Oculos ou escudos faciais sao sempre usados? / Are goggles or face shields always worn when operating?',
+            '17. Pegas em boas condicoes? / Handles in good condition?'
+        ];
+    }
+    if ($codigoNorm === 'VIL.F.QAS.35' || strpos($nomeNorm, 'bulldozer') !== false) {
+        return [
+            '1 OPERATOR CERTIFICATION / CERTIFICACAO DE OPERADOR',
+            '1.1 Operator Certificate license valid / Licenca de Operador Valido',
+            '1.2 Operator Fit to Work / Operador apto para trabalhar',
+            '1.3 Operator Competent / Operador competente',
+            '1.4 Operating instruction manual available / Instrucoes de Operador na Maquina',
+            '2 ENGINE COMPARTMENT / COMPARTIMENTOS DO MOTOR',
+            '2.1 Correct engine oil level / Nivel de oleo do motor correto',
+            '2.2 Correct hydraulic oil level / Nivel de oleo hidraulico correto',
+            '2.3 Transmission oil level / Nivel de oleo da transmissao',
+            '2.4 Radiator in order and no signs of leaks / Radiador em bom estado e sem sinais de vazamento',
+            '2.5 No signs of fuel or oil leaks / Sem grandes vazamentos (combustivel, agua, oleo)',
+            '2.6 Brakes in good working conditions / Freios em boas condicoes de funcionamento',
+            '2.7 Hydraulic cylinders in good working condition / Cilindros hidraulicos em boas condicoes de funcionamento',
+            '2.8 V-belts in good condition and correct tension / Correias em V em bom estado e tensao correta',
+            '2.9 Lubrification system in working condition / Sistema de lubrificacao em ordem de funcionamento',
+            '3 LIGHTS / LUZES',
+            '3.1 All lights in good working condition (headlights, rotating lights, indicators) / Todas as luzes em ordem de funcionamento (farois, rotativos, indicadores)',
+            '3.2 Rotating light available and working / Pirilampo',
+            '3.4 Reverse Alarm working / Alarme de retaguarda',
+            '3.5 Cabin light working / Luzes da cabina',
+            '4 INSIDE CAB / INTERIOR',
+            '4.1 Controls, gauges, switch in working order / Controles, medidores, interruptores em ordem de funcionamento',
+            '4.2 Correct fire extinguisher (meter in green area, signed) / Extintor de incendio correto (medidor em area verde, assinado)',
+            '4.3 Seat belts installed and in good working condition / Cintos de seguranca instalados e corretos',
+            '4.5 Without serious damage to the cabin / Nenhum dano grave na cabine',
+            '4.6 Air conditioners in working order / Ar condicionados em ordem e em funcionamento',
+            '4.7 Clean cabin / Cabina limpa',
+            '4.8 Functional clean doors and windows / Portas e janelas funcionais e limpas',
+            '5 OPERATIONAL ACCESSORIES / ACESSORIOS OPERACIONAIS',
+            '5.1 Access stairs in good condition / Escadas de acesso em bom estado',
+            '5.2 Stairs, steps and railings in good condition / Escadas, degraus e trilhos em bom estado',
+            '5.3 Correct tracks tension / Faixas corretas',
+            '5.4 Undercarriage in good condition / Material rodante em bom estado',
+            '5.5 Blade in good condition / Lamina em bom estado',
+            '5.6 Blades cutting edges in good condition / Bordas de corte em bom estado',
+            '5.7 No damage to the machine / Nenhum dano na maquina',
+            '5.8 Wipers in good operation condition / Limpa brisas em boas condicoes'
+        ];
+    }
+    if ($codigoNorm === 'VIL.F.QAS.41' || strpos($nomeNorm, 'basculante') !== false || strpos($nomeNorm, 'tipper truck') !== false) {
+        return [
+            '1.1 Driver License Valid / Licenca de Operador Valido',
+            '1.2 Driver Fit to Work / Motorista apto para trabalhar',
+            '1.3 Driver Competent / Motorista competente',
+            '1.4 Operating Instruction Manual on machine / Manual de instrucoes de operador na maquina',
+            '2.1 Vehicle clean, body and paintwork undamaged / Veiculo limpo, corpo e pintura nao danificados',
+            '2.2 Windows and mirrors clean and in working order / Vidros e espelhos limpos e em boas condicoes',
+            '2.3 Tyres, rims, wheel nuts, spare tyre and jack in place / Pneus, borda, parafusos, suplente e macaco no lugar',
+            '2.4 Tow hitch and trailer electrical connection / Reboque e conexao eletrica do atrelado',
+            '2.5 Reflectors sides and rear, chevrons and reflective tape / Reflectores dos lados e atras, chevrons e fita reflectora',
+            '2.6 Tipping mechanism in perfect condition / Mecanismo de bascula em perfeitas condicoes',
+            '3.1 Engine clean / Motor limpo',
+            '3.2 Radiator in good condition / Radiador em boas condicoes',
+            '3.3 Battery terminals clean / Bateria com polos limpos',
+            '3.4 Fan and other drive belts tensioned correctly / Correias tensionadas correctamente',
+            '3.5 Tilt cab securing mechanism operating correctly / Mecanismo da cabine em perfeitas condicoes',
+            '4.1 Safety belt in good condition / Cinto de seguranca em boas condicoes',
+            '4.2 Safety lock-out device / Tranqueta de seguranca',
+            '4.3 Reverse warning alarm working / Alarme de retaguarda funcional',
+            '4.4 Hand rails / Corrimaos',
+            '4.5 Footing / Pisa pe',
+            '4.6 Safe machine access / Acesso a maquina em seguranca',
+            '4.7 Signage pinch-point / Sinal de ponto de aperto',
+            '4.8 Signage seat belt must be worn / Sinal de uso obrigatorio de cinto',
+            '5.1 Fuel tank in good condition / Tanque de combustivel em boas condicoes',
+            '5.2 Fuel cap available on tank / Tampa do combustivel disponivel',
+            '5.3 Windshield wiper water level / Nivel de agua do limpa para-brisa',
+            '5.4 Fuel level correct / Nivel do combustivel correcto',
+            '5.5 Engine oil level / Nivel do oleo do motor',
+            '5.6 Hydraulic fluid level / Nivel do fluido hidraulico',
+            '5.7 Radiator water level / Nivel de agua no radiador',
+            '5.8 Transmission oil level / Nivel do oleo de transmissao',
+            '5.9 No oil leaks / Sem fugas de oleo',
+            '5.10 No fuel leaks / Sem fugas de combustivel',
+            '5.11 No hydraulic fluid leaks / Sem fugas de fluido hidraulico',
+            '5.12 No transmission oil leak / Sem fuga do oleo de transmissao',
+            '6.1 Indicators front, rear and hazards / Indicadores frente, tras e perigo',
+            '6.2 Headlights main beam, indicators and park lights / Farois maximo, minimo e luzes de parqueamento',
+            '6.3 Tail lights brake and reverse lights / Luzes de travao e de retaguarda',
+            '6.4 Rotating light working properly / Pirilampo funcional'
+        ];
+    }
+    return itensPadraoChecklist();
+}
+
+function sincronizarItensTemplate(PDO $pdo, int $templateId, array $itensEsperados): void {
+    if ($templateId <= 0 || count($itensEsperados) === 0) return;
+    $selItens = $pdo->prepare("
+        SELECT id, ordem
+        FROM transporte_checklist_itens
+        WHERE template_id = :template_id
+        ORDER BY ordem ASC, id ASC
+    ");
+    $selItens->execute([':template_id' => $templateId]);
+    $atuais = $selItens->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $porOrdem = [];
+    foreach ($atuais as $row) {
+        $ord = (int) ($row['ordem'] ?? 0);
+        if ($ord > 0 && !isset($porOrdem[$ord])) {
+            $porOrdem[$ord] = (int) ($row['id'] ?? 0);
+        }
+    }
+    $updItem = $pdo->prepare("
+        UPDATE transporte_checklist_itens
+        SET descricao = :descricao, ativo = 1
+        WHERE id = :id
+    ");
+    $insItem = $pdo->prepare("
+        INSERT INTO transporte_checklist_itens (template_id, ordem, descricao, ativo)
+        VALUES (:template_id, :ordem, :descricao, 1)
+    ");
+    $desativarExtras = $pdo->prepare("
+        UPDATE transporte_checklist_itens
+        SET ativo = 0
+        WHERE template_id = :template_id AND ordem > :max_ordem
+    ");
+    $ord = 1;
+    foreach ($itensEsperados as $descricao) {
+        if (isset($porOrdem[$ord]) && $porOrdem[$ord] > 0) {
+            $updItem->execute([
+                ':descricao' => $descricao,
+                ':id' => $porOrdem[$ord]
+            ]);
+        } else {
+            $insItem->execute([
+                ':template_id' => $templateId,
+                ':ordem' => $ord,
+                ':descricao' => $descricao
+            ]);
+        }
+        $ord++;
+    }
+    $desativarExtras->execute([
+        ':template_id' => $templateId,
+        ':max_ordem' => count($itensEsperados)
+    ]);
+}
+
+function sincronizarChecklistHandTools(PDO $pdo): void {
+    $stmt = $pdo->query("
+        SELECT id, codigo, nome
+        FROM transporte_checklist_templates
+        WHERE ativo = 1
+          AND (UPPER(codigo) = 'VIL.F.QAS.31' OR LOWER(nome) LIKE '%hand tools%')
+        ORDER BY id DESC
+    ");
+    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach ($templates as $tpl) {
+        $templateId = (int) ($tpl['id'] ?? 0);
+        if ($templateId <= 0) continue;
+        $codigo = (string) ($tpl['codigo'] ?? '');
+        $nome = (string) ($tpl['nome'] ?? '');
+        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
+    }
+}
+
+function sincronizarChecklistBasculante(PDO $pdo): void {
+    $stmt = $pdo->query("
+        SELECT id, codigo, nome
+        FROM transporte_checklist_templates
+        WHERE ativo = 1
+          AND (UPPER(codigo) = 'VIL.F.QAS.41' OR LOWER(nome) LIKE '%basculante%' OR LOWER(nome) LIKE '%tipper truck%')
+        ORDER BY id DESC
+    ");
+    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach ($templates as $tpl) {
+        $templateId = (int) ($tpl['id'] ?? 0);
+        if ($templateId <= 0) continue;
+        $codigo = (string) ($tpl['codigo'] ?? '');
+        $nome = (string) ($tpl['nome'] ?? '');
+        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
+    }
+}
+
+function sincronizarChecklistBulldozer(PDO $pdo): void {
+    $stmt = $pdo->query("
+        SELECT id, codigo, nome
+        FROM transporte_checklist_templates
+        WHERE ativo = 1
+          AND (UPPER(codigo) = 'VIL.F.QAS.35' OR LOWER(nome) LIKE '%bulldozer%')
+        ORDER BY id DESC
+    ");
+    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach ($templates as $tpl) {
+        $templateId = (int) ($tpl['id'] ?? 0);
+        if ($templateId <= 0) continue;
+        $codigo = (string) ($tpl['codigo'] ?? '');
+        $nome = (string) ($tpl['nome'] ?? '');
+        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
+    }
 }
 
 function bootstrapChecklistTemplates(PDO $pdo, string $dir): void {
@@ -882,7 +1135,7 @@ function bootstrapChecklistTemplates(PDO $pdo, string $dir): void {
 
         $templateId = (int) $pdo->lastInsertId();
         $ord = 1;
-        foreach(itensPadraoChecklist() as $it) {
+        foreach(itensChecklistPorTemplate($codigo, $nomeSemExt) as $it) {
             $insertItem->execute([
                 ':template_id' => $templateId,
                 ':ordem' => $ord++,
@@ -931,11 +1184,11 @@ function seedChecklistBasicoSeVazio(PDO $pdo): void {
         ['VIL.F.QAS.36', 'Cilindro Roller Compactar Checklist', 'Cilindro', 'Diario'],
         ['VIL.F.QAS.37', 'Niveladora Grader Weekly Checklist', 'Niveladora', 'Semanal'],
         ['VIL.F.QAS.38', 'TLB Daily Checklist', 'TLB', 'Diario'],
-        ['VIL.F.QAS.39', 'Pá Carregadora Weekly Checklist', 'Pá Carregadora', 'Semanal'],
+        ['VIL.F.QAS.39', 'PÃ¡ Carregadora Weekly Checklist', 'PÃ¡ Carregadora', 'Semanal'],
         ['VIL.F.QAS.40', 'Grua Truck Mounted Crane Checklist', 'Grua', 'Semanal'],
         ['VIL.F.QAS.41', 'Basculante Tipper Truck Checklist', 'Basculante', 'Diario'],
         ['VIL.F.QAS.42', 'Water Bowser Checklist', 'Water Bowser', 'Semanal'],
-        ['VIL.F.QAS.43', 'Camião Cavalo Checklist', 'Camião Cavalo', 'Semanal'],
+        ['VIL.F.QAS.43', 'CamiÃ£o Cavalo Checklist', 'CamiÃ£o Cavalo', 'Semanal'],
         ['VIL.F.QAS.44', 'Escavadora Excavator Checklist', 'Escavadora', 'Diario'],
         ['VIL.F.QAS.51', 'Generator Checklist', 'Gerador', 'Semanal'],
         ['VIL.F.QAS.53', 'Forklift Checklist', 'Forklift', 'Semanal'],
@@ -967,7 +1220,7 @@ function seedChecklistBasicoSeVazio(PDO $pdo): void {
         ]);
         $tplId = (int) $pdo->lastInsertId();
         $ord = 1;
-        foreach(itensPadraoChecklist() as $it) {
+        foreach(itensChecklistPorTemplate($codigo, $nome) as $it) {
             $insItem->execute([
                 ':template_id' => $tplId,
                 ':ordem' => $ord++,
@@ -981,6 +1234,9 @@ $checklistDir = 'g:\\Outros computadores\\My Computer\\VILCON Documents\\9. TO\\
 bootstrapChecklistTemplates($pdo, $checklistDir);
 seedChecklistBasicoSeVazio($pdo);
 deduplicarChecklistTemplates($pdo);
+sincronizarChecklistHandTools($pdo);
+sincronizarChecklistBasculante($pdo);
+sincronizarChecklistBulldozer($pdo);
 seedStockItensBasicos($pdo);
 
 $googleMapsApiKey = getenv('GOOGLE_MAPS_API_KEY') ?: ($_SERVER['GOOGLE_MAPS_API_KEY'] ?? '');
@@ -1006,7 +1262,7 @@ function janelaTrabalhoDia(DateTimeImmutable $dia): ?array {
     if($n === 6) {
         return [
             [new DateTimeImmutable($data . ' 07:00:00'), new DateTimeImmutable($data . ' 12:00:00')]
-        ]; // Sábado sem turno da tarde
+        ]; // SÃ¡bado sem turno da tarde
     }
     return [
         [new DateTimeImmutable($data . ' 07:00:00'), new DateTimeImmutable($data . ' 12:00:00')],
@@ -1062,9 +1318,9 @@ function calcularUrgenciaReservaPorPartida(?string $dataPartida): array {
 function recomendacaoGestorPorUrgencia(?string $urgencia): string {
     $u = strtolower(trim((string) $urgencia));
     if($u === 'urgente') return 'Atribuir viatura imediatamente';
-    if($u === 'alta') return 'Priorizar atribuição hoje';
+    if($u === 'alta') return 'Priorizar atribuiÃ§Ã£o hoje';
     if($u === 'media') return 'Programar em janela do dia';
-    return 'Pode planear com antecedência';
+    return 'Pode planear com antecedÃªncia';
 }
 
 function usuarioPodeGerirReservas(): bool {
@@ -1305,8 +1561,8 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
         }
         if($rowDoc) {
             $texto = "Vilcon Operations - Documento\n";
-            $texto .= "Tipo: " . ($tipoDoc === 'req' ? 'Requisição Externa' : 'Evento Operacional') . "\n";
-            $texto .= "Código: " . (string) ($rowDoc['codigo'] ?? ('DOC-' . $idDoc)) . "\n";
+            $texto .= "Tipo: " . ($tipoDoc === 'req' ? 'RequisiÃ§Ã£o Externa' : 'Evento Operacional') . "\n";
+            $texto .= "CÃ³digo: " . (string) ($rowDoc['codigo'] ?? ('DOC-' . $idDoc)) . "\n";
             $texto .= "Data: " . (string) (($rowDoc['data_requisicao'] ?? $rowDoc['data_evento'] ?? $rowDoc['criado_em'] ?? '')) . "\n";
             if($tipoDoc === 'req') {
                 $texto .= "Item: " . (string) (($rowDoc['item_nome'] ?? '-') . " | " . ($rowDoc['quantidade_solicitada'] ?? '0') . " " . ($rowDoc['unidade'] ?? '')) . "\n";
@@ -1316,8 +1572,8 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
             } else {
                 $texto .= "Ativo: " . (string) (($rowDoc['ativo_descricao'] ?? '-') . (!empty($rowDoc['ativo_matricula']) ? ' | ' . $rowDoc['ativo_matricula'] : '')) . "\n";
                 $texto .= "Tipo Evento: " . (string) ($rowDoc['tipo_evento'] ?? '-') . "\n";
-                $texto .= "Descrição: " . (string) ($rowDoc['descricao_falha'] ?? '-') . "\n";
-                $texto .= "Ação Tomada: " . (string) ($rowDoc['acao_tomada'] ?? '-') . "\n";
+                $texto .= "DescriÃ§Ã£o: " . (string) ($rowDoc['descricao_falha'] ?? '-') . "\n";
+                $texto .= "AÃ§Ã£o Tomada: " . (string) ($rowDoc['acao_tomada'] ?? '-') . "\n";
                 $texto .= "Custo Estimado: " . (string) ($rowDoc['custo_estimado'] ?? '0') . "\n";
             }
 
@@ -1540,7 +1796,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $horasAntecedencia = isset($calcUrg['horas_antecedencia']) ? (float) $calcUrg['horas_antecedencia'] : null;
 
         if($departamento === '' || $destino === '' || $dataPartida === '' || $atividade === '') {
-            $erro_form = 'Departamento, destino, data/hora de partida e atividade são obrigatórios.';
+            $erro_form = 'Departamento, destino, data/hora de partida e atividade sÃ£o obrigatÃ³rios.';
         } else {
             $nextResStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_reservas");
             $nextResId = (int) $nextResStmt->fetchColumn();
@@ -1591,9 +1847,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $reserva = $stRes->fetch(PDO::FETCH_ASSOC) ?: null;
 
                 if(!$reserva) {
-                    $erro_form = 'Reserva não encontrada.';
+                    $erro_form = 'Reserva nÃ£o encontrada.';
                 } elseif(!empty($reserva['ordem_servico_id'])) {
-                    $erro_form = 'Esta reserva já foi convertida em OS.';
+                    $erro_form = 'Esta reserva jÃ¡ foi convertida em OS.';
                 } else {
                     $pdo->beginTransaction();
                     try {
@@ -1690,7 +1946,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $guiaId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
 
         if($guiaId <= 0) {
-            $erro_form = "Guia inválida para abastecimento.";
+            $erro_form = "Guia invÃ¡lida para abastecimento.";
         } else {
             $guiaStmt = $pdo->prepare("SELECT km_saida, consumo_l_100km, tipo_equipamento, projeto, viatura_id, condutor, quantidade_inicial_l FROM transporte_guias WHERE id = :id LIMIT 1");
             $guiaStmt->execute([':id' => $guiaId]);
@@ -1797,7 +2053,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Bomba Principal',
                         'OS-' . str_pad((string) $guiaId, 4, '0', STR_PAD_LEFT),
                         $_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? null),
-                        'Baixa automática por abastecimento da OS',
+                        'Baixa automÃ¡tica por abastecimento da OS',
                         'Abastecimento OS',
                         date('Y-m-d')
                     );
@@ -1826,7 +2082,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':km_horimetro' => $kmMomento,
                     ':litros' => $litrosParaBaixa,
                     ':responsavel' => $_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? null),
-                    ':observacoes' => 'Gerado automaticamente a partir da Ordem de Serviço'
+                    ':observacoes' => 'Gerado automaticamente a partir da Ordem de ServiÃ§o'
                 ]);
             }
             $pdo->commit();
@@ -1951,24 +2207,116 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
-                $erro_form = 'Falha ao enviar pedido de reparação para Oficina: ' . $e->getMessage();
+                $erro_form = 'Falha ao enviar pedido de reparaÃ§Ã£o para Oficina: ' . $e->getMessage();
             }
         }
     }
 
     if(isset($_POST['salvar_checklist'])) {
         $templateId = isset($_POST['template_id']) ? (int) $_POST['template_id'] : 0;
+        $codigoTemplate = strtoupper(trim((string) ($_POST['codigo_template_chk'] ?? '')));
         $viaturaId = trim((string) ($_POST['viatura_id_chk'] ?? ''));
         $tipoEquip = trim((string) ($_POST['tipo_equipamento_chk'] ?? ''));
         $projetoChk = trim((string) ($_POST['projeto_chk'] ?? ''));
         $condutor = trim((string) ($_POST['condutor_chk'] ?? ''));
+        $motoristaOperador = trim((string) ($_POST['motorista_operador_chk'] ?? ''));
         $inspector = trim((string) ($_POST['inspector_chk'] ?? ''));
         $dataInspecao = trim((string) ($_POST['data_inspecao_chk'] ?? date('Y-m-d')));
         $observacoes = trim((string) ($_POST['observacoes_chk'] ?? ''));
+        $ordemRef = trim((string) ($_POST['ordem_chk'] ?? ''));
+        $dataOrdem = trim((string) ($_POST['data_ordem_chk'] ?? ''));
+        $servicoDesc = trim((string) ($_POST['servico_chk'] ?? ''));
+        $dataPartida = trim((string) ($_POST['data_partida_chk'] ?? ''));
+        $dataRegresso = trim((string) ($_POST['data_regresso_chk'] ?? ''));
+        $clienteChk = trim((string) ($_POST['cliente_chk'] ?? ''));
+        $validadeChk = trim((string) ($_POST['validade_chk'] ?? ''));
+        $contractorChk = trim((string) ($_POST['contractor_chk'] ?? ''));
+        $subcontractorChk = trim((string) ($_POST['subcontractor_chk'] ?? ''));
+        $locationChk = trim((string) ($_POST['location_chk'] ?? ''));
+        $supervisorChk = trim((string) ($_POST['supervisor_chk'] ?? ''));
+        $frontServiceChk = trim((string) ($_POST['front_service_chk'] ?? ''));
+        $serialNumberChk = trim((string) ($_POST['serial_number_chk'] ?? ''));
+        $frequenciaInspecaoChk = trim((string) ($_POST['frequencia_inspecao_chk'] ?? ''));
+        $docDateChk = trim((string) ($_POST['doc_date_chk'] ?? ''));
+        $docTimeChk = trim((string) ($_POST['doc_time_chk'] ?? ''));
+        $hseOfficerNameChk = trim((string) ($_POST['hse_officer_name_chk'] ?? ''));
+        $hseOfficerDateChk = trim((string) ($_POST['hse_officer_date_chk'] ?? ''));
+        $faultsFoundChk = trim((string) ($_POST['faults_found_chk'] ?? ''));
+        $faultsDateTimeChk = trim((string) ($_POST['faults_datetime_chk'] ?? ''));
+        $faultsWorkshopChk = trim((string) ($_POST['faults_reported_workshop_chk'] ?? ''));
+        $faultsReportFromChk = trim((string) ($_POST['faults_report_from_chk'] ?? ''));
+        $faultsSignatureChk = trim((string) ($_POST['faults_signature_chk'] ?? ''));
+        $operatorSignatureChk = trim((string) ($_POST['operator_name_signature_chk'] ?? ''));
+        $csSignatureChk = trim((string) ($_POST['cs_name_signature_chk'] ?? ''));
+        $sheSignatureChk = trim((string) ($_POST['she_name_signature_chk'] ?? ''));
+        $registoDateChk = trim((string) ($_POST['registo_date_chk'] ?? ''));
         $respostas = isset($_POST['resultado_item']) && is_array($_POST['resultado_item']) ? $_POST['resultado_item'] : [];
+        $respostasSemana = isset($_POST['resultado_semana']) && is_array($_POST['resultado_semana']) ? $_POST['resultado_semana'] : [];
+
+        if(in_array($codigoTemplate, ['VIL.F.QAS.34','VIL.F.QAS.35','VIL.F.QAS.41'], true) && count($respostasSemana) > 0) {
+            $respostas = [];
+            foreach($respostasSemana as $itemIdRaw => $diasSemana) {
+                $itemIdInt = (int) $itemIdRaw;
+                if($itemIdInt <= 0 || !is_array($diasSemana)) continue;
+                $temNo = false;
+                $temYes = false;
+                foreach($diasSemana as $valorDia) {
+                    $v = strtoupper(trim((string) $valorDia));
+                    if($v === 'N') {
+                        $temNo = true;
+                        break;
+                    }
+                    if($v === 'Y') $temYes = true;
+                }
+                if($temNo) $respostas[$itemIdInt] = 'nok';
+                elseif($temYes) $respostas[$itemIdInt] = 'ok';
+                else $respostas[$itemIdInt] = 'na';
+            }
+        }
+
+        if($condutor === '' && $motoristaOperador !== '') {
+            $condutor = $motoristaOperador;
+        }
+        if($condutor === '') {
+            $condutor = 'Nao informado';
+        }
+
+        $cabecalhoExtra = [];
+        if($ordemRef !== '') $cabecalhoExtra[] = 'Ordem: ' . $ordemRef;
+        if($dataOrdem !== '') $cabecalhoExtra[] = 'Data Ordem: ' . $dataOrdem;
+        if($servicoDesc !== '') $cabecalhoExtra[] = 'Servico: ' . $servicoDesc;
+        if($motoristaOperador !== '') $cabecalhoExtra[] = 'Motorista/Operador: ' . $motoristaOperador;
+        if($dataPartida !== '') $cabecalhoExtra[] = 'Data Partida: ' . $dataPartida;
+        if($dataRegresso !== '') $cabecalhoExtra[] = 'Data Regresso: ' . $dataRegresso;
+        if($clienteChk !== '') $cabecalhoExtra[] = 'Cliente: ' . $clienteChk;
+        if($validadeChk !== '') $cabecalhoExtra[] = 'Validade: ' . $validadeChk;
+        if($contractorChk !== '') $cabecalhoExtra[] = 'Contractor: ' . $contractorChk;
+        if($subcontractorChk !== '') $cabecalhoExtra[] = 'Subcontrator: ' . $subcontractorChk;
+        if($locationChk !== '') $cabecalhoExtra[] = 'Location: ' . $locationChk;
+        if($supervisorChk !== '') $cabecalhoExtra[] = 'Supervisor Name: ' . $supervisorChk;
+        if($frontServiceChk !== '') $cabecalhoExtra[] = 'Front of Service: ' . $frontServiceChk;
+        if($serialNumberChk !== '') $cabecalhoExtra[] = 'Serial Number: ' . $serialNumberChk;
+        if($frequenciaInspecaoChk !== '') $cabecalhoExtra[] = 'Frequency of Inspection: ' . $frequenciaInspecaoChk;
+        if($docDateChk !== '') $cabecalhoExtra[] = 'Date/Data: ' . $docDateChk;
+        if($docTimeChk !== '') $cabecalhoExtra[] = 'Time/Hora: ' . $docTimeChk;
+        if($hseOfficerNameChk !== '') $cabecalhoExtra[] = 'HSE Officer Name and Signature: ' . $hseOfficerNameChk;
+        if($hseOfficerDateChk !== '') $cabecalhoExtra[] = 'HSE Officer Date: ' . $hseOfficerDateChk;
+        if($faultsFoundChk !== '') $cabecalhoExtra[] = 'Faults Found: ' . $faultsFoundChk;
+        if($faultsDateTimeChk !== '') $cabecalhoExtra[] = 'Faults Date/Time: ' . $faultsDateTimeChk;
+        if($faultsWorkshopChk !== '') $cabecalhoExtra[] = 'Date/Time reported to workshop: ' . $faultsWorkshopChk;
+        if($faultsReportFromChk !== '') $cabecalhoExtra[] = 'Report From: ' . $faultsReportFromChk;
+        if($faultsSignatureChk !== '') $cabecalhoExtra[] = 'Signature: ' . $faultsSignatureChk;
+        if($operatorSignatureChk !== '') $cabecalhoExtra[] = 'Operator Name and Signature: ' . $operatorSignatureChk;
+        if($csSignatureChk !== '') $cabecalhoExtra[] = 'Construction Supervisor (CS) Name and Signature: ' . $csSignatureChk;
+        if($sheSignatureChk !== '') $cabecalhoExtra[] = 'SHE Name and Signature: ' . $sheSignatureChk;
+        if($registoDateChk !== '') $cabecalhoExtra[] = 'Date: ' . $registoDateChk;
+        if(count($cabecalhoExtra) > 0) {
+            $bloco = "[CABECALHO CHECKLIST]\n" . implode("\n", $cabecalhoExtra);
+            $observacoes = $observacoes !== '' ? ($bloco . "\n\n" . $observacoes) : $bloco;
+        }
 
         if($templateId <= 0) {
-            $erro_form = 'Template de checklist inválido.';
+            $erro_form = 'Template de checklist invÃ¡lido.';
         } else {
             $nextChkStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_checklist_registos");
             $nextChkId = (int) $nextChkStmt->fetchColumn();
@@ -2017,6 +2365,18 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $obsItem = '';
                 if(isset($_POST['observacao_item'][$itemId]) && is_string($_POST['observacao_item'][$itemId])) {
                     $obsItem = trim($_POST['observacao_item'][$itemId]);
+                }
+                if($codigoTemplate === 'VIL.F.QAS.34' && isset($respostasSemana[$itemId]) && is_array($respostasSemana[$itemId])) {
+                    $dias = $respostasSemana[$itemId];
+                    $ordemDias = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+                    $partes = [];
+                    foreach($ordemDias as $d) {
+                        $vv = strtoupper(trim((string) ($dias[$d] ?? 'NA')));
+                        if(!in_array($vv, ['Y','N','NA'], true)) $vv = 'NA';
+                        $partes[] = strtoupper(substr($d,0,3)) . ':' . $vv;
+                    }
+                    $obsSemana = '[SEMANA] ' . implode(' | ', $partes);
+                    $obsItem = $obsItem !== '' ? ($obsItem . ' ' . $obsSemana) : $obsSemana;
                 }
                 $insResp->execute([
                     ':registo_id' => $registoId,
@@ -2136,12 +2496,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $local = trim((string) ($_POST['local_item_stock'] ?? ''));
 
         if($codigo === '' || $nome === '') {
-            $erro_form = 'Código e nome do item de stock são obrigatórios.';
+            $erro_form = 'CÃ³digo e nome do item de stock sÃ£o obrigatÃ³rios.';
         } else {
             $chkCod = $pdo->prepare("SELECT id FROM transporte_stock_itens WHERE codigo = :codigo LIMIT 1");
             $chkCod->execute([':codigo' => $codigo]);
             if($chkCod->fetch(PDO::FETCH_ASSOC)) {
-                $erro_form = 'Já existe um item de stock com este código.';
+                $erro_form = 'JÃ¡ existe um item de stock com este cÃ³digo.';
             } else {
                 $insItemStock = $pdo->prepare("
                     INSERT INTO transporte_stock_itens
@@ -2207,14 +2567,14 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $finalidade = 'Projeto';
         }
         if($tipoMov === 'Saida' && $finalidade === 'Projeto' && $projeto === '') {
-            $erro_form = 'Informe o projeto para saída destinada a projeto.';
+            $erro_form = 'Informe o projeto para saÃ­da destinada a projeto.';
         }
         if($tipoMov === 'Saida' && $finalidade === 'Venda' && $clienteVenda === '') {
-            $erro_form = 'Informe o cliente/comprador para saída por venda.';
+            $erro_form = 'Informe o cliente/comprador para saÃ­da por venda.';
         }
 
         if($itemId <= 0 || $qtd <= 0) {
-            $erro_form = 'Selecione o item e informe uma quantidade válida.';
+            $erro_form = 'Selecione o item e informe uma quantidade vÃ¡lida.';
         } elseif($erro_form === '') {
             registrarMovimentoStock(
                 $pdo,
@@ -2268,7 +2628,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro_form = 'Informe a quantidade solicitada.';
         }
         if($precoUnitarioReq < 0) {
-            $erro_form = 'Preço unitário inválido.';
+            $erro_form = 'PreÃ§o unitÃ¡rio invÃ¡lido.';
         }
         if(!in_array($prioridadeReq, ['Baixa','Media','Alta','Urgente'], true)) {
             $prioridadeReq = 'Media';
@@ -2306,7 +2666,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         if($erro_form === '') {
             $anexosReq = processarAnexosUpload('anexos_req', 'requisicoes');
             if(!$anexosReq['ok']) {
-                $erro_form = (string) ($anexosReq['error'] ?? 'Falha ao enviar anexos da requisição');
+                $erro_form = (string) ($anexosReq['error'] ?? 'Falha ao enviar anexos da requisiÃ§Ã£o');
             }
         }
 
@@ -2379,7 +2739,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusReq = trim((string) ($_POST['status_req'] ?? 'Pendente'));
 
         if($reqId <= 0) {
-            $erro_form = 'Requisição inválida para atualização.';
+            $erro_form = 'RequisiÃ§Ã£o invÃ¡lida para atualizaÃ§Ã£o.';
         }
         if($itemNomeReq === '') {
             $erro_form = 'Informe o item para requisitar.';
@@ -2388,7 +2748,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro_form = 'Informe a quantidade solicitada.';
         }
         if($precoUnitarioReq < 0) {
-            $erro_form = 'Preço unitário inválido.';
+            $erro_form = 'PreÃ§o unitÃ¡rio invÃ¡lido.';
         }
         if(!in_array($prioridadeReq, ['Baixa','Media','Alta','Urgente'], true)) {
             $prioridadeReq = 'Media';
@@ -2431,7 +2791,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stAntes = $pdo->prepare("SELECT * FROM transporte_requisicoes WHERE id = :id LIMIT 1");
             $stAntes->execute([':id' => $reqId]);
             $reqAntes = $stAntes->fetch(PDO::FETCH_ASSOC) ?: null;
-            if(!$reqAntes) $erro_form = 'Requisição não encontrada.';
+            if(!$reqAntes) $erro_form = 'RequisiÃ§Ã£o nÃ£o encontrada.';
         }
 
         $anexosFinaisReq = [];
@@ -2446,7 +2806,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $upReq = processarAnexosUpload('anexos_req', 'requisicoes');
             if(!$upReq['ok']) {
-                $erro_form = (string) ($upReq['error'] ?? 'Falha ao enviar anexos da requisição');
+                $erro_form = (string) ($upReq['error'] ?? 'Falha ao enviar anexos da requisiÃ§Ã£o');
             } elseif(!empty($upReq['files'])) {
                 $anexosFinaisReq = array_merge($anexosFinaisReq, $upReq['files']);
             }
@@ -2539,7 +2899,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $obsAtivo = trim((string) ($_POST['observacoes_ativo'] ?? ''));
 
         if($descricaoAtivo === '') {
-            $erro_form = 'Informe a descrição da viatura/máquina.';
+            $erro_form = 'Informe a descriÃ§Ã£o da viatura/mÃ¡quina.';
         }
         if(!in_array($tipoAtivo, ['Viatura','Maquina','Equipamento'], true)) {
             $tipoAtivo = 'Viatura';
@@ -2591,10 +2951,10 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusEvento = trim((string) ($_POST['status_evento'] ?? 'Aberto'));
 
         if($ativoIdEvento <= 0) {
-            $erro_form = 'Selecione a viatura/máquina.';
+            $erro_form = 'Selecione a viatura/mÃ¡quina.';
         }
         if($descEvento === '') {
-            $erro_form = 'Descreva a intervenção/falha.';
+            $erro_form = 'Descreva a intervenÃ§Ã£o/falha.';
         }
         if(!in_array($tipoEvento, ['Avaria','Roubo Combustivel','Falha Mecanica','Falha Sistema','Manutencao Preventiva','Manutencao Corretiva','Outro'], true)) {
             $tipoEvento = 'Outro';
@@ -2659,13 +3019,13 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusEvento = trim((string) ($_POST['status_evento'] ?? 'Aberto'));
 
         if($eventoId <= 0) {
-            $erro_form = 'Evento inválido para atualização.';
+            $erro_form = 'Evento invÃ¡lido para atualizaÃ§Ã£o.';
         }
         if($ativoIdEvento <= 0) {
-            $erro_form = 'Selecione a viatura/máquina.';
+            $erro_form = 'Selecione a viatura/mÃ¡quina.';
         }
         if($descEvento === '') {
-            $erro_form = 'Descreva a intervenção/falha.';
+            $erro_form = 'Descreva a intervenÃ§Ã£o/falha.';
         }
         if(!in_array($tipoEvento, ['Avaria','Roubo Combustivel','Falha Mecanica','Falha Sistema','Manutencao Preventiva','Manutencao Corretiva','Outro'], true)) {
             $tipoEvento = 'Outro';
@@ -2682,7 +3042,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stAntes = $pdo->prepare("SELECT * FROM transporte_frota_eventos WHERE id = :id LIMIT 1");
             $stAntes->execute([':id' => $eventoId]);
             $evtAntes = $stAntes->fetch(PDO::FETCH_ASSOC) ?: null;
-            if(!$evtAntes) $erro_form = 'Evento operacional não encontrado.';
+            if(!$evtAntes) $erro_form = 'Evento operacional nÃ£o encontrado.';
         }
 
         $anexosFinaisEvt = [];
@@ -2759,7 +3119,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     if(isset($_POST['salvar_relatorio_atividade'])) {
         $osIdRa = isset($_POST['os_id_ra']) ? (int) $_POST['os_id_ra'] : 0;
         if($osIdRa <= 0) {
-            $erro_form = 'Selecione o número da Ordem de Serviço.';
+            $erro_form = 'Selecione o nÃºmero da Ordem de ServiÃ§o.';
         }
 
         $osRelatorio = null;
@@ -2783,7 +3143,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtOsRa->execute([':id' => $osIdRa]);
             $osRelatorio = $stmtOsRa->fetch(PDO::FETCH_ASSOC) ?: null;
             if(!$osRelatorio) {
-                $erro_form = 'Ordem de Serviço não encontrada.';
+                $erro_form = 'Ordem de ServiÃ§o nÃ£o encontrada.';
             }
         }
 
@@ -3260,7 +3620,7 @@ if(($tab === 'hse' || $tab === 'transporte') && $view === 'checklist') {
                 $stmtItens->execute([':template_id' => $templateIdForm]);
                 $itens_checklist_form = $stmtItens->fetchAll(PDO::FETCH_ASSOC);
             } else {
-                $erro_form = 'Template de checklist não encontrado.';
+                $erro_form = 'Template de checklist nÃ£o encontrado.';
             }
         } else {
             $stmtTplFirst = $pdo->query("
@@ -3281,7 +3641,7 @@ if(($tab === 'hse' || $tab === 'transporte') && $view === 'checklist') {
                 $stmtItens->execute([':template_id' => (int) $template_checklist_form['id']]);
                 $itens_checklist_form = $stmtItens->fetchAll(PDO::FETCH_ASSOC);
             } else {
-                $erro_form = 'Nenhum template de checklist disponível.';
+                $erro_form = 'Nenhum template de checklist disponÃ­vel.';
             }
         }
     }
@@ -3506,7 +3866,7 @@ if($tab === 'gestao_frota' && $view === 'requisicoes') {
 
         $fornecedorSugerido = 'Fornecedor Geral';
         $cat = strtolower((string) ($r['categoria'] ?? ''));
-        if(strpos($cat, 'combust') !== false) $fornecedorSugerido = 'Fornecedor Combustível';
+        if(strpos($cat, 'combust') !== false) $fornecedorSugerido = 'Fornecedor CombustÃ­vel';
         elseif(strpos($cat, 'oleo') !== false || strpos($cat, 'lubr') !== false) $fornecedorSugerido = 'Fornecedor Lubrificantes';
 
         $sugestoes_requisicoes[] = [
@@ -3735,7 +4095,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
         $valor = $litros > 0 ? ($litros * $precoMedioDiesel) : 0.0;
         $lista_relatorio_consumo[] = [
             'id_ref' => 'FR-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Formulários Recebidos',
+            'fonte' => 'FormulÃ¡rios Recebidos',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
@@ -3767,7 +4127,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsDiesel as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'CB-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Controle Combustível',
+            'fonte' => 'Controle CombustÃ­vel',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
@@ -3833,7 +4193,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsReq as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'RQ-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Requisições',
+            'fonte' => 'RequisiÃ§Ãµes',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => '',
             'ordem_servico_id' => 0,
@@ -3867,7 +4227,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsOper as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'OP-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Gestão Operacional',
+            'fonte' => 'GestÃ£o Operacional',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => '',
             'ordem_servico_id' => 0,
@@ -4075,6 +4435,23 @@ if($tab === 'transporte' && $view === 'presencas') {
         .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .history-table th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid var(--border); text-transform: uppercase; color: #777; font-size: 10px; }
         .history-table td { padding: 12px; border-bottom: 1px solid #eee; }
+        .week-choice { display:flex; align-items:center; justify-content:center; cursor:pointer; min-height:22px; position:relative; }
+        .week-choice input { position:absolute; opacity:0; pointer-events:none; }
+        .week-choice .week-mark {
+            display:inline-flex;
+            width:18px;
+            height:18px;
+            border:1px solid #666;
+            border-radius:50%;
+            align-items:center;
+            justify-content:center;
+            font-weight:800;
+            font-size:10px;
+            line-height:1;
+            color:transparent;
+            background:#fff;
+        }
+        .week-choice input:checked + .week-mark { color:#111; }
         .btn-print { background: #2c3e50; color: #fff; border: none; }
         .calc-note { font-size: 11px; color: #666; margin-top: 4px; }
         .relatorio-print-sheet { display:none; border:1px solid #222; background:#fff; color:#111; padding:12px; }
@@ -4121,8 +4498,8 @@ if($tab === 'transporte' && $view === 'presencas') {
             <a href="?tab=transporte" class="tab-btn <?= $tab == 'transporte' ? 'active' : '' ?>"><i class="fas fa-route"></i> Transporte</a>
             <a href="?tab=hse&view=checklist&mode=list" class="tab-btn <?= $tab == 'hse' ? 'active' : '' ?>"><i class="fas fa-clipboard-check"></i> HSE</a>
             
-            <!-- Aba principal Gestão de Frota -->
-            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> Gestão de Frota</a>
+            <!-- Aba principal GestÃ£o de Frota -->
+            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> GestÃ£o de Frota</a>
             
             <!-- Aba principal Aluguer de Equipamentos -->
             <a href="?tab=aluguer" class="tab-btn <?= $tab == 'aluguer' ? 'active' : '' ?>"><i class="fas fa-truck"></i> Aluguer de Equipamentos</a>
@@ -4137,28 +4514,28 @@ if($tab === 'transporte' && $view === 'presencas') {
         <?php if($tab == 'transporte'): ?>
             <!-- Sub-abas de Transporte -->
             <a href="?tab=transporte&view=reservas&mode=list" class="sub-tab-btn <?= $view == 'reservas' ? 'active' : '' ?>">Reservas</a>
-            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de Serviço</a>
-            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de Reparação</a>
-            <a href="?tab=transporte&view=presencas&mode=list" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de Presenças</a>
-            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano Manutenção</a>
-            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">Relatório Geral</a>
+            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de ServiÃ§o</a>
+            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de ReparaÃ§Ã£o</a>
+            <a href="?tab=transporte&view=presencas&mode=list" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de PresenÃ§as</a>
+            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano ManutenÃ§Ã£o</a>
+            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
         
         <?php elseif($tab == 'hse'): ?>
             <a href="?tab=hse&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
         <?php elseif($tab == 'gestao_frota'): ?>
-            <!-- Sub-abas de Gestão de Frota -->
-            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">Formulários Recebidos</a>
-            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle Combustível</a>
+            <!-- Sub-abas de GestÃ£o de Frota -->
+            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">FormulÃ¡rios Recebidos</a>
+            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle CombustÃ­vel</a>
             <a href="?tab=gestao_frota&view=stock&mode=list" class="sub-tab-btn <?= $view == 'stock' ? 'active' : '' ?>">Controle de Stock</a>
-            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">Requisições</a>
-            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">Gestão Operacional</a>
-            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">Relatório Geral</a>
+            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">RequisiÃ§Ãµes</a>
+            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">GestÃ£o Operacional</a>
+            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
             
             
         
         <?php elseif($tab == 'aluguer'): ?>
             <!-- Sub-abas de Aluguer de Equipamentos -->
-            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e Máquinas</a>
+            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e MÃ¡quinas</a>
             <a href="?tab=aluguer&view=timesheets&mode=list" class="sub-tab-btn <?= $view == 'timesheets' ? 'active' : '' ?>">Timesheets</a>
             <a href="?tab=aluguer&view=pagamentos&mode=list" class="sub-tab-btn <?= $view == 'pagamentos' ? 'active' : '' ?>">Pagamentos</a>
             <a href="?tab=aluguer&view=clientes&mode=list" class="sub-tab-btn <?= $view == 'clientes' ? 'active' : '' ?>">Clientes</a>
@@ -4188,8 +4565,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <h3 style="text-transform: uppercase;">
                         <?php
                             $tituloView = str_replace('_', ' ', ucfirst($view));
-                            if($tab == 'transporte' && $view == 'relatorio_atividades') $tituloView = 'Relatório Geral';
-                            if($tab == 'gestao_frota' && $view == 'relatorio_consumo') $tituloView = 'Relatório Geral';
+                            if($tab == 'transporte' && $view == 'relatorio_atividades') $tituloView = 'RelatÃ³rio Geral';
+                            if($tab == 'gestao_frota' && $view == 'relatorio_consumo') $tituloView = 'RelatÃ³rio Geral';
                             echo htmlspecialchars($tituloView);
                         ?>
                     </h3>
@@ -4199,27 +4576,27 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label style="font-weight:800; font-size:12px; margin-right:6px;">Mostrar</label>
                         <select id="list-range" onchange="onRangeChange(this.value)">
                             <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
-                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Últimos 7</option>
-                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Últimos</option>
+                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Ãšltimos 7</option>
+                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Ãšltimos</option>
                                 <option value="monthly" <?= (($_GET['list_range'] ?? '') === 'monthly') ? 'selected' : '' ?>>Mensal</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'combustivel'): ?>
                                 <option value="today" <?= (($_GET['list_range'] ?? '') === 'today') ? 'selected' : '' ?>>Ordens de Hoje</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                                 <option value="first_os" <?= (($_GET['list_range'] ?? '') === 'first_os') ? 'selected' : '' ?>>Primeiras OS</option>
-                                <option value="last_os" <?= (($_GET['list_range'] ?? 'last_os') === 'last_os') ? 'selected' : '' ?>>Últimas OS</option>
+                                <option value="last_os" <?= (($_GET['list_range'] ?? 'last_os') === 'last_os') ? 'selected' : '' ?>>Ãšltimas OS</option>
                                 <option value="all" <?= (($_GET['list_range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
-                                <option value="today" <?= (($filtro_consumo['range'] ?? '') === 'today') ? 'selected' : '' ?>>Diário</option>
+                                <option value="today" <?= (($filtro_consumo['range'] ?? '') === 'today') ? 'selected' : '' ?>>DiÃ¡rio</option>
                                 <option value="weekly" <?= (($filtro_consumo['range'] ?? '') === 'weekly') ? 'selected' : '' ?>>Semanal</option>
                                 <option value="monthly" <?= (($filtro_consumo['range'] ?? 'monthly') === 'monthly') ? 'selected' : '' ?>>Mensal</option>
                                 <option value="custom" <?= (($filtro_consumo['range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                                 <option value="all" <?= (($filtro_consumo['range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php else: ?>
                                 <option value="view">Ver</option>
-                                <option value="last">Últimos</option>
+                                <option value="last">Ãšltimos</option>
                                 <option value="first">Primeiros</option>
-                                <option value="last7" selected>Últimos 7</option>
+                                <option value="last7" selected>Ãšltimos 7</option>
                                 <option value="all">Todos</option>
                             <?php endif; ?>
                         </select>
@@ -4227,7 +4604,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <button class="btn-mode" onclick="applyRange()" style="background:#eee; color:#333;">Aplicar</button>
                         <?php endif; ?>
                         
-                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e Gestão Frota -> Formulários Recebidos -->
+                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e GestÃ£o Frota -> FormulÃ¡rios Recebidos -->
                         <?php if($tab == 'transporte' && $view == 'entrada'): ?>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
                             <select onchange="filterByProject(this.value,'transporte','entrada')">
@@ -4248,7 +4625,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <?php endif; ?>
 
                         <?php if($tab == 'hse' && $view == 'checklist'): ?>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Máquina/Viatura</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">MÃ¡quina/Viatura</label>
                             <select onchange="filterByMachineChecklist(this.value)">
                                 <option value="">Todos</option>
                                 <?php foreach($tipos_checklist as $tipoChk): ?>
@@ -4281,7 +4658,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     <option value="<?= htmlspecialchars((string) $proj) ?>" <?= (($_GET['project'] ?? '') === (string) $proj) ? 'selected' : '' ?>><?= htmlspecialchars((string) $proj) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/Máquina</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/MÃ¡quina</label>
                             <select onchange="filterByVehicle(this.value,'transporte','relatorio_atividades')">
                                 <option value="">Todas</option>
                                 <?php foreach($viaturas_relatorio as $vRel): ?>
@@ -4297,7 +4674,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     <option value="<?= htmlspecialchars((string) $projCons) ?>" <?= (($filtro_consumo['project'] ?? '') === (string) $projCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $projCons) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/Máquina</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/MÃ¡quina</label>
                             <select onchange="filterByVehicle(this.value,'gestao_frota','relatorio_consumo')">
                                 <option value="">Todas</option>
                                 <?php foreach($viaturas_consumo as $vCons): ?>
@@ -4305,12 +4682,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <?php endforeach; ?>
                             </select>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">OS</label>
-                            <input type="number" id="filtro-ordem" value="<?= (int) ($filtro_consumo['order_id'] ?? 0) ?>" placeholder="Nº OS" style="width:90px; padding:8px; border-radius:6px; border:1px solid #ccc;">
+                            <input type="number" id="filtro-ordem" value="<?= (int) ($filtro_consumo['order_id'] ?? 0) ?>" placeholder="NÂº OS" style="width:90px; padding:8px; border-radius:6px; border:1px solid #ccc;">
                             <input type="text" id="search-q" value="<?= htmlspecialchars((string) ($filtro_consumo['q'] ?? '')) ?>" placeholder="Pesquisar..." style="width:180px; padding:8px; border-radius:6px; border:1px solid #ccc;">
                             <button class="btn-mode" onclick="aplicarFiltrosRelatorioConsumo()" style="background:#f7f7f7; color:#333;"><i class="fa-solid fa-magnifying-glass"></i></button>
                         <?php endif; ?>
                         
-                        <!-- manter botão Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
+                        <!-- manter botÃ£o Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
                         <?php if(!$ocultarAcoesListaPresencas && !($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'hse' && $view == 'checklist')): ?>
                             <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-save" style="background: var(--vilcon-orange); margin-left:12px;">Adicionar Novo</a>
                         <?php endif; ?>
@@ -4338,7 +4715,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div class="stock-metric-card">
                             <div class="stock-metric-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
                             <div>
-                                <div class="stock-metric-label">Críticos</div>
+                                <div class="stock-metric-label">CrÃ­ticos</div>
                                 <div class="stock-metric-value"><?= (int) $itensCriticosStock ?></div>
                             </div>
                         </div>
@@ -4361,14 +4738,14 @@ if($tab === 'transporte' && $view === 'presencas') {
 
                 <?php if($tab == 'gestao_frota' && $view == 'stock' && !empty($alertas_stock)): ?>
                     <div style="background:#fff3cd; border:1px solid #ffe08a; color:#8a6d3b; padding:12px; border-radius:8px; margin-bottom:14px;">
-                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-bell"></i> Alerta de Stock Crítico</div>
+                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-bell"></i> Alerta de Stock CrÃ­tico</div>
                         <table class="history-table" style="background:#fff;">
                             <thead>
                                 <tr>
                                     <th>Item</th>
                                     <th>Saldo Atual</th>
-                                    <th>Mínimo</th>
-                                    <th>Saída Média/Dia</th>
+                                    <th>MÃ­nimo</th>
+                                    <th>SaÃ­da MÃ©dia/Dia</th>
                                     <th>Cobertura (Dias)</th>
                                 </tr>
                             </thead>
@@ -4396,23 +4773,23 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php if($tab == 'gestao_frota' && $view == 'combustivel'): ?>
                     <div style="background:#eef7ff; border:1px solid #cfe3ff; color:#2c3e50; padding:12px; border-radius:8px; margin-bottom:14px; display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
                         <div><strong>Litros hoje:</strong> <?= number_format((float) ($resumo_diesel['litros_dia'] ?? 0), 2, ',', '.') ?> L</div>
-                        <div><strong>Litros mês:</strong> <?= number_format((float) ($resumo_diesel['litros_mes'] ?? 0), 2, ',', '.') ?> L</div>
+                        <div><strong>Litros mÃªs:</strong> <?= number_format((float) ($resumo_diesel['litros_mes'] ?? 0), 2, ',', '.') ?> L</div>
                         <div><strong>Valor hoje:</strong> <?= number_format((float) ($resumo_diesel['valor_dia'] ?? 0), 2, ',', '.') ?></div>
-                        <div><strong>Valor mês:</strong> <?= number_format((float) ($resumo_diesel['valor_mes'] ?? 0), 2, ',', '.') ?></div>
-                        <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel automático com base nas Ordens de Serviço abastecidas.</div>
+                        <div><strong>Valor mÃªs:</strong> <?= number_format((float) ($resumo_diesel['valor_mes'] ?? 0), 2, ',', '.') ?></div>
+                        <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel automÃ¡tico com base nas Ordens de ServiÃ§o abastecidas.</div>
                     </div>
                 <?php endif; ?>
                 <?php if($tab == 'gestao_frota' && $view == 'requisicoes' && !empty($sugestoes_requisicoes)): ?>
                     <div style="background:#eefbf3; border:1px solid #bde8c9; color:#1f5130; padding:12px; border-radius:8px; margin-bottom:14px;">
-                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestões Automáticas de Requisição por Déficit de Stock</div>
+                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles"></i> SugestÃµes AutomÃ¡ticas de RequisiÃ§Ã£o por DÃ©ficit de Stock</div>
                         <table class="history-table" style="background:#fff;">
                             <thead>
                                 <tr>
                                     <th>Item</th>
-                                    <th>Saldo / Mínimo</th>
+                                    <th>Saldo / MÃ­nimo</th>
                                     <th>Cobertura</th>
-                                    <th>Sugestão</th>
-                                    <th>Ação</th>
+                                    <th>SugestÃ£o</th>
+                                    <th>AÃ§Ã£o</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -4435,18 +4812,18 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div><strong>Com GPS:</strong> <?= (int) ($resumo_operacional['com_gps'] ?? 0) ?></div>
                         <div><strong>Com Sensor Comb.:</strong> <?= (int) ($resumo_operacional['com_sensor_combustivel'] ?? 0) ?></div>
                         <div><strong>Eventos Abertos:</strong> <?= (int) ($resumo_operacional['eventos_abertos'] ?? 0) ?></div>
-                        <div><strong>Roubo Combustível:</strong> <?= (int) ($resumo_operacional['roubo_combustivel'] ?? 0) ?></div>
-                        <div><strong>Falhas Mecânicas:</strong> <?= (int) ($resumo_operacional['falhas_mecanicas'] ?? 0) ?></div>
+                        <div><strong>Roubo CombustÃ­vel:</strong> <?= (int) ($resumo_operacional['roubo_combustivel'] ?? 0) ?></div>
+                        <div><strong>Falhas MecÃ¢nicas:</strong> <?= (int) ($resumo_operacional['falhas_mecanicas'] ?? 0) ?></div>
                     </div>
                     <?php if(!empty($lista_operacional_ativos)): ?>
                         <div style="background:#fff; border:1px solid #e5edf5; border-radius:8px; margin-bottom:14px; padding:10px;">
-                            <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase; color:#34495e;"><i class="fa-solid fa-truck"></i> Base de Viaturas e Máquinas</div>
+                            <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase; color:#34495e;"><i class="fa-solid fa-truck"></i> Base de Viaturas e MÃ¡quinas</div>
                             <table class="history-table">
                                 <thead>
                                     <tr>
-                                        <th>Código</th>
+                                        <th>CÃ³digo</th>
                                         <th>Tipo</th>
-                                        <th>Descrição</th>
+                                        <th>DescriÃ§Ã£o</th>
                                         <th>Sistemas</th>
                                         <th>Status</th>
                                     </tr>
@@ -4474,7 +4851,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div><strong>Total Gasto:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_valor'] ?? 0), 2, ',', '.') ?></div>
                         <div><strong>Total Litros:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_litros'] ?? 0), 2, ',', '.') ?> L</div>
                         <div><strong>Total Registos:</strong> <?= (int) ($resumo_relatorio_consumo['total_registos'] ?? 0) ?></div>
-                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">Relatório automático consolidado: Formulários Recebidos, Controle Combustível, Controle de Stock, Requisições e Gestão Operacional.</div>
+                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">RelatÃ³rio automÃ¡tico consolidado: FormulÃ¡rios Recebidos, Controle CombustÃ­vel, Controle de Stock, RequisiÃ§Ãµes e GestÃ£o Operacional.</div>
                     </div>
                 <?php endif; ?>
                 
@@ -4489,7 +4866,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <th>Data</th>
                                 <th>Solicitante</th>
                                 <th>Estado do Pedido</th>
-                                <th>Ações</th>
+                                <th>AÃ§Ãµes</th>
                             </tr>
                         <?php else: ?>
                             <tr>
@@ -4497,7 +4874,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <th>Tipo</th>
                                 <th>Data</th>
                                 <th>Solicitante</th>
-                                <th>Ações</th>
+                                <th>AÃ§Ãµes</th>
                             </tr>
                         <?php endif; ?>
                     </thead>
@@ -4545,7 +4922,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php foreach($lista_diesel as $d): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($d['codigo'] ?? ('DIE-' . (int) $d['id']))) ?></td>
-                                    <td><?= htmlspecialchars((string) (($d['tipo_movimento'] ?? 'Combustível') . (($d['origem_registo'] ?? '') ? ' / ' . $d['origem_registo'] : ''))) ?></td>
+                                    <td><?= htmlspecialchars((string) (($d['tipo_movimento'] ?? 'CombustÃ­vel') . (($d['origem_registo'] ?? '') ? ' / ' . $d['origem_registo'] : ''))) ?></td>
                                     <td><?= !empty($d['data_movimento']) ? date('d/m/Y', strtotime((string) $d['data_movimento'])) : '-' ?></td>
                                     <td><?= htmlspecialchars((string) (($d['projeto'] ?? '-') . ' / ' . ($d['viatura_id'] ?? '-') . ' / ' . ($d['documento_ref'] ?? '-'))) ?></td>
                                     <td>
@@ -4558,7 +4935,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php foreach($lista_requisicoes as $rq): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rq['codigo'] ?? ('REQ-' . (int) $rq['id']))) ?></td>
-                                    <td><?= htmlspecialchars((string) (($rq['categoria'] ?? 'Requisição') . ' / ' . ($rq['prioridade'] ?? '-'))) ?></td>
+                                    <td><?= htmlspecialchars((string) (($rq['categoria'] ?? 'RequisiÃ§Ã£o') . ' / ' . ($rq['prioridade'] ?? '-'))) ?></td>
                                     <td><?= !empty($rq['data_requisicao']) ? date('d/m/Y', strtotime((string) $rq['data_requisicao'])) : '-' ?></td>
                                     <td>
                                         <?= htmlspecialchars((string) (($rq['item_nome'] ?? '-') . ' | ' . number_format((float) ($rq['quantidade_solicitada'] ?? 0), 2, ',', '.') . ' ' . ($rq['unidade'] ?? ''))) ?>
@@ -4603,7 +4980,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php foreach($lista_relatorio_consumo as $rc): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rc['id_ref'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string) ($rc['fonte'] ?? 'Relatório')) ?></td>
+                                    <td><?= htmlspecialchars((string) ($rc['fonte'] ?? 'RelatÃ³rio')) ?></td>
                                     <td><?= !empty($rc['data_ref']) ? date('d/m/Y H:i', strtotime((string) $rc['data_ref'])) : '-' ?></td>
                                     <td>
                                         <?=
@@ -4630,11 +5007,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                                         <?= htmlspecialchars((string) ($rs['departamento'] ?? '-')) ?>
                                         <?= !empty($rs['solicitante']) ? ' / ' . htmlspecialchars((string) $rs['solicitante']) : '' ?>
                                         <?= !empty($rs['destino']) ? ' / ' . htmlspecialchars((string) $rs['destino']) : '' ?>
-                                        <?= !empty($rs['urgencia']) ? ' / Urgência: ' . htmlspecialchars((string) $rs['urgencia']) : '' ?>
+                                        <?= !empty($rs['urgencia']) ? ' / UrgÃªncia: ' . htmlspecialchars((string) $rs['urgencia']) : '' ?>
                                         <?php if(isset($rs['horas_antecedencia']) && $rs['horas_antecedencia'] !== null): ?>
-                                            <?= ' / Antecedência útil: ' . number_format((float) $rs['horas_antecedencia'], 1, ',', '.') . ' h' ?>
+                                            <?= ' / AntecedÃªncia Ãºtil: ' . number_format((float) $rs['horas_antecedencia'], 1, ',', '.') . ' h' ?>
                                         <?php endif; ?>
-                                        <?= ' / Ação Gestor: ' . htmlspecialchars(recomendacaoGestorPorUrgencia((string) ($rs['urgencia'] ?? ''))) ?>
+                                        <?= ' / AÃ§Ã£o Gestor: ' . htmlspecialchars(recomendacaoGestorPorUrgencia((string) ($rs['urgencia'] ?? ''))) ?>
                                     </td>
                                     <td>
                                         <span style="margin-right:8px; font-weight:700; color:#555;"><?= htmlspecialchars((string) ($rs['status'] ?? 'Pendente Alinhamento')) ?></span>
@@ -4665,7 +5042,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     $statusRaw = trim((string) ($rep['status'] ?? ''));
                                     if($statusRaw === '') $statusRaw = 'Enviado para Oficina';
                                     $statusNorm = strtolower($statusRaw);
-                                    $estadoPedido = 'Em espera de aceitação';
+                                    $estadoPedido = 'Em espera de aceitaÃ§Ã£o';
                                     if(strpos($statusNorm, 'andamento') !== false || strpos($statusNorm, 'progresso') !== false) {
                                         $estadoPedido = 'Em andamento';
                                     } elseif(strpos($statusNorm, 'aceit') !== false || strpos($statusNorm, 'aprov') !== false) {
@@ -4673,9 +5050,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     } elseif(strpos($statusNorm, 'rejeit') !== false) {
                                         $estadoPedido = 'Rejeitado';
                                     } elseif(strpos($statusNorm, 'conclu') !== false || strpos($statusNorm, 'finaliz') !== false || strpos($statusNorm, 'fechad') !== false) {
-                                        $estadoPedido = 'Concluído';
+                                        $estadoPedido = 'ConcluÃ­do';
                                     } elseif(strpos($statusNorm, 'enviado') !== false || strpos($statusNorm, 'pendente') !== false) {
-                                        $estadoPedido = 'Em espera de aceitação';
+                                        $estadoPedido = 'Em espera de aceitaÃ§Ã£o';
                                     }
                                 ?>
                                 <tr>
@@ -4694,7 +5071,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php foreach($lista_relatorios as $ra): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($ra['codigo'] ?? ('RA-' . (int) $ra['id']))) ?></td>
-                                    <td>Relatório Geral</td>
+                                    <td>RelatÃ³rio Geral</td>
                                     <td><?= !empty($ra['data_relatorio']) ? date('d/m/Y', strtotime($ra['data_relatorio'])) : '-' ?></td>
                                     <td>
                                         <?=
@@ -4716,7 +5093,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php foreach($lista_os as $os): ?>
                                 <tr>
                                     <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
-                                    <td>Ordem de Serviço</td>
+                                    <td>Ordem de ServiÃ§o</td>
                                     <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime($os['data_saida'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($os['condutor'] ?? '-') ?></td>
                                     <td>
@@ -4748,10 +5125,10 @@ if($tab === 'transporte' && $view === 'presencas') {
             <div class="white-card" style="max-width:780px;">
                 <h3 style="text-transform: uppercase; margin-bottom:12px;">Reserva Enviada com Sucesso</h3>
                 <div style="background:#eaf8ef; color:#1e8449; padding:12px; border-radius:8px; margin-bottom:12px; font-weight:700;">
-                    A sua parte foi concluída. A reserva foi registrada e enviada para o Gestor de Transporte.
+                    A sua parte foi concluÃ­da. A reserva foi registrada e enviada para o Gestor de Transporte.
                 </div>
                 <div style="font-size:13px; color:#555; margin-bottom:14px;">
-                    Agora o Gestor analisa a urgência e decide a viatura/máquina, convertendo automaticamente em Ordem de Serviço.
+                    Agora o Gestor analisa a urgÃªncia e decide a viatura/mÃ¡quina, convertendo automaticamente em Ordem de ServiÃ§o.
                 </div>
                 <div style="display:flex; gap:8px;">
                     <a href="index.php" class="btn-mode">Terminar</a>
@@ -4776,7 +5153,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         $statusRawDet = trim((string) ($pedido_reparacao_detalhe['status'] ?? ''));
                         if($statusRawDet === '') $statusRawDet = 'Enviado para Oficina';
                         $statusNormDet = strtolower($statusRawDet);
-                        $estadoPedidoDet = 'Em espera de aceitação';
+                        $estadoPedidoDet = 'Em espera de aceitaÃ§Ã£o';
                         if(strpos($statusNormDet, 'andamento') !== false || strpos($statusNormDet, 'progresso') !== false) {
                             $estadoPedidoDet = 'Em andamento';
                         } elseif(strpos($statusNormDet, 'aceit') !== false || strpos($statusNormDet, 'aprov') !== false) {
@@ -4784,7 +5161,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         } elseif(strpos($statusNormDet, 'rejeit') !== false) {
                             $estadoPedidoDet = 'Rejeitado';
                         } elseif(strpos($statusNormDet, 'conclu') !== false || strpos($statusNormDet, 'finaliz') !== false || strpos($statusNormDet, 'fechad') !== false) {
-                            $estadoPedidoDet = 'Concluído';
+                            $estadoPedidoDet = 'ConcluÃ­do';
                         }
                         $anexoDet = trim((string) ($pedido_reparacao_detalhe['pdf_anexo'] ?? ''));
                     ?>
@@ -4820,9 +5197,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;"><?= $reserva_form ? 'Aceitar Reserva e Gerar Ordem de Serviço' : 'Reserva de Viatura/Máquina por Departamento' ?></h3>
+                    <h3 style="text-transform: uppercase;"><?= $reserva_form ? 'Aceitar Reserva e Gerar Ordem de ServiÃ§o' : 'Reserva de Viatura/MÃ¡quina por Departamento' ?></h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=reservas&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=reservas&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4836,33 +5213,33 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <form method="POST" class="form-grid">
                             <input type="hidden" name="reserva_id" value="<?= (int) ($reserva_form['id'] ?? 0) ?>">
                             <div class="section-title">Reserva Solicitada</div>
-                            <div class="form-group"><label>Código</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['codigo'] ?? '')) ?>" readonly></div>
+                            <div class="form-group"><label>CÃ³digo</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['codigo'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Departamento</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['departamento'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Solicitante</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['solicitante'] ?? '')) ?>" readonly></div>
-                            <div class="form-group"><label>Urgência</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['urgencia'] ?? '')) ?>" readonly></div>
+                            <div class="form-group"><label>UrgÃªncia</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['urgencia'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Data/Hora Partida</label><input type="text" value="<?= !empty($reserva_form['data_partida']) ? htmlspecialchars(date('d/m/Y H:i', strtotime((string) $reserva_form['data_partida']))) : '' ?>" readonly></div>
                             <div class="form-group"><label>Destino</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['destino'] ?? '')) ?>" readonly></div>
                             <div class="form-group" style="grid-column: span 4;"><label>Atividade</label><textarea rows="2" readonly><?= htmlspecialchars((string) ($reserva_form['atividade'] ?? '')) ?></textarea></div>
-                            <div class="section-title">Decisão do Gestor para Gerar OS</div>
-                            <div class="form-group"><label>Viatura/Máquina</label><input type="text" name="viatura_id_os" required placeholder="Ex: CAT-320D / AF-582-MC"></div>
-                            <div class="form-group"><label>Matrícula</label><input type="text" name="matricula_os" placeholder="Opcional"></div>
-                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">Camião</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">Pá Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
+                            <div class="section-title">DecisÃ£o do Gestor para Gerar OS</div>
+                            <div class="form-group"><label>Viatura/MÃ¡quina</label><input type="text" name="viatura_id_os" required placeholder="Ex: CAT-320D / AF-582-MC"></div>
+                            <div class="form-group"><label>MatrÃ­cula</label><input type="text" name="matricula_os" placeholder="Opcional"></div>
+                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">CamiÃ£o</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">PÃ¡ Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
                             <div class="form-group"><label>Condutor</label><input type="text" name="condutor_os" value="A Definir"></div>
                             <div class="form-group"><label>Gestor de Transporte</label><input type="text" name="gestor_transporte_os" value="<?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? '')) ?>" required></div>
                             <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                                <button type="submit" name="aceitar_reserva" class="btn-save" style="background:var(--success);">Aceitar e Gerar OS Automática</button>
+                                <button type="submit" name="aceitar_reserva" class="btn-save" style="background:var(--success);">Aceitar e Gerar OS AutomÃ¡tica</button>
                             </div>
                         </form>
                     <?php endif; ?>
                 <?php else: ?>
                 <div class="calc-note" style="margin-bottom:12px; font-size:12px;">
-                    O departamento apenas solicita a reserva antecipadamente. O sistema calcula urgência por horas úteis e exibe ação recomendada para o Gestor decidir a viatura/máquina no momento certo.
+                    O departamento apenas solicita a reserva antecipadamente. O sistema calcula urgÃªncia por horas Ãºteis e exibe aÃ§Ã£o recomendada para o Gestor decidir a viatura/mÃ¡quina no momento certo.
                 </div>
                 <form method="POST" class="form-grid">
                     <div class="section-title">Dados da Reserva e Prioridade</div>
                     <div class="form-group">
                         <label>Departamento</label>
-                        <input type="text" name="departamento_reserva" required placeholder="Ex: Produção / Logística / Engenharia">
+                        <input type="text" name="departamento_reserva" required placeholder="Ex: ProduÃ§Ã£o / LogÃ­stica / Engenharia">
                     </div>
                     <div class="form-group">
                         <label>Solicitante</label>
@@ -4872,12 +5249,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Tipo de Ativo</label>
                         <select name="tipo_ativo_reserva" required>
                             <option value="Viatura">Viatura</option>
-                            <option value="Maquina">Máquina</option>
+                            <option value="Maquina">MÃ¡quina</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Definição da Viatura</label>
-                        <input type="text" value="Definida pelo Gestor de Transporte após alinhamento" readonly>
+                        <label>DefiniÃ§Ã£o da Viatura</label>
+                        <input type="text" value="Definida pelo Gestor de Transporte apÃ³s alinhamento" readonly>
                     </div>
                     <div class="form-group">
                         <label>Destino</label>
@@ -4888,9 +5265,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="datetime-local" id="data_partida_reserva" name="data_partida_reserva" required>
                     </div>
                     <div class="form-group">
-                        <label>Nível de Urgência (Automático)</label>
-                        <input type="text" id="urgencia_auto_reserva" value="Será calculada pelo sistema" readonly>
-                        <div class="calc-note">Baseado em horas úteis (Seg-Sex 07h-16h, Sáb 07h-12h): até 4h = Urgente | até 8h = Alta | até 16h = Média | acima = Baixa.</div>
+                        <label>NÃ­vel de UrgÃªncia (AutomÃ¡tico)</label>
+                        <input type="text" id="urgencia_auto_reserva" value="SerÃ¡ calculada pelo sistema" readonly>
+                        <div class="calc-note">Baseado em horas Ãºteis (Seg-Sex 07h-16h, SÃ¡b 07h-12h): atÃ© 4h = Urgente | atÃ© 8h = Alta | atÃ© 16h = MÃ©dia | acima = Baixa.</div>
                     </div>
                     <div class="section-title">Atividade e Alinhamento</div>
                     <div class="form-group" style="grid-column: span 4;">
@@ -4898,8 +5275,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <textarea name="atividade_reserva" rows="4" required placeholder="Descreva a atividade e motivo da reserva."></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações (opcional)</label>
-                        <textarea name="observacoes_reserva" rows="2" placeholder="Observações para alinhamento entre departamentos"></textarea>
+                        <label>ObservaÃ§Ãµes (opcional)</label>
+                        <textarea name="observacoes_reserva" rows="2" placeholder="ObservaÃ§Ãµes para alinhamento entre departamentos"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_reserva" class="btn-save" style="background:var(--vilcon-orange);">Salvar Reserva</button>
@@ -4913,8 +5290,8 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Ordem de Serviço - Gestor de Transporte</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar à Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Ordem de ServiÃ§o - Gestor de Transporte</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
@@ -4922,11 +5299,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <form method="POST" class="form-grid">
                     <div class="section-title">1. Detalhes - Gestor de Transporte</div>
                     <div class="form-group">
-                        <label>Número OS</label>
+                        <label>NÃºmero OS</label>
                         <input type="text" value="<?= htmlspecialchars($proximo_id_os) ?>" readonly>
                     </div>
                     <div class="form-group">
-                        <label>Hora da Solicitação</label>
+                        <label>Hora da SolicitaÃ§Ã£o</label>
                         <input type="datetime-local" name="data_saida" required value="<?= date('Y-m-d\TH:i') ?>">
                     </div>
                     <div class="form-group">
@@ -4942,17 +5319,17 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" name="viatura_id" required placeholder="Ex: CAT-320D">
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>MatrÃ­cula</label>
                         <input type="text" name="matricula" required placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
-                        <label>Tipo de Máquina / Viatura</label>
+                        <label>Tipo de MÃ¡quina / Viatura</label>
                         <select id="tipo_equipamento" name="tipo_equipamento" required>
                             <option value="">Selecionar</option>
-                            <option value="camiao">Camião</option>
+                            <option value="camiao">CamiÃ£o</option>
                             <option value="pickup">Pickup</option>
                             <option value="escavadora">Escavadora</option>
-                            <option value="pa_carregadora">Pá Carregadora</option>
+                            <option value="pa_carregadora">PÃ¡ Carregadora</option>
                             <option value="gerador">Gerador</option>
                             <option value="outro">Outro</option>
                         </select>
@@ -4961,13 +5338,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Condutor / Motorista</label>
                         <input type="text" name="condutor" required>
                     </div>
-                    <div class="section-title">Saída</div>
+                    <div class="section-title">SaÃ­da</div>
                     <div class="form-group">
-                        <label>Local de Saída</label>
+                        <label>Local de SaÃ­da</label>
                         <input type="text" id="local_saida_os" name="local_saida" required>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Saída</label>
+                        <label>Hora de SaÃ­da</label>
                         <input type="time" name="hora_saida" required>
                     </div>
                     <div class="form-group">
@@ -4987,22 +5364,22 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>KM final (na chegada)</label>
                         <input type="number" name="km_chegada_os" min="0" required>
                     </div>
-                    <div class="section-title">Serviço</div>
+                    <div class="section-title">ServiÃ§o</div>
                     <div class="form-group">
-                        <label>Tipo de Serviço</label>
+                        <label>Tipo de ServiÃ§o</label>
                         <select name="tipo_servico" required>
                             <option value="">Selecionar</option>
                             <option value="Interno">Interno</option>
-                            <option value="Prestação de Serviço">Prestação de Serviço</option>
+                            <option value="PrestaÃ§Ã£o de ServiÃ§o">PrestaÃ§Ã£o de ServiÃ§o</option>
                             <option value="Aluguer">Aluguer</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Início do Serviço</label>
+                        <label>Hora de InÃ­cio do ServiÃ§o</label>
                         <input type="time" name="servico_inicio" required>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Fim do Serviço</label>
+                        <label>Hora de Fim do ServiÃ§o</label>
                         <input type="time" name="servico_fim" required>
                     </div>
                     <div class="form-group">
@@ -5013,13 +5390,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Gestor de Transporte</label>
                         <input type="text" name="autorizado_por" required>
                     </div>
-                    <div class="section-title">2. Descrição do Serviço a ser Realizado</div>
+                    <div class="section-title">2. DescriÃ§Ã£o do ServiÃ§o a ser Realizado</div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição</label>
-                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviço..."></textarea>
+                        <label>DescriÃ§Ã£o</label>
+                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviÃ§o..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de Serviço</button>
+                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de ServiÃ§o</button>
                     </div>
                 </form>
             </div>
@@ -5029,9 +5406,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Checklist - Validação</h3>
+                    <h3 style="text-transform: uppercase;">Checklist - Validacao</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=hse&view=checklist&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=hse&view=checklist&mode=list" class="btn-mode">Voltar a Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5040,21 +5417,76 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php elseif(!$template_checklist_form): ?>
                     <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione um checklist para preencher.</div>
                 <?php else: ?>
+                    <?php
+                        $codigoChecklistAtual = strtoupper((string) ($template_checklist_form['codigo'] ?? ''));
+                        $isHammerChecklist = $codigoChecklistAtual === 'VIL.F.QAS.34';
+                        $isBulldozerChecklist = $codigoChecklistAtual === 'VIL.F.QAS.35';
+                        $isBasculanteChecklist = $codigoChecklistAtual === 'VIL.F.QAS.41';
+                    ?>
+                    <?php if(!$isBasculanteChecklist && !$isBulldozerChecklist): ?>
                     <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:18px;">
                         <div><strong>Checklist:</strong> <?= htmlspecialchars(codigoChecklistVisivel($template_checklist_form['id'] ?? 0)) ?></div>
                         <div><strong>Tipo:</strong> <?= htmlspecialchars((string) ($template_checklist_form['tipo_equipamento'] ?? '')) ?></div>
                         <div><strong>Periodicidade:</strong> <?= htmlspecialchars((string) ($template_checklist_form['periodicidade'] ?? '')) ?></div>
                         <div><strong>Nome:</strong> <?= htmlspecialchars(limparTituloChecklist((string) ($template_checklist_form['nome'] ?? ''))) ?></div>
                     </div>
+                    <?php endif; ?>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="template_id" value="<?= (int) $template_checklist_form['id'] ?>">
-                        <div class="section-title">Dados da Inspecção</div>
+                        <input type="hidden" name="codigo_template_chk" value="<?= htmlspecialchars(strtoupper((string) ($template_checklist_form['codigo'] ?? ''))) ?>">
+                        <?php if($isBasculanteChecklist || $isBulldozerChecklist): ?>
+                        <div style="grid-column: span 4; border:2px solid #666; background:#e4e4e4; margin-bottom:10px;">
+                            <div style="display:grid; grid-template-columns: 1.2fr 2.6fr 0.9fr; border-bottom:2px solid #666;">
+                                <div style="padding:8px; border-right:2px solid #666; display:flex; align-items:center; justify-content:center;">
+                                    <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon" style="max-width:180px; width:100%; height:auto;">
+                                </div>
+                                <div style="padding:8px; border-right:2px solid #666; text-align:center;">
+                                    <?php if($isBasculanteChecklist): ?>
+                                    <div style="font-size:36px; font-weight:800; line-height:1.1;">CAMIAO BASCULANTE</div>
+                                    <div style="font-size:36px; font-weight:800; color:#006fc4; line-height:1.1;">TIPPER TRUCK</div>
+                                    <?php else: ?>
+                                    <div style="font-size:36px; font-weight:800; line-height:1.1;">BULLDOZER</div>
+                                    <div style="font-size:28px; font-weight:800; color:#006fc4; line-height:1.1;">WEEKLY CHECKLIST</div>
+                                    <?php endif; ?>
+                                </div>
+                                <div style="padding:8px; display:flex; align-items:center; justify-content:center;">
+                                    <img src="/vilcon-systemon/public/assets/img/vilcon-truck.jpg" alt="Truck" style="max-width:170px; width:100%; height:auto;">
+                                </div>
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1fr; border-bottom:1px solid #666;">
+                                <div style="background:#ffc400; font-weight:800; padding:4px 8px; text-align:center;">SHE MANAGEMENT SYSTEM</div>
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1.5fr 2.5fr;">
+                                <div style="padding:6px 8px; border-right:1px solid #666; text-align:center; font-weight:800;">
+                                    <?php if($isBasculanteChecklist): ?>
+                                    LISTA DE VERIFICACAO DE PRE-UTILIZACAO DO BASCULANTE / TIPPING TRUCK PRE-USE CHECKLIST
+                                    <?php else: ?>
+                                    LISTA DE VERIFICACAO DE PRE-UTILIZACAO DO BULLDOZER / BULLDOZER WEEKLY CHECKLIST
+                                    <?php endif; ?>
+                                </div>
+                                <div style="padding:6px 8px;"></div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                        <div class="section-title">Dados da Inspecao</div>
                         <div class="form-group">
-                            <label>Data da Inspecção</label>
+                            <label>Data da Inspecao</label>
                             <input type="date" name="data_inspecao_chk" value="<?= date('Y-m-d') ?>" required>
                         </div>
                         <div class="form-group">
-                            <label>Viatura / Máquina</label>
+                            <label>Ordem</label>
+                            <input type="text" name="ordem_chk" placeholder="Referencia da ordem">
+                        </div>
+                        <div class="form-group">
+                            <label>Data da Ordem</label>
+                            <input type="text" name="data_ordem_chk" placeholder="dd/mm/aaaa">
+                        </div>
+                        <div class="form-group">
+                            <label>Validade</label>
+                            <input type="text" name="validade_chk" placeholder="dd/mm/aaaa">
+                        </div>
+                        <div class="form-group">
+                            <label>Viatura / Maquina</label>
                             <input type="text" name="viatura_id_chk" required>
                         </div>
                         <div class="form-group">
@@ -5067,20 +5499,462 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </div>
                         <div class="form-group">
                             <label>Condutor</label>
-                            <input type="text" name="condutor_chk">
+                            <input type="text" name="condutor_chk" placeholder="Se nao tiver, deixar vazio">
+                            <div class="calc-note">Se nao houver condutor, fica como "Nao informado".</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Motorista/Operador</label>
+                            <input type="text" name="motorista_operador_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>Data Partida</label>
+                            <input type="text" name="data_partida_chk" placeholder="dd/mm/aaaa">
+                        </div>
+                        <div class="form-group">
+                            <label>Data Regresso</label>
+                            <input type="text" name="data_regresso_chk" placeholder="dd/mm/aaaa">
+                        </div>
+                        <div class="form-group">
+                            <label>Cliente</label>
+                            <input type="text" name="cliente_chk">
+                        </div>
+                        <div class="form-group" style="grid-column: span 4;">
+                            <label>Servico / Descricoes</label>
+                            <textarea name="servico_chk" rows="2" placeholder="Descricao do servico"></textarea>
                         </div>
                         <div class="form-group">
                             <label>Inspector</label>
                             <input type="text" name="inspector_chk" required>
                         </div>
-                        <div class="section-title">Itens do Checklist (✔ / ✖ / N/A)</div>
+                        <?php if($isHammerChecklist): ?>
+                        <div class="section-title">Cabecalho do Formulario</div>
+                        <div class="form-group">
+                            <label>CONTRACTOR / CONTRATANTE</label>
+                            <input type="text" name="contractor_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>SUBCONTRATOR / SUBCONTRATANTE</label>
+                            <input type="text" name="subcontractor_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>LOCATION / LOCALIZACAO</label>
+                            <input type="text" name="location_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>SUPERVISOR NAME / NOME DO SUPERVISOR</label>
+                            <input type="text" name="supervisor_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>FRONT OF SERVICE / FRENTE DO SERVICO</label>
+                            <input type="text" name="front_service_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>SERIAL NUMBER / NUMERO DA SERIE</label>
+                            <input type="text" name="serial_number_chk">
+                        </div>
+                        <div class="form-group">
+                            <label>FREQUENCY OF INSPECTION / FREQUENCIA DA INSPECAO</label>
+                            <input type="text" name="frequencia_inspecao_chk">
+                        </div>
+
+                        <div class="section-title">Descricao - Semana (Monday to Sunday)</div>
+                        <div style="grid-column: span 4; overflow:auto;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="3">#</th>
+                                        <th rowspan="3">DESCRIPTION / DESCRICAO</th>
+                                        <th colspan="3">MONDAY</th>
+                                        <th colspan="3">TUESDAY</th>
+                                        <th colspan="3">WEDNESDAY</th>
+                                        <th colspan="3">THURSDAY</th>
+                                        <th colspan="3">FRIDAY</th>
+                                        <th colspan="3">SATURDAY</th>
+                                        <th colspan="3">SUNDAY</th>
+                                        <th rowspan="3">Observacao</th>
+                                    </tr>
+                                    <tr>
+                                        <th colspan="3">Segunda-feira</th>
+                                        <th colspan="3">Terca-feira</th>
+                                        <th colspan="3">Quarta-feira</th>
+                                        <th colspan="3">Quinta-feira</th>
+                                        <th colspan="3">Sexta-feira</th>
+                                        <th colspan="3">Sabado</th>
+                                        <th colspan="3">Domingo</th>
+                                    </tr>
+                                    <tr>
+                                        <th colspan="21">Validacao</th>
+                                    </tr>
+                                    <tr>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>Y</th><th>N</th><th>N/A</th>
+                                        <th>Y</th><th>N</th><th>N/A</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php
+                                        $diasSemana = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+                                        $itensLista = array_values($itens_checklist_form);
+                                        for($linha = 1; $linha <= 46; $linha++):
+                                            $it = $itensLista[$linha - 1] ?? null;
+                                            $itemId = (int) ($it['id'] ?? 0);
+                                            $descricaoItem = (string) ($it['descricao'] ?? '');
+                                    ?>
+                                        <tr>
+                                            <td><?= $linha ?></td>
+                                            <td><?= htmlspecialchars($descricaoItem) ?></td>
+                                            <?php foreach($diasSemana as $dia): ?>
+                                                <?php if($itemId > 0): ?>
+                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="Y"></td>
+                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="N"></td>
+                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="NA" checked></td>
+                                                <?php else: ?>
+                                                    <td><input type="radio" disabled></td>
+                                                    <td><input type="radio" disabled></td>
+                                                    <td><input type="radio" checked disabled></td>
+                                                <?php endif; ?>
+                                            <?php endforeach; ?>
+                                            <?php if($itemId > 0): ?>
+                                                <td><input type="text" name="observacao_item[<?= $itemId ?>]" placeholder="Observacao"></td>
+                                            <?php else: ?>
+                                                <td><input type="text" placeholder="Observacao" disabled></td>
+                                            <?php endif; ?>
+                                        </tr>
+                                    <?php endfor; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="grid-column: span 4; background:#f8fbff; border:1px solid #d9e4f2; border-radius:8px; padding:10px; color:#2c3e50; font-size:12px;">
+                            <div><strong>RESPONSAVEL PELA INSPECAO / RESPONSIBLE FOR INSPECTION</strong></div>
+                            <div>DATE: DATE: DATE: DATE: DATE: DATE: DATE:</div>
+                            <div>Signature: Signature: Signature: Signature: Signature: Signature: Signature:</div>
+                            <div style="margin-top:8px;">NOTE: If there is an answer of no to any item, do not perform the service until Safety assessment.</div>
+                            <div>NA: Not Applicable / Nao Aplicavel</div>
+                            <div style="margin-top:8px;">RECOMMENDATIONS AND COMMENTS / RECOMENDACOES E COMENTARIOS</div>
+                        </div>
+                        <?php elseif($isBulldozerChecklist): ?>
+                        <?php $diasSemanaBulldozer = ['monday','tuesday','wednesday','thursday','friday','saturday']; ?>
+                        <div class="section-title">Bulldozer Weekly Checklist</div>
+                        <div style="grid-column: span 4; overflow:auto; page-break-after: always;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2">Item</th>
+                                        <th rowspan="2">Description / Descricao</th>
+                                        <th colspan="3">SEGUNDA / MONDAY</th>
+                                        <th colspan="3">TERCA / TUESDAY</th>
+                                        <th colspan="3">QUARTA / WEDNESDAY</th>
+                                        <th colspan="3">QUINTA / THURSDAY</th>
+                                        <th colspan="3">SEXTA / FRIDAY</th>
+                                        <th colspan="3">SABADO / SATURDAY</th>
+                                        <th rowspan="2">Obs.</th>
+                                    </tr>
+                                    <tr>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach($itens_checklist_form as $it): ?>
+                                        <?php
+                                            $itemId = (int) ($it['id'] ?? 0);
+                                            $descricaoFull = trim((string) ($it['descricao'] ?? ''));
+                                            $itemCodigo = '';
+                                            $itemDescricao = $descricaoFull;
+                                            if(preg_match('/^([0-9]+(?:\.[0-9]+)?)\s+(.+)$/', $descricaoFull, $mBul)) {
+                                                $itemCodigo = (string) $mBul[1];
+                                                $itemDescricao = (string) $mBul[2];
+                                            }
+                                            $isSubtitulo = preg_match('/^[0-9]+$/', $itemCodigo) === 1;
+                                            $subtituloTexto = preg_replace('/^[0-9]+\s*/', '', $descricaoFull);
+                                        ?>
+                                        <?php if($isSubtitulo): ?>
+                                            <tr>
+                                                <td colspan="21" style="background:#ffc400; font-weight:800; color:#111; text-transform:uppercase;">
+                                                    <?= htmlspecialchars($subtituloTexto) ?>
+                                                </td>
+                                            </tr>
+                                        <?php else: ?>
+                                            <tr>
+                                                <td><?= htmlspecialchars($itemCodigo !== '' ? $itemCodigo : '-') ?></td>
+                                                <td><?= htmlspecialchars($itemDescricao) ?></td>
+                                                <?php foreach($diasSemanaBulldozer as $dia): ?>
+                                                    <td>
+                                                        <label class="week-choice">
+                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="Y">
+                                                            <span class="week-mark">&#10004;</span>
+                                                        </label>
+                                                    </td>
+                                                    <td>
+                                                        <label class="week-choice">
+                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="N">
+                                                            <span class="week-mark">X</span>
+                                                        </label>
+                                                    </td>
+                                                    <td>
+                                                        <label class="week-choice">
+                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="NA">
+                                                            <span class="week-mark">A</span>
+                                                        </label>
+                                                    </td>
+                                                <?php endforeach; ?>
+                                                <td><input type="text" name="observacao_item[<?= $itemId ?>]" placeholder="Observacao"></td>
+                                            </tr>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="section-title">Registos e Assinaturas</div>
+                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px;">
+                            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+                                <div class="form-group"><label>Operator's Name and Signature / Nome & Assinatura do Operador</label><input type="text" name="operator_name_signature_chk"></div>
+                                <div class="form-group"><label>Construction Supervisor (CS) Name and Signature / Assinatura do Supervisor (CS)</label><input type="text" name="cs_name_signature_chk"></div>
+                                <div class="form-group"><label>SHE Name and Signature / Nome & Assinatura do SHE</label><input type="text" name="she_name_signature_chk"></div>
+                                <div class="form-group"><label>Date / Data</label><input type="text" name="registo_date_chk" placeholder="dd/mm/aaaa"></div>
+                            </div>
+                            <div style="margin-top:8px; font-size:12px; color:#2c3e50;">
+                                Observe todos os desvios no registo de accao correctiva, corrija os desvios e arquive para auditoria.
+                            </div>
+                        </div>
+
+                        <div class="section-title">Faults found / Deficiencias encontradas</div>
+                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; page-break-after: always;">
+                            <div class="form-group"><label>Faults found / Deficiencias encontradas</label><textarea name="faults_found_chk" rows="4"></textarea></div>
+                            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+                                <div class="form-group"><label>Date / Data</label><input type="text" name="faults_datetime_chk" placeholder="dd/mm/aaaa"></div>
+                                <div class="form-group"><label>Risk Level / Nivel de risco</label><input type="text" name="faults_reported_workshop_chk" placeholder="HIGH / MEDIUM / LOW"></div>
+                                <div class="form-group"><label>Signature (CS) / Assinatura (CS)</label><input type="text" name="faults_signature_chk"></div>
+                            </div>
+                        </div>
+
+                        <div class="section-title">Risk Level / Control Measure</div>
+                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; font-size:12px; color:#2c3e50;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th style="background:#d9d9d9; color:#111; font-weight:700;">Risk Level</th>
+                                        <th>Control Measure</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td style="background:#ff0000; color:#003a9a; font-weight:700; text-align:center;"><strong>HIGH/ALTO</strong></td>
+                                        <td>Do not operate. Remove from service. Store as Out of Order. Nao operar ate reparacao e analise 5-Porque.</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="background:#ffff00; color:#003a9a; font-weight:700; text-align:center;"><strong>MEDIUM/MEDIO</strong></td>
+                                        <td>Could be used until end of shift, but repair before next shift. Supervisor faz analise informal das causas.</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="background:#00cc66; color:#003a9a; font-weight:700; text-align:center;"><strong>LOW/BAIXO</strong></td>
+                                        <td>Can be fixed in next scheduled maintenance. Reportar condicao ao supervisor.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php elseif($isBasculanteChecklist): ?>
+                        <?php
+                            $pagina1 = []; // 1.x ate 4.8
+                            $pagina2 = []; // 5.x ate 6.4
+                            $outros = [];
+                            foreach($itens_checklist_form as $itTmp) {
+                                $descTmp = (string) ($itTmp['descricao'] ?? '');
+                                if(preg_match('/^([1-9])\.(\d+)/', $descTmp, $mTmp)) {
+                                    $sec = (int) $mTmp[1];
+                                    if($sec >= 1 && $sec <= 4) $pagina1[] = $itTmp;
+                                    elseif($sec === 5 || $sec === 6) $pagina2[] = $itTmp;
+                                    else $outros[] = $itTmp;
+                                } else {
+                                    $outros[] = $itTmp;
+                                }
+                            }
+                        ?>
+                        <div class="section-title">1. OPERATOR CERTIFCATION / CERTIFICACAO DE OPERADOR</div>
+                        <?php $diasSemanaBasculante = ['monday','tuesday','wednesday','thursday','friday','saturday']; ?>
+                        <div style="grid-column: span 4; page-break-after: always;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2">Item</th>
+                                        <th colspan="3">SEGUNDA / MONDAY</th>
+                                        <th colspan="3">TERCA / TUESDAY</th>
+                                        <th colspan="3">QUARTA / WEDNESDAY</th>
+                                        <th colspan="3">QUINTA / THURSDAY</th>
+                                        <th colspan="3">SEXTA / FRIDAY</th>
+                                        <th colspan="3">SABADO / SATURDAY</th>
+                                        <th rowspan="2">Obs.</th>
+                                    </tr>
+                                    <tr>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach($pagina1 as $it): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars((string) ($it['descricao'] ?? '')) ?></td>
+                                            <?php foreach($diasSemanaBasculante as $dia): ?>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="Y">
+                                                        <span class="week-mark">&#10004;</span>
+                                                    </label>
+                                                </td>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="N">
+                                                        <span class="week-mark">X</span>
+                                                    </label>
+                                                </td>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="NA">
+                                                        <span class="week-mark">A</span>
+                                                    </label>
+                                                </td>
+                                            <?php endforeach; ?>
+                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="section-title">5. FLUIDS / FLUIDOS e 6. LIGHT / LUZES</div>
+                        <div style="grid-column: span 4; page-break-after: always;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th rowspan="2">Item</th>
+                                        <th colspan="3">SEGUNDA / MONDAY</th>
+                                        <th colspan="3">TERCA / TUESDAY</th>
+                                        <th colspan="3">QUARTA / WEDNESDAY</th>
+                                        <th colspan="3">QUINTA / THURSDAY</th>
+                                        <th colspan="3">SEXTA / FRIDAY</th>
+                                        <th colspan="3">SABADO / SATURDAY</th>
+                                        <th rowspan="2">Obs.</th>
+                                    </tr>
+                                    <tr>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                        <th>&#10004;</th><th>X</th><th>N/A</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach($pagina2 as $it): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars((string) ($it['descricao'] ?? '')) ?></td>
+                                            <?php foreach($diasSemanaBasculante as $dia): ?>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="Y">
+                                                        <span class="week-mark">&#10004;</span>
+                                                    </label>
+                                                </td>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="N">
+                                                        <span class="week-mark">X</span>
+                                                    </label>
+                                                </td>
+                                                <td>
+                                                    <label class="week-choice">
+                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="NA">
+                                                        <span class="week-mark">A</span>
+                                                    </label>
+                                                </td>
+                                            <?php endforeach; ?>
+                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="section-title">6. HSE Officer, Deficiencias e Reporte</div>
+                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; page-break-after: always;">
+                            <div class="form-group" style="margin-bottom:8px;">
+                                <label>HSE Officer Name and Signature / Nome e Assinatura do official de Seguranca</label>
+                                <input type="text" name="hse_officer_name_chk">
+                            </div>
+                            <div class="form-group" style="margin-bottom:12px;">
+                                <label>Date / Data</label>
+                                <input type="text" name="hse_officer_date_chk" placeholder="dd/mm/aaaa">
+                            </div>
+
+                            <div style="font-weight:700; margin-bottom:8px;">Deficiencias encontradas / Faults found</div>
+                            <div class="form-group"><label>Faults found</label><textarea name="faults_found_chk" rows="3"></textarea></div>
+                            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+                                <div class="form-group"><label>Data/hora</label><input type="text" name="faults_datetime_chk" placeholder="dd/mm/aaaa hh:mm"></div>
+                                <div class="form-group"><label>Date/time reported to workshop</label><input type="text" name="faults_reported_workshop_chk" placeholder="dd/mm/aaaa hh:mm"></div>
+                                <div class="form-group"><label>Report From / Reportado por</label><input type="text" name="faults_report_from_chk"></div>
+                                <div class="form-group"><label>Signature / Assinatura</label><input type="text" name="faults_signature_chk"></div>
+                            </div>
+                        </div>
+
+                        <div class="section-title">7. Risk Level / Control Measure</div>
+                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; font-size:12px; color:#2c3e50;">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th style="background:#d9d9d9; color:#111; font-weight:700;">Risk Level / Control Measure</th>
+                                        <th>Control Measure/Medidas de control</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td style="background:#ff0000; color:#003a9a; font-weight:700; text-align:center;"><strong>HIGH/ALTO</strong></td>
+                                        <td>
+                                            Do not operate. Remove from Service. Store in designated damaged - mark "Out of Order".<br>
+                                            Nao opere. Retire imediatamente da actividade. Armazene no local designado para maquinas avariadas e marque "Avariado".<br>
+                                            Nao pode ser usado ate a reparacao dos problemas. O supervisor tem de fazer uma Analize de 5-Porque.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="background:#fff200; color:#003a9a; font-weight:700; text-align:center;"><strong>MEDIUM/MEDIO</strong></td>
+                                        <td>
+                                            Could be used until end of current shift, but needs to be repaired before start of next shift.<br>
+                                            Reporte ao supervisor para a verificacao. Pode ser usado para o turno corrente, mas deve ser reparado antes do inicio do proximo turno.<br>
+                                            O supervisor deve fazer uma Analise Informal das Causas.
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style="background:#00c853; color:#003a9a; font-weight:700; text-align:center;"><strong>LOW/BAIXO</strong></td>
+                                        <td>
+                                            Can be fixed with next scheduled maintenance.<br>
+                                            Continue a trabalhar mas tem de relatar as condicoes ao supervisor no final do turno.<br>
+                                            O supervisor faz uma Analise Informal das Causas para decidir se a maquina pode ser usada ate a reparacao ou ate a proxima revisao marcada.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <?php else: ?>
+                        <div class="section-title">Itens do Checklist (&#10004; / &#10006; / N/A)</div>
                         <div style="grid-column: span 4;">
                             <table class="history-table">
                                 <thead>
                                     <tr>
                                         <th>#</th>
                                         <th>Item</th>
-                                        <th>Validação</th>
+                                        <th>Validacao</th>
                                         <th>Obs.</th>
                                     </tr>
                                 </thead>
@@ -5092,20 +5966,21 @@ if($tab === 'transporte' && $view === 'presencas') {
                                             <td>
                                                 <input type="hidden" name="resultado_item[<?= (int) $it['id'] ?>]" id="resultado_item_<?= (int) $it['id'] ?>" value="na">
                                                 <div style="display:flex; gap:6px; align-items:center;">
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">✔</button>
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">✖</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">&#10004;</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">&#10006;</button>
                                                     <button type="button" class="btn-mode active" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'na')" id="btn_na_<?= (int) $it['id'] ?>">N/A</button>
                                                 </div>
                                             </td>
-                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observação"></td>
+                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
                         </div>
+                        <?php endif; ?>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Observações Gerais</label>
-                            <textarea name="observacoes_chk" rows="3" placeholder="Observações gerais da inspeção..."></textarea>
+                            <label>Observacoes Gerais</label>
+                            <textarea name="observacoes_chk" rows="3" placeholder="Observacoes gerais da inspecao..."></textarea>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                             <button type="submit" name="salvar_checklist" class="btn-save" style="background:var(--vilcon-orange);">Salvar Checklist</button>
@@ -5119,9 +5994,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Pedido de Reparação - Envio para Oficina</h3>
+                    <h3 style="text-transform: uppercase;">Pedido de ReparaÃ§Ã£o - Envio para Oficina</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5129,13 +6004,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <form method="POST" class="form-grid">
-                    <div class="section-title">Dados da Viatura / Máquina</div>
+                    <div class="section-title">Dados da Viatura / MÃ¡quina</div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
                         <input type="text" id="viatura_id_rep" name="viatura_id_rep" required placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>MatrÃ­cula</label>
                         <input type="text" id="matricula_rep" name="matricula_rep" list="matricula_rep_list" placeholder="Ex: AF-582-MC" autocomplete="off" oninput="this.value = this.value.toUpperCase()">
                         <datalist id="matricula_rep_list">
                             <?php foreach($veiculos_reparacao as $vr): ?>
@@ -5154,14 +6029,14 @@ if($tab === 'transporte' && $view === 'presencas') {
 
                     <div class="section-title">Dados da Avaria</div>
                     <div class="form-group">
-                        <label>Localização</label>
+                        <label>LocalizaÃ§Ã£o</label>
                         <input type="text" name="localizacao_rep" required placeholder="Ex: Pambarra, Vilanculos">
                     </div>
                     <div class="form-group">
                         <label>Prioridade</label>
                         <select name="prioridade_rep" required>
                             <option value="Alta">Alta</option>
-                            <option value="Media" selected>Média</option>
+                            <option value="Media" selected>MÃ©dia</option>
                             <option value="Baixa">Baixa</option>
                         </select>
                     </div>
@@ -5170,8 +6045,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" name="solicitante_rep" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição da Avaria / Reparação Necessária</label>
-                        <textarea name="avaria_reportada" rows="5" required placeholder="Descreva os sintomas, falhas e serviço solicitado..."></textarea>
+                        <label>DescriÃ§Ã£o da Avaria / ReparaÃ§Ã£o NecessÃ¡ria</label>
+                        <textarea name="avaria_reportada" rows="5" required placeholder="Descreva os sintomas, falhas e serviÃ§o solicitado..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_pedido_reparacao" class="btn-save" style="background:var(--vilcon-orange);">Salvar e Enviar para Oficina</button>
@@ -5184,9 +6059,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Relatório Atividades - Automático por OS</h3>
+                    <h3 style="text-transform: uppercase;">RelatÃ³rio Atividades - AutomÃ¡tico por OS</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5194,18 +6069,18 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <form method="POST" class="form-grid">
-                    <div class="ra-form-fields section-title">1. Seleção da Ordem de Serviço</div>
+                    <div class="ra-form-fields section-title">1. SeleÃ§Ã£o da Ordem de ServiÃ§o</div>
                     <div class="ra-form-fields form-group" style="grid-column: span 2;">
-                        <label>Número da OS</label>
+                        <label>NÃºmero da OS</label>
                         <select name="os_id_ra" id="os_id_ra" onchange="selecionarOsRelatorio(this.value)" required>
-                            <option value="">Selecionar Ordem de Serviço</option>
+                            <option value="">Selecionar Ordem de ServiÃ§o</option>
                             <?php foreach($os_para_relatorio as $osRel): ?>
                                 <option value="<?= (int) $osRel['id'] ?>" <?= ($os_relatorio_selecionada && (int) $os_relatorio_selecionada['id'] === (int) $osRel['id']) ? 'selected' : '' ?>>
                                     OS-<?= str_pad((string) $osRel['id'], 4, '0', STR_PAD_LEFT) ?> | <?= htmlspecialchars((string) ($osRel['viatura_id'] ?? '-')) ?> | <?= htmlspecialchars((string) ($osRel['condutor'] ?? '-')) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <div class="calc-note">O relatório será preenchido automaticamente com base na OS selecionada.</div>
+                        <div class="calc-note">O relatÃ³rio serÃ¡ preenchido automaticamente com base na OS selecionada.</div>
                     </div>
                     <div class="ra-form-fields form-group">
                         <label>Status da OS</label>
@@ -5216,7 +6091,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" id="ra_data_os" value="<?= !empty($os_relatorio_selecionada['data_saida']) ? htmlspecialchars(date('d/m/Y', strtotime((string) $os_relatorio_selecionada['data_saida']))) : '' ?>" readonly>
                     </div>
 
-                    <div class="ra-form-fields section-title">2. Dados Automáticos da Operação</div>
+                    <div class="ra-form-fields section-title">2. Dados AutomÃ¡ticos da OperaÃ§Ã£o</div>
                     <div class="ra-form-fields form-group">
                         <label>Viatura / Equipamento</label>
                         <input type="text" id="ra_viatura" readonly value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['viatura_id'] ?? '')) ?>">
@@ -5230,7 +6105,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" id="ra_local" readonly value="<?= htmlspecialchars(trim((string) (($os_relatorio_selecionada['local_saida'] ?? '') . ' -> ' . ($os_relatorio_selecionada['destino'] ?? '')))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Hora Início</label>
+                        <label>Hora InÃ­cio</label>
                         <input type="text" id="ra_hora_inicio" readonly value="<?= !empty($os_relatorio_selecionada['data_saida']) ? htmlspecialchars(date('H:i', strtotime((string) $os_relatorio_selecionada['data_saida']))) : '' ?>">
                     </div>
                     <div class="ra-form-fields form-group">
@@ -5250,11 +6125,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="number" id="ra_km_final" readonly value="<?= htmlspecialchars((string) (($os_relatorio_selecionada['km_chegada'] ?? $os_relatorio_selecionada['km_momento'] ?? ''))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Distância Percorrida (KM)</label>
+                        <label>DistÃ¢ncia Percorrida (KM)</label>
                         <input type="number" id="ra_distancia" step="0.01" readonly value="<?= htmlspecialchars((string) (($os_relatorio_selecionada['distancia_mapa_km'] ?? $os_relatorio_selecionada['distancia_km'] ?? ''))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Combustível Consumido (L)</label>
+                        <label>CombustÃ­vel Consumido (L)</label>
                         <input type="number" id="ra_combustivel" step="0.01" readonly value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['litros_abastecidos'] ?? '')) ?>">
                     </div>
                     <div class="ra-form-fields form-group" style="grid-column: span 4;">
@@ -5262,7 +6137,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <textarea id="ra_atividade" rows="4" readonly><?= htmlspecialchars((string) ($os_relatorio_selecionada['atividade_prevista'] ?? '')) ?></textarea>
                     </div>
 
-                    <div class="ra-form-fields section-title">3. Complemento do Relatório</div>
+                    <div class="ra-form-fields section-title">3. Complemento do RelatÃ³rio</div>
                     <div class="form-group">
                         <label>Projeto</label>
                         <input type="text" name="projeto_ra" placeholder="Ex: PROJ-001" required>
@@ -5272,20 +6147,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" name="supervisor_ra" value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['autorizado_por'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
-                        <textarea name="observacoes_ra" rows="3" placeholder="Ocorrências, atrasos, incidentes, etc."></textarea>
+                        <label>ObservaÃ§Ãµes</label>
+                        <textarea name="observacoes_ra" rows="3" placeholder="OcorrÃªncias, atrasos, incidentes, etc."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_relatorio_atividade" class="btn-save" style="background:var(--vilcon-orange);">Salvar Relatório de Atividades</button>
+                        <button type="submit" name="salvar_relatorio_atividade" class="btn-save" style="background:var(--vilcon-orange);">Salvar RelatÃ³rio de Atividades</button>
                     </div>
                 </form>
 
                 <div id="relatorio_print_sheet" class="relatorio-print-sheet">
-                    <div class="relatorio-print-title">RELATÓRIO DE ATIVIDADES - TRANSPORTE</div>
+                    <div class="relatorio-print-title">RELATÃ“RIO DE ATIVIDADES - TRANSPORTE</div>
                     <table class="relatorio-print-grid">
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Número da OS</span>
+                                <span class="relatorio-print-label">NÃºmero da OS</span>
                                 <span id="pv_os" class="relatorio-print-value"></span>
                             </td>
                             <td>
@@ -5319,7 +6194,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </tr>
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Hora Início</span>
+                                <span class="relatorio-print-label">Hora InÃ­cio</span>
                                 <span id="pv_hora_inicio" class="relatorio-print-value"></span>
                             </td>
                             <td>
@@ -5341,17 +6216,17 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <span id="pv_km_final" class="relatorio-print-value"></span>
                             </td>
                             <td>
-                                <span class="relatorio-print-label">Distância (KM)</span>
+                                <span class="relatorio-print-label">DistÃ¢ncia (KM)</span>
                                 <span id="pv_distancia" class="relatorio-print-value"></span>
                             </td>
                         </tr>
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Combustível Consumido (L)</span>
+                                <span class="relatorio-print-label">CombustÃ­vel Consumido (L)</span>
                                 <span id="pv_combustivel" class="relatorio-print-value"></span>
                             </td>
                             <td>
-                                <span class="relatorio-print-label">Consumo Médio (KM/L)</span>
+                                <span class="relatorio-print-label">Consumo MÃ©dio (KM/L)</span>
                                 <span id="pv_media" class="relatorio-print-value"></span>
                             </td>
                             <td></td>
@@ -5364,13 +6239,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </tr>
                         <tr>
                             <td colspan="3">
-                                <span class="relatorio-print-label">Observações</span>
+                                <span class="relatorio-print-label">ObservaÃ§Ãµes</span>
                                 <span id="pv_observacoes" class="relatorio-print-value"></span>
                             </td>
                         </tr>
                         <tr>
                             <td colspan="3" style="height:56px;">
-                                <span class="relatorio-print-label">Assinatura / Validação</span>
+                                <span class="relatorio-print-label">Assinatura / ValidaÃ§Ã£o</span>
                             </td>
                         </tr>
                     </table>
@@ -5382,9 +6257,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Gestão Operacional da Frota</h3>
+                    <h3 style="text-transform: uppercase;">GestÃ£o Operacional da Frota</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=operacional&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=operacional&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5393,21 +6268,21 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php endif; ?>
 
                 <form method="POST" class="form-grid">
-                    <div class="section-title">1. Cadastro de Viatura / Máquina</div>
+                    <div class="section-title">1. Cadastro de Viatura / MÃ¡quina</div>
                     <div class="form-group">
                         <label>Tipo de Ativo</label>
                         <select name="tipo_ativo" required>
                             <option value="Viatura">Viatura</option>
-                            <option value="Maquina">Máquina</option>
+                            <option value="Maquina">MÃ¡quina</option>
                             <option value="Equipamento">Equipamento</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Descrição</label>
-                        <input type="text" name="descricao_ativo" placeholder="Ex: Camião Basculante 12m3" required>
+                        <label>DescriÃ§Ã£o</label>
+                        <input type="text" name="descricao_ativo" placeholder="Ex: CamiÃ£o Basculante 12m3" required>
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>MatrÃ­cula</label>
                         <input type="text" name="matricula_ativo" placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
@@ -5422,27 +6297,27 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Status Operacional</label>
                         <select name="status_operacional_ativo" required>
                             <option value="Operacional">Operacional</option>
-                            <option value="Em Manutencao">Em Manutenção</option>
+                            <option value="Em Manutencao">Em ManutenÃ§Ã£o</option>
                             <option value="Parado">Parado</option>
-                            <option value="Indisponivel">Indisponível</option>
+                            <option value="Indisponivel">IndisponÃ­vel</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Última Manutenção</label>
+                        <label>Ãšltima ManutenÃ§Ã£o</label>
                         <input type="date" name="ultima_manutencao_ativo">
                     </div>
                     <div class="form-group">
-                        <label>Próxima Manutenção (KM)</label>
+                        <label>PrÃ³xima ManutenÃ§Ã£o (KM)</label>
                         <input type="number" name="proxima_manutencao_km_ativo" min="0">
                     </div>
                     <div class="form-group" style="justify-content:flex-end;">
                         <label><input type="checkbox" name="tem_gps_ativo"> Tem sistema GPS</label>
                     </div>
                     <div class="form-group" style="justify-content:flex-end;">
-                        <label><input type="checkbox" name="tem_sensor_comb_ativo"> Tem sensor de combustível</label>
+                        <label><input type="checkbox" name="tem_sensor_comb_ativo"> Tem sensor de combustÃ­vel</label>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
+                        <label>ObservaÃ§Ãµes</label>
                         <textarea name="observacoes_ativo" rows="2"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
@@ -5463,9 +6338,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" name="evento_id" value="<?= (int) ($evento_operacional_form['id'] ?? 0) ?>">
                         <input type="hidden" name="anexos_existentes_evento" value="<?= htmlspecialchars(json_encode($eventoAnexosList, JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>">
                     <?php endif; ?>
-                    <div class="section-title">2. Registro de Intervenção / Falha</div>
+                    <div class="section-title">2. Registro de IntervenÃ§Ã£o / Falha</div>
                     <div class="form-group" style="grid-column: span 2;">
-                        <label>Viatura / Máquina</label>
+                        <label>Viatura / Maquina</label>
                         <select name="ativo_id_evento" required>
                             <option value="">Selecionar ativo</option>
                             <?php foreach($lista_operacional_ativos as $atvEvt): ?>
@@ -5483,11 +6358,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Tipo de Evento</label>
                         <select name="tipo_evento" required>
                             <option value="Avaria" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Avaria')) ? 'selected' : '' ?>>Avaria</option>
-                            <option value="Roubo Combustivel" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Roubo Combustivel')) ? 'selected' : '' ?>>Roubo de Combustível</option>
-                            <option value="Falha Mecanica" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Mecanica')) ? 'selected' : '' ?>>Falha Mecânica</option>
+                            <option value="Roubo Combustivel" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Roubo Combustivel')) ? 'selected' : '' ?>>Roubo de CombustÃ­vel</option>
+                            <option value="Falha Mecanica" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Mecanica')) ? 'selected' : '' ?>>Falha MecÃ¢nica</option>
                             <option value="Falha Sistema" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Sistema')) ? 'selected' : '' ?>>Falha no Sistema</option>
-                            <option value="Manutencao Preventiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Preventiva')) ? 'selected' : '' ?>>Manutenção Preventiva</option>
-                            <option value="Manutencao Corretiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Corretiva')) ? 'selected' : '' ?>>Manutenção Corretiva</option>
+                            <option value="Manutencao Preventiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Preventiva')) ? 'selected' : '' ?>>ManutenÃ§Ã£o Preventiva</option>
+                            <option value="Manutencao Corretiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Corretiva')) ? 'selected' : '' ?>>ManutenÃ§Ã£o Corretiva</option>
                             <option value="Outro" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Outro')) ? 'selected' : '' ?>>Outro</option>
                         </select>
                     </div>
@@ -5495,20 +6370,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Severidade</label>
                         <select name="severidade_evento" required>
                             <option value="Baixa" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Baixa')) ? 'selected' : '' ?>>Baixa</option>
-                            <option value="Media" <?= (!$isEventoEdit || (($evento_operacional_form['severidade'] ?? 'Media') === 'Media')) ? 'selected' : '' ?>>Média</option>
+                            <option value="Media" <?= (!$isEventoEdit || (($evento_operacional_form['severidade'] ?? 'Media') === 'Media')) ? 'selected' : '' ?>>MÃ©dia</option>
                             <option value="Alta" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Alta')) ? 'selected' : '' ?>>Alta</option>
-                            <option value="Critica" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Critica')) ? 'selected' : '' ?>>Crítica</option>
+                            <option value="Critica" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Critica')) ? 'selected' : '' ?>>CrÃ­tica</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>KM / Horímetro</label>
+                        <label>KM / HorÃ­metro</label>
                         <input type="number" name="km_evento" min="0" value="<?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['km_horimetro'] ?? '')) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Status</label>
                         <select name="status_evento" required>
                             <option value="Aberto" <?= (!$isEventoEdit || (($evento_operacional_form['status'] ?? 'Aberto') === 'Aberto')) ? 'selected' : '' ?>>Aberto</option>
-                            <option value="Em Analise" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Em Analise')) ? 'selected' : '' ?>>Em Análise</option>
+                            <option value="Em Analise" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Em Analise')) ? 'selected' : '' ?>>Em AnÃ¡lise</option>
                             <option value="Resolvido" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Resolvido')) ? 'selected' : '' ?>>Resolvido</option>
                             <option value="Fechado" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Fechado')) ? 'selected' : '' ?>>Fechado</option>
                         </select>
@@ -5518,16 +6393,16 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="number" name="custo_estimado_evento" min="0" step="0.01" value="<?= $isEventoEdit ? number_format((float) ($evento_operacional_form['custo_estimado'] ?? 0), 2, '.', '') : '0' ?>">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>ResponsÃ¡vel</label>
                         <input type="text" name="responsavel_evento" value="<?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['responsavel'] ?? '')) : '' ?>">
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição da Falha / Intervenção</label>
-                        <textarea name="descricao_evento" rows="3" required placeholder="Detalhar falha no sistema, avaria, roubo de combustível, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['descricao_falha'] ?? '')) : '' ?></textarea>
+                        <label>DescriÃ§Ã£o da Falha / IntervenÃ§Ã£o</label>
+                        <textarea name="descricao_evento" rows="3" required placeholder="Detalhar falha no sistema, avaria, roubo de combustÃ­vel, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['descricao_falha'] ?? '')) : '' ?></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Ação Tomada</label>
-                        <textarea name="acao_tomada_evento" rows="2" placeholder="Ex: Imobilização, inspeção técnica, chamada da oficina, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['acao_tomada'] ?? '')) : '' ?></textarea>
+                        <label>AÃ§Ã£o Tomada</label>
+                        <textarea name="acao_tomada_evento" rows="2" placeholder="Ex: ImobilizaÃ§Ã£o, inspeÃ§Ã£o tÃ©cnica, chamada da oficina, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['acao_tomada'] ?? '')) : '' ?></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
                         <label>Anexos (PDF/Fotos)</label>
@@ -5535,10 +6410,10 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <?php if(!empty($eventoAnexosList)): ?>
                             <div class="calc-note">Anexos atuais: <?= htmlspecialchars(implode(', ', array_map('basename', $eventoAnexosList))) ?></div>
                         <?php endif; ?>
-                        <div class="calc-note">Pode anexar fotos da falha, relatório técnico e comprovativos (máx. 10MB por ficheiro).</div>
+                        <div class="calc-note">Pode anexar fotos da falha, relatÃ³rio tÃ©cnico e comprovativos (mÃ¡x. 10MB por ficheiro).</div>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="<?= $isEventoEdit ? 'atualizar_frota_evento' : 'salvar_frota_evento' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isEventoEdit ? 'Atualizar Intervenção/Falha' : 'Salvar Intervenção/Falha' ?></button>
+                        <button type="submit" name="<?= $isEventoEdit ? 'atualizar_frota_evento' : 'salvar_frota_evento' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isEventoEdit ? 'Atualizar IntervenÃ§Ã£o/Falha' : 'Salvar IntervenÃ§Ã£o/Falha' ?></button>
                     </div>
                 </form>
             </div>
@@ -5548,9 +6423,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Requisições Externas por Déficit de Stock</h3>
+                    <h3 style="text-transform: uppercase;">RequisiÃ§Ãµes Externas por DÃ©ficit de Stock</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5568,7 +6443,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                     if(!$reqForm && !empty($sugestoes_requisicoes)) $reqForm = $sugestoes_requisicoes[0];
                 ?>
                 <?php if(!$reqForm): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Sem déficit de stock detectado no momento para gerar requisição automática.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Sem dÃ©ficit de stock detectado no momento para gerar requisiÃ§Ã£o automÃ¡tica.</div>
                 <?php else: ?>
                     <form method="POST" enctype="multipart/form-data" class="form-grid">
                         <?php if($isReqEdit): ?>
@@ -5588,7 +6463,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" name="quantidade_sugerida_req" value="<?= number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>">
                         <input type="hidden" name="fornecedor_sugerido_req" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? '')) ?>">
 
-                        <div class="section-title">Análise Automática de Déficit</div>
+                        <div class="section-title">AnÃ¡lise AutomÃ¡tica de DÃ©ficit</div>
                         <div class="form-group">
                             <label>Item</label>
                             <input type="text" value="<?= htmlspecialchars((string) (($reqForm['codigo'] ?? '') . ' - ' . ($reqForm['nome'] ?? ''))) ?>" readonly>
@@ -5602,11 +6477,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <input type="text" value="<?= number_format((float) ($reqForm['stock_atual'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Stock Mínimo</label>
+                            <label>Stock MÃ­nimo</label>
                             <input type="text" value="<?= number_format((float) ($reqForm['stock_minimo'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Saída Média / Dia</label>
+                            <label>SaÃ­da MÃ©dia / Dia</label>
                             <input type="text" value="<?= number_format((float) ($reqForm['saida_media_dia'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
@@ -5622,13 +6497,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <input type="text" value="<?= htmlspecialchars((string) ($reqForm['prioridade'] ?? 'Media')) ?>" readonly>
                         </div>
 
-                        <div class="section-title">Dados da Requisição Externa</div>
+                        <div class="section-title">Dados da RequisiÃ§Ã£o Externa</div>
                         <div class="form-group">
                             <label>Fornecedor Sugerido</label>
                             <input type="text" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? 'Fornecedor Geral')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Fornecedor (já cadastrado)</label>
+                            <label>Fornecedor (jÃ¡ cadastrado)</label>
                             <select name="fornecedor_id_req" id="fornecedor_id_req" onchange="onFornecedorSelectReq(this)">
                                 <option value="">Selecionar fornecedor</option>
                                 <?php foreach($fornecedores_requisicao as $fornReq): ?>
@@ -5660,7 +6535,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <input type="number" id="quantidade_solicitada_req" name="quantidade_solicitada_req" min="0.01" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['quantidade_solicitada'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>" required oninput="atualizarCustoRequisicao()">
                         </div>
                         <div class="form-group">
-                            <label>Preço Unitário Estimado</label>
+                            <label>PreÃ§o UnitÃ¡rio Estimado</label>
                             <input type="number" id="preco_unitario_req" name="preco_unitario_req" min="0" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['preco_unitario_estimado'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['preco_medio'] ?? 0), 2, '.', '') ?>" oninput="atualizarCustoRequisicao()" required>
                         </div>
                         <div class="form-group">
@@ -5688,8 +6563,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <input type="text" name="solicitante_req" value="<?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['solicitante'] ?? '')) : '' ?>" required>
                         </div>
                         <div class="form-group" style="grid-column: span 3;">
-                            <label>Justificativa Técnica</label>
-                            <textarea name="justificativa_req" rows="3" required><?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['justificativa'] ?? '')) : 'Déficit automático detectado no stock (saldo abaixo do mínimo e/ou cobertura baixa). Requisição gerada para evitar ruptura operacional.' ?></textarea>
+                            <label>Justificativa TÃ©cnica</label>
+                            <textarea name="justificativa_req" rows="3" required><?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['justificativa'] ?? '')) : 'DÃ©ficit automÃ¡tico detectado no stock (saldo abaixo do mÃ­nimo e/ou cobertura baixa). RequisiÃ§Ã£o gerada para evitar ruptura operacional.' ?></textarea>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
                             <label>Anexos (PDF/Fotos)</label>
@@ -5697,10 +6572,10 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php if(!empty($reqAnexosList)): ?>
                                 <div class="calc-note">Anexos atuais: <?= htmlspecialchars(implode(', ', array_map('basename', $reqAnexosList))) ?></div>
                             <?php endif; ?>
-                            <div class="calc-note">Anexe cotações, propostas de fornecedor, fotos e documentos de suporte.</div>
+                            <div class="calc-note">Anexe cotaÃ§Ãµes, propostas de fornecedor, fotos e documentos de suporte.</div>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar Requisição Externa' : 'Gerar Requisição Externa' ?></button>
+                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar RequisiÃ§Ã£o Externa' : 'Gerar RequisiÃ§Ã£o Externa' ?></button>
                         </div>
                     </form>
                 <?php endif; ?>
@@ -5711,9 +6586,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Controle Combustível - Mapa de Diesel</h3>
+                    <h3 style="text-transform: uppercase;">Controle CombustÃ­vel - Mapa de Diesel</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=combustivel&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=combustivel&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5723,7 +6598,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <form method="POST" class="form-grid">
                     <div class="section-title">Mapa de Diesel</div>
                     <div class="form-group" style="grid-column: span 2;">
-                        <label>Ordem de Serviço</label>
+                        <label>Ordem de ServiÃ§o</label>
                         <select name="ordem_servico_diesel" id="ordem_servico_diesel" onchange="preencherMapaDieselPorOs(this)">
                             <option value="">Selecionar OS (opcional)</option>
                             <?php foreach($os_para_diesel as $osDiesel): ?>
@@ -5740,7 +6615,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <div class="calc-note">Selecionando a OS, os campos principais são preenchidos automaticamente.</div>
+                        <div class="calc-note">Selecionando a OS, os campos principais sÃ£o preenchidos automaticamente.</div>
                     </div>
                     <div class="form-group">
                         <label>Data do Movimento</label>
@@ -5754,14 +6629,14 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <label>Tipo de Movimento</label>
                         <select name="tipo_movimento_diesel" required>
                             <option value="Entrada">Entrada</option>
-                            <option value="Saida" selected>Saída</option>
-                            <option value="Transferencia">Transferência</option>
+                            <option value="Saida" selected>SaÃ­da</option>
+                            <option value="Transferencia">TransferÃªncia</option>
                             <option value="Ajuste">Ajuste</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Documento Ref.</label>
-                        <input type="text" id="documento_ref_diesel" name="documento_ref_diesel" placeholder="Ex: Guia/Requisição">
+                        <input type="text" id="documento_ref_diesel" name="documento_ref_diesel" placeholder="Ex: Guia/RequisiÃ§Ã£o">
                     </div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
@@ -5777,11 +6652,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="number" id="litros_diesel" name="litros_diesel" min="0" step="0.01" oninput="atualizarTotalDiesel()" required>
                     </div>
                     <div class="form-group">
-                        <label>Preço Unitário</label>
+                        <label>PreÃ§o UnitÃ¡rio</label>
                         <input type="number" id="preco_unitario_diesel" name="preco_unitario_diesel" min="0" step="0.01" oninput="atualizarTotalDiesel()" required>
                     </div>
                     <div class="form-group">
-                        <label>Valor Total (Automático)</label>
+                        <label>Valor Total (AutomÃ¡tico)</label>
                         <input type="number" id="valor_total_diesel" step="0.01" readonly>
                     </div>
                     <div class="form-group">
@@ -5793,12 +6668,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" name="fornecedor_diesel">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>ResponsÃ¡vel</label>
                         <input type="text" name="responsavel_diesel" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
-                        <textarea name="observacoes_diesel" rows="3" placeholder="Observações do movimento de combustível..."></textarea>
+                        <label>ObservaÃ§Ãµes</label>
+                        <textarea name="observacoes_diesel" rows="3" placeholder="ObservaÃ§Ãµes do movimento de combustÃ­vel..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_mapa_diesel" class="btn-save" style="background:var(--vilcon-orange);">Salvar Mapa de Diesel</button>
@@ -5811,9 +6686,9 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;"><i class="fa-solid fa-warehouse"></i> Controle de Stock - Avançado</h3>
+                    <h3 style="text-transform: uppercase;"><i class="fa-solid fa-warehouse"></i> Controle de Stock - AvanÃ§ado</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=stock&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=stock&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5822,11 +6697,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php endif; ?>
                 <div class="stock-form-banner">
                     <i class="fa-solid fa-lightbulb"></i>
-                    Registe entradas, saídas e ajustes com rastreio por OS, projeto e responsável.
+                    Registe entradas, saÃ­das e ajustes com rastreio por OS, projeto e responsÃ¡vel.
                 </div>
 
                 <form method="POST" class="form-grid">
-                    <div class="section-title"><i class="fa-solid fa-right-left"></i> 1. Movimentação de Stock</div>
+                    <div class="section-title"><i class="fa-solid fa-right-left"></i> 1. MovimentaÃ§Ã£o de Stock</div>
                     <div class="form-group">
                         <label>Data do Movimento</label>
                         <input type="date" name="data_movimento_stock" value="<?= date('Y-m-d') ?>" required>
@@ -5843,15 +6718,15 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Item não existe? Nome do novo item</label>
-                        <input type="text" name="novo_item_nome_stock" placeholder="Ex: Óleo Caixa 85W140">
-                        <div class="calc-note">Se preencher aqui, o item é cadastrado automaticamente.</div>
+                        <label>Item nÃ£o existe? Nome do novo item</label>
+                        <input type="text" name="novo_item_nome_stock" placeholder="Ex: Ã“leo Caixa 85W140">
+                        <div class="calc-note">Se preencher aqui, o item Ã© cadastrado automaticamente.</div>
                     </div>
                     <div class="form-group">
                         <label>Categoria do novo item</label>
                         <select name="novo_item_categoria_stock">
-                            <option value="Combustivel">Combustível</option>
-                            <option value="Oleo">Óleo</option>
+                            <option value="Combustivel">CombustÃ­vel</option>
+                            <option value="Oleo">Ã“leo</option>
                             <option value="Lubrificante">Lubrificante</option>
                             <option value="Aditivo">Aditivo</option>
                             <option value="Outros" selected>Outros</option>
@@ -5867,13 +6742,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <div class="form-group">
                         <label>Local do novo item</label>
-                        <input type="text" name="novo_item_local_stock" placeholder="Ex: Armazém TO">
+                        <input type="text" name="novo_item_local_stock" placeholder="Ex: ArmazÃ©m TO">
                     </div>
                     <div class="form-group">
                         <label>Tipo Movimento</label>
                         <select name="tipo_movimento_stock" required>
                             <option value="Entrada">Entrada</option>
-                            <option value="Saida" selected>Saída</option>
+                            <option value="Saida" selected>SaÃ­da</option>
                             <option value="Ajuste">Ajuste</option>
                         </select>
                     </div>
@@ -5891,26 +6766,26 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <div class="form-group">
                         <label>Cliente/Comprador (Venda)</label>
-                        <input type="text" name="cliente_venda_stock" placeholder="Obrigatório se finalidade = Venda">
+                        <input type="text" name="cliente_venda_stock" placeholder="ObrigatÃ³rio se finalidade = Venda">
                     </div>
                     <div class="form-group">
                         <label>Quantidade</label>
                         <input type="number" id="quantidade_stock" name="quantidade_stock" min="0.01" step="0.01" required oninput="atualizarTotalMovStock()">
                     </div>
                     <div class="form-group">
-                        <label>Preço Unitário</label>
+                        <label>PreÃ§o UnitÃ¡rio</label>
                         <input type="number" id="preco_unitario_stock" name="preco_unitario_stock" min="0" step="0.01" oninput="atualizarTotalMovStock()">
                     </div>
                     <div class="form-group">
-                        <label>Valor Total (Automático)</label>
+                        <label>Valor Total (AutomÃ¡tico)</label>
                         <input type="number" id="valor_total_stock" step="0.01" readonly>
                     </div>
                     <div class="form-group">
                         <label>Projeto</label>
-                        <input type="text" name="projeto_stock" placeholder="Obrigatório se finalidade = Projeto">
+                        <input type="text" name="projeto_stock" placeholder="ObrigatÃ³rio se finalidade = Projeto">
                     </div>
                     <div class="form-group">
-                        <label>OS Referência (Opcional)</label>
+                        <label>OS ReferÃªncia (Opcional)</label>
                         <select name="ordem_servico_stock">
                             <option value="">Sem OS</option>
                             <?php foreach($os_para_stock as $osSt): ?>
@@ -5923,11 +6798,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="text" name="documento_ref_stock">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>ResponsÃ¡vel</label>
                         <input type="text" name="responsavel_stock" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
+                        <label>ObservaÃ§Ãµes</label>
                         <textarea name="observacoes_stock" rows="2"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
@@ -5936,20 +6811,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                 </form>
 
                 <form method="POST" class="form-grid" style="margin-top:18px;">
-                    <div class="section-title"><i class="fa-solid fa-square-plus"></i> 2. Cadastro de Item (Combustível, Óleo, Lubrificante)</div>
+                    <div class="section-title"><i class="fa-solid fa-square-plus"></i> 2. Cadastro de Item (CombustÃ­vel, Ã“leo, Lubrificante)</div>
                     <div class="form-group">
-                        <label>Código</label>
+                        <label>CÃ³digo</label>
                         <input type="text" name="codigo_item_stock" required placeholder="Ex: STK-OLEO-5W30">
                     </div>
                     <div class="form-group">
                         <label>Nome Item</label>
-                        <input type="text" name="nome_item_stock" required placeholder="Ex: Óleo Motor 5W30">
+                        <input type="text" name="nome_item_stock" required placeholder="Ex: Ã“leo Motor 5W30">
                     </div>
                     <div class="form-group">
                         <label>Categoria</label>
                         <select name="categoria_item_stock" required>
-                            <option value="Combustivel">Combustível</option>
-                            <option value="Oleo">Óleo</option>
+                            <option value="Combustivel">CombustÃ­vel</option>
+                            <option value="Oleo">Ã“leo</option>
                             <option value="Lubrificante">Lubrificante</option>
                             <option value="Aditivo">Aditivo</option>
                             <option value="Outros">Outros</option>
@@ -5968,16 +6843,16 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="number" name="stock_inicial_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
-                        <label>Stock Mínimo</label>
+                        <label>Stock MÃ­nimo</label>
                         <input type="number" name="stock_minimo_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
-                        <label>Preço Médio</label>
+                        <label>PreÃ§o MÃ©dio</label>
                         <input type="number" name="preco_medio_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
                         <label>Local Armazenamento</label>
-                        <input type="text" name="local_item_stock" placeholder="Ex: Bomba Principal / Armazém TO">
+                        <input type="text" name="local_item_stock" placeholder="Ex: Bomba Principal / ArmazÃ©m TO">
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_item_stock" class="btn-save" style="background:#2c3e50;">Cadastrar Item de Stock</button>
@@ -5990,14 +6865,14 @@ if($tab === 'transporte' && $view === 'presencas') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Abastecimento - Formulários Recebidos</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar à Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Abastecimento - FormulÃ¡rios Recebidos</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <?php if(empty($os_form)): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de Serviço na lista para preencher o abastecimento.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de ServiÃ§o na lista para preencher o abastecimento.</div>
                 <?php else: ?>
                     <?php
                         $tipoServicoResumo = trim((string) ($os_form['tipo_servico'] ?? ''));
@@ -6023,10 +6898,10 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>OS:</strong> OS-<?= str_pad((string) $os_form['id'], 4, '0', STR_PAD_LEFT) ?></div>
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Viatura/Maquina:</strong> <?= htmlspecialchars((string) ($os_form['viatura_id'] ?? '-')) ?></div>
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Condutor:</strong> <?= htmlspecialchars((string) ($os_form['condutor'] ?? '-')) ?></div>
-                        <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Tipo de Serviço:</strong> <?= htmlspecialchars($tipoServicoResumo !== '' ? $tipoServicoResumo : '-') ?></div>
+                        <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Tipo de ServiÃ§o:</strong> <?= htmlspecialchars($tipoServicoResumo !== '' ? $tipoServicoResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Empresa/Cliente/Projeto:</strong> <?= htmlspecialchars($empresaProjetoResumo !== '' ? $empresaProjetoResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Quantidade Inicial Abastecida (L):</strong> <?= htmlspecialchars($quantidadeInicialResumo) ?></div>
-                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Descrição do Serviço a ser Realizado:</strong> <?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '-')) ?></div>
+                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>DescriÃ§Ã£o do ServiÃ§o a ser Realizado:</strong> <?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '-')) ?></div>
                     </div>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
@@ -6037,7 +6912,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" id="consumo_l_100km_base" name="consumo_l_100km" value="<?= htmlspecialchars($consumoResumo !== '' ? $consumoResumo : '') ?>">
                         <div class="section-title">3. Abastecimento</div>
                         <div class="form-group">
-                            <label>Saída - Local de Saída</label>
+                            <label>SaÃ­da - Local de SaÃ­da</label>
                             <input type="text" value="<?= htmlspecialchars((string) ($os_form['local_saida'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
@@ -6058,14 +6933,14 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" id="ultimo_litros_historico" value="<?= number_format((float) ($analise_consumo_os['ultimo_litros_historico'] ?? 0), 2, '.', '') ?>">
 
                         <div style="grid-column: span 4; display:flex; justify-content:flex-start; margin-top:6px;">
-                            <button type="button" id="toggle_mapa_btn" class="btn-mode" onclick="toggleMapaSection()"><strong>+</strong> Distância Inteligente (Mapa)</button>
+                            <button type="button" id="toggle_mapa_btn" class="btn-mode" onclick="toggleMapaSection()"><strong>+</strong> DistÃ¢ncia Inteligente (Mapa)</button>
                         </div>
                         <div id="mapa_section_body" style="grid-column: span 4; display:none; grid-template-columns: repeat(4, 1fr); gap:10px;">
-                            <div class="section-title">4. Distância Inteligente (Mapa)</div>
-                            <div class="calc-note" style="grid-column: span 4;"><?= !empty($googleMapsApiKey) ? 'Motor de rota: Google Maps (com fallback automático).' : 'Google API não configurada; usando fallback OSRM.' ?></div>
+                            <div class="section-title">4. DistÃ¢ncia Inteligente (Mapa)</div>
+                            <div class="calc-note" style="grid-column: span 4;"><?= !empty($googleMapsApiKey) ? 'Motor de rota: Google Maps (com fallback automÃ¡tico).' : 'Google API nÃ£o configurada; usando fallback OSRM.' ?></div>
                             <div class="form-group" style="grid-column: span 4; flex-direction:row; align-items:center; gap:8px;">
                                 <input type="checkbox" id="modo_manual_mapa">
-                                <label for="modo_manual_mapa" style="margin:0;">Modo manual avançado (ajuste de KM/tempo/consumo se o mapa divergir)</label>
+                                <label for="modo_manual_mapa" style="margin:0;">Modo manual avanÃ§ado (ajuste de KM/tempo/consumo se o mapa divergir)</label>
                             </div>
                             <div class="form-group" style="grid-column: span 2;">
                                 <label>Origem (Mapa)</label>
@@ -6078,15 +6953,15 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <div class="form-group">
                                 <label>Leitura Final do Conta-KM</label>
                                 <input type="number" id="km_momento" name="km_momento" value="<?= htmlspecialchars((string) (($os_form['km_chegada'] ?? '') !== '' ? $os_form['km_chegada'] : ($os_form['km_saida'] ?? ''))) ?>" min="<?= (int) ($os_form['km_saida'] ?? 0) ?>" readonly required>
-                                <div class="calc-note">Valor do painel da viatura/máquina no fim do percurso.</div>
+                                <div class="calc-note">Valor do painel da viatura/mÃ¡quina no fim do percurso.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância Percorrida pelo Conta-KM (KM)</label>
+                                <label>DistÃ¢ncia Percorrida pelo Conta-KM (KM)</label>
                                 <input type="number" id="distancia_km_calc" step="0.01" readonly>
                                 <div class="calc-note">Calculada automaticamente: leitura final menos leitura inicial.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância mapa (KM)</label>
+                                <label>DistÃ¢ncia mapa (KM)</label>
                                 <input type="number" id="distancia_mapa_km" name="distancia_mapa_km" step="0.001" readonly>
                             </div>
                             <div class="form-group">
@@ -6094,7 +6969,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <input type="number" id="tempo_mapa_min" name="tempo_mapa_min" step="0.1" readonly>
                             </div>
                             <div class="form-group">
-                                <label>Duração (texto)</label>
+                                <label>DuraÃ§Ã£o (texto)</label>
                                 <input type="text" id="tempo_mapa_humano" placeholder="Ex: 10 h 44 min" readonly>
                             </div>
                             <div class="form-group">
@@ -6102,23 +6977,23 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <input type="number" id="consumo_l_100km_view" min="0" step="0.01" value="<?= htmlspecialchars($consumoResumo !== '' ? $consumoResumo : '') ?>" placeholder="Ex: 28.00">
                             </div>
                             <div class="form-group">
-                                <label>Consumo Histórico Real (L/100 KM)</label>
+                                <label>Consumo HistÃ³rico Real (L/100 KM)</label>
                                 <input type="number" id="consumo_historico_real" value="<?= number_format((float) ($analise_consumo_os['consumo_historico_l100'] ?? 0), 2, '.', '') ?>" readonly>
                                 <div class="calc-note">
                                     <?php if((int) ($analise_consumo_os['amostras_historico'] ?? 0) > 0): ?>
-                                        Histórico com <?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?> registo(s)<?= !empty($analise_consumo_os['ultima_data_historico']) ? ' | Último em ' . date('d/m/Y', strtotime((string) $analise_consumo_os['ultima_data_historico'])) : '' ?>
+                                        HistÃ³rico com <?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?> registo(s)<?= !empty($analise_consumo_os['ultima_data_historico']) ? ' | Ãšltimo em ' . date('d/m/Y', strtotime((string) $analise_consumo_os['ultima_data_historico'])) : '' ?>
                                     <?php else: ?>
-                                        Sem histórico desta viatura/máquina ainda. O sistema usa o consumo base.
+                                        Sem histÃ³rico desta viatura/mÃ¡quina ainda. O sistema usa o consumo base.
                                     <?php endif; ?>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label>Margem de Segurança (%)</label>
+                                <label>Margem de SeguranÃ§a (%)</label>
                                 <input type="number" id="margem_operacional" min="0" step="0.1" value="8.0">
-                                <div class="calc-note">Reserva extra para trânsito, carga, desvios e paragens.</div>
+                                <div class="calc-note">Reserva extra para trÃ¢nsito, carga, desvios e paragens.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância Considerada no Cálculo (KM)</label>
+                                <label>DistÃ¢ncia Considerada no CÃ¡lculo (KM)</label>
                                 <input type="number" id="distancia_utilizada_preview" step="0.001" readonly>
                             </div>
                             <div class="form-group">
@@ -6146,8 +7021,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <button type="button" class="btn-mode" onclick="aplicarLitrosRecomendados()">Aplicar litros recomendados</button>
                             </div>
                             <div class="form-group" style="grid-column: span 2;">
-                                <label>Status do Cálculo</label>
-                                <input type="text" id="map_status" value="Aguardando cálculo" readonly>
+                                <label>Status do CÃ¡lculo</label>
+                                <input type="text" id="map_status" value="Aguardando cÃ¡lculo" readonly>
                             </div>
                             <div class="form-group" style="grid-column: span 2; justify-content:flex-end;">
                                 <label>&nbsp;</label>
@@ -6164,8 +7039,8 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <button type="submit" name="rejeitar_abastecimento" class="btn-save" style="background:#c0392b; margin-left:10px;" onclick="prepararRejeicaoAbastecimento(this.form)">Rejeitar Abastecimento</button>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Motivo da Rejeição (obrigatório para rejeitar)</label>
-                            <textarea name="motivo_rejeicao" rows="2" placeholder="Explique por que a atividade não é viável para esta viatura/máquina..."></textarea>
+                            <label>Motivo da RejeiÃ§Ã£o (obrigatÃ³rio para rejeitar)</label>
+                            <textarea name="motivo_rejeicao" rows="2" placeholder="Explique por que a atividade nÃ£o Ã© viÃ¡vel para esta viatura/mÃ¡quina..."></textarea>
                         </div>
                     </form>
                 <?php endif; ?>
@@ -6178,12 +7053,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <div class="inner-nav">
                     <h3 style="text-transform: uppercase;">Frentista - Confirmar Abastecimento</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=frentista&view=tarefas&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=frentista&view=tarefas&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
                 <?php if(empty($os_form)): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma OS pendente para confirmação.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma OS pendente para confirmaÃ§Ã£o.</div>
                 <?php else: ?>
                     <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:18px;">
                         <div><strong>OS:</strong> OS-<?= str_pad((string) $os_form['id'], 4, '0', STR_PAD_LEFT) ?></div>
@@ -6192,21 +7067,21 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div><strong>Status:</strong> <?= htmlspecialchars($os_form['status'] ?? '-') ?></div>
                         <div><strong>Origem:</strong> <?= htmlspecialchars((string) ($comb_form['origem_mapa'] ?? $os_form['local_saida'] ?? '-')) ?></div>
                         <div><strong>Destino:</strong> <?= htmlspecialchars((string) ($comb_form['destino_mapa'] ?? $os_form['destino'] ?? '-')) ?></div>
-                        <div><strong>Distância (KM):</strong> <?= htmlspecialchars((string) ($comb_form['distancia_mapa_km'] ?? $os_form['distancia_km'] ?? '-')) ?></div>
+                        <div><strong>DistÃ¢ncia (KM):</strong> <?= htmlspecialchars((string) ($comb_form['distancia_mapa_km'] ?? $os_form['distancia_km'] ?? '-')) ?></div>
                         <div><strong>Tempo (Min):</strong> <?= htmlspecialchars((string) ($comb_form['tempo_mapa_min'] ?? '-')) ?></div>
                         <div><strong>Litros recomendados:</strong> <?= htmlspecialchars((string) ($comb_form['litros_recomendados'] ?? '-')) ?></div>
                         <div><strong>Litros abastecidos:</strong> <?= htmlspecialchars((string) ($comb_form['litros_abastecidos'] ?? '-')) ?></div>
                     </div>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
-                        <div class="section-title">Confirmação do Frentista</div>
+                        <div class="section-title">ConfirmaÃ§Ã£o do Frentista</div>
                         <div class="form-group">
                             <label>Nome do Frentista</label>
                             <input type="text" name="frentista_nome" required>
                         </div>
                         <div class="form-group" style="grid-column: span 3;">
-                            <label>Observação (Opcional)</label>
-                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem divergências">
+                            <label>ObservaÃ§Ã£o (Opcional)</label>
+                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem divergÃªncias">
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                             <button type="submit" name="confirmar_abastecimento_frentista" class="btn-save" style="background:var(--success);">Confirmar e Encerrar Fluxo</button>
@@ -6568,13 +7443,13 @@ if($tab === 'transporte' && $view === 'presencas') {
             const min = parseTempoHumanoParaMin(tempoHumanoEl.value);
             if(Number.isNaN(min) || min <= 0){
                 if(statusEl && tempoHumanoEl.value.trim() !== ''){
-                    statusEl.value = 'Formato de duração inválido. Use: 10 h 44 min, 10:44 ou minutos.';
+                    statusEl.value = 'Formato de duraÃ§Ã£o invÃ¡lido. Use: 10 h 44 min, 10:44 ou minutos.';
                 }
                 return;
             }
             tempoEl.value = min.toFixed(1);
             if(statusEl){
-                statusEl.value = `Duração manual aplicada: ${formatarMinutosHumanizado(min)} (${tempoEl.value} min)`;
+                statusEl.value = `DuraÃ§Ã£o manual aplicada: ${formatarMinutosHumanizado(min)} (${tempoEl.value} min)`;
             }
             atualizarLitrosRecomendados();
         }
@@ -6772,7 +7647,7 @@ if($tab === 'transporte' && $view === 'presencas') {
 
         function estimarTempoMinPorDistancia(km){
             if(Number.isNaN(km) || km <= 0) return NaN;
-            // Média urbana prática para trajetos curtos quando o provedor não devolve duração
+            // MÃ©dia urbana prÃ¡tica para trajetos curtos quando o provedor nÃ£o devolve duraÃ§Ã£o
             const velocidadeMediaKmH = 30;
             return (km / velocidadeMediaKmH) * 60;
         }
@@ -6844,7 +7719,7 @@ if($tab === 'transporte' && $view === 'presencas') {
             const isOpen = body.style.display === 'grid';
             const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : !isOpen;
             body.style.display = nextOpen ? 'grid' : 'none';
-            btn.innerHTML = nextOpen ? '<strong>-</strong> Distância Inteligente (Mapa)' : '<strong>+</strong> Distância Inteligente (Mapa)';
+            btn.innerHTML = nextOpen ? '<strong>-</strong> DistÃ¢ncia Inteligente (Mapa)' : '<strong>+</strong> DistÃ¢ncia Inteligente (Mapa)';
         }
 
         async function calcularDistanciaMapa(){
@@ -6867,7 +7742,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                 const params = new URLSearchParams({ ajax: 'distance', origem, destino });
                 const resp = await fetch(`?${params.toString()}`);
                 const data = await resp.json();
-                if(!data.ok) throw new Error(data.error || 'Falha no cálculo');
+                if(!data.ok) throw new Error(data.error || 'Falha no cÃ¡lculo');
 
                 distEl.value = Number(data.km).toFixed(3);
                 if(tempoEl){
@@ -6877,9 +7752,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                 }
                 sincronizarTempoMinParaHumano();
                 const motor = data.provider === 'google' ? 'Google Maps' : 'OSRM';
-                const extra = data.fallback ? ' (fallback automático)' : '';
+                const extra = data.fallback ? ' (fallback automÃ¡tico)' : '';
                 const tempoTxt = tempoEl && tempoEl.value ? ` | ${formatarMinutosHumanizado(tempoEl.value)} (${tempoEl.value} min)` : '';
-                statusEl.value = `Distância calculada com sucesso - ${motor}${extra}${tempoTxt}`;
+                statusEl.value = `DistÃ¢ncia calculada com sucesso - ${motor}${extra}${tempoTxt}`;
                 if(data.provider === 'osrm' && data.origem_match && data.destino_match){
                     statusEl.value += ` | ${data.origem_match} -> ${data.destino_match}`;
                 }
@@ -7019,7 +7894,7 @@ val
                         guardarLocaisAutomaticamente();
                     }
                 } catch(e){
-                    // sem bloquear o fluxo do formulário
+                    // sem bloquear o fluxo do formulÃ¡rio
                 }
             });
         }
@@ -7056,12 +7931,12 @@ val
                 if(!dataPartidaReservaEl || !urgenciaAutoReservaEl) return;
                 const raw = String(dataPartidaReservaEl.value || '').trim();
                 if(raw === '') {
-                    urgenciaAutoReservaEl.value = 'Será calculada pelo sistema';
+                    urgenciaAutoReservaEl.value = 'SerÃ¡ calculada pelo sistema';
                     return;
                 }
                 const partida = new Date(raw);
                 if(Number.isNaN(partida.getTime())) {
-                    urgenciaAutoReservaEl.value = 'Data inválida';
+                    urgenciaAutoReservaEl.value = 'Data invÃ¡lida';
                     return;
                 }
 
@@ -7077,7 +7952,7 @@ val
                     let total = 0;
                     const cursor = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate(), 0, 0, 0, 0);
                     while(cursor <= fim){
-                        const dow = cursor.getDay(); // 0=Dom ... 6=Sáb
+                        const dow = cursor.getDay(); // 0=Dom ... 6=SÃ¡b
                         if(dow !== 0){
                             const inicioJ = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), 7, 0, 0, 0);
                             const fimJ = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), dow === 6 ? 12 : 16, 0, 0, 0);
@@ -7091,17 +7966,17 @@ val
                 };
 
                 const horasUteis = horasUteisEntre(agora, partida);
-                let nivel = 'Média';
+                let nivel = 'MÃ©dia';
                 if(horasUteis <= 4) nivel = 'Urgente';
                 else if(horasUteis <= 8) nivel = 'Alta';
-                else if(horasUteis <= 16) nivel = 'Média';
+                else if(horasUteis <= 16) nivel = 'MÃ©dia';
                 else nivel = 'Baixa';
                 let acao = 'Programar em janela do dia';
                 if(nivel === 'Urgente') acao = 'Atribuir viatura imediatamente';
-                else if(nivel === 'Alta') acao = 'Priorizar atribuição hoje';
-                else if(nivel === 'Baixa') acao = 'Pode planear com antecedência';
+                else if(nivel === 'Alta') acao = 'Priorizar atribuiÃ§Ã£o hoje';
+                else if(nivel === 'Baixa') acao = 'Pode planear com antecedÃªncia';
 
-                urgenciaAutoReservaEl.value = `${nivel} (${horasUteis.toFixed(1)} h úteis | ${horasCorridas.toFixed(1)} h corridas) - ${acao}`;
+                urgenciaAutoReservaEl.value = `${nivel} (${horasUteis.toFixed(1)} h Ãºteis | ${horasCorridas.toFixed(1)} h corridas) - ${acao}`;
             };
             if(dataPartidaReservaEl) {
                 dataPartidaReservaEl.addEventListener('input', atualizarUrgenciaAutoReserva);
@@ -7148,7 +8023,7 @@ val
             atualizarCustoRequisicao();
             guardarLocaisAutomaticamente();
         });
-        // ações existentes (mantidas)
+        // aÃ§Ãµes existentes (mantidas)
         function aprovarPedido(id){ if(confirm('Tem certeza que deseja aprovar este pedido?')) window.location.href = `aprovar_pedido.php?id=${id}`; }
         function rejeitarPedido(id){ const justificativa = prompt('Justificativa para rejeitar:'); if(justificativa) window.location.href = `rejeitar_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
         function pendentePedido(id){ const justificativa = prompt('Justificativa para pendente:'); if(justificativa) window.location.href = `pendente_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
@@ -7156,6 +8031,12 @@ val
 
 </body>
 </html>
+
+
+
+
+
+
 
 
 

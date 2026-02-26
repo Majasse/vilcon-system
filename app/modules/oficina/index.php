@@ -376,6 +376,30 @@ function statusOsPorPedido(string $statusPedido): string {
     return 'Aberto';
 }
 
+function itemDisponivelNoArmazem(PDO $pdo, string $item): ?array {
+    $termo = trim((string)$item);
+    if ($termo === '') return null;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT codigo, nome, unidade, stock_atual
+            FROM logistica_pecas
+            WHERE stock_atual > 0
+              AND (
+                LOWER(TRIM(nome)) = LOWER(TRIM(:item))
+                OR LOWER(TRIM(COALESCE(codigo, ''))) = LOWER(TRIM(:item))
+              )
+            ORDER BY stock_atual DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['item' => $termo]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        return $row ?: null;
+    } catch (Throwable $e) {
+        // Se a tabela de stock nao existir neste ambiente, nao bloqueia o fluxo.
+        return null;
+    }
+}
+
 function sincronizarPedidosReparacaoExistentes(PDO $pdo): void {
     $stmt = $pdo->query("
         SELECT
@@ -717,6 +741,17 @@ if ($view === 'pedidos_reparacao') {
                     if (count($materiais) === 0) {
                         throw new RuntimeException('Adicione pelo menos um material necessario antes de enviar para Logistica.');
                     }
+                    $bloqueados = [];
+                    foreach ($materiais as $m) {
+                        $itemMaterial = (string)($m['item'] ?? '');
+                        $disp = itemDisponivelNoArmazem($pdo, $itemMaterial);
+                        if ($disp) {
+                            $bloqueados[] = $itemMaterial . ' (stock: ' . number_format((float)($disp['stock_atual'] ?? 0), 2, ',', '.') . ' ' . (string)($disp['unidade'] ?? 'un') . ')';
+                        }
+                    }
+                    if (!empty($bloqueados)) {
+                        throw new RuntimeException('Nao foi enviado para Logistica: material ja existe no armazem. Itens: ' . implode('; ', $bloqueados));
+                    }
 
                     $diagTexto = trim((string)($pedidoRow['descricao_avaria'] ?? ''));
                     $diagTecnicoStmt = $pdo->prepare("SELECT descricao_tecnica FROM oficina_pedidos_reparacao WHERE id = :id");
@@ -919,6 +954,14 @@ if ($view === 'requisicoes') {
             }
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_requisicao)) {
                 throw new RuntimeException('Data de requisicao invalida.');
+            }
+            $itemArmazem = itemDisponivelNoArmazem($pdo, $item);
+            if ($itemArmazem) {
+                throw new RuntimeException(
+                    'Pedido bloqueado: este item ja existe no armazem com stock disponivel (' .
+                    number_format((float)($itemArmazem['stock_atual'] ?? 0), 2, ',', '.') . ' ' .
+                    (string)($itemArmazem['unidade'] ?? 'un') . ').'
+                );
             }
 
             $stmt = $pdo->prepare("

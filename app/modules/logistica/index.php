@@ -8,6 +8,18 @@ function money($v){ return number_format((float)$v,2,',','.') . ' MZN'; }
 function st($s){ $s=norm($s); if($s==='aprovado')$s='aprovada'; if($s==='negado')$s='negada'; return in_array($s,['pendente','aprovada','negada','em transito','entregue','cancelada'],true)?$s:'pendente'; }
 function stLabel($s){ $s=st($s); if($s==='em transito') return 'Em transito'; return ucfirst($s); }
 function badge($s){ $s=norm($s); if(in_array($s,['aprovada','entregue','ativo'],true)) return 'ok'; if(in_array($s,['negada','cancelada','inativo'],true)) return 'danger'; return ($s==='em transito')?'info':'warn'; }
+function prioridadeCategoria($s){
+  $p = norm($s);
+  if(in_array($p,['urgente','alta','alto'],true)) return 'urgente';
+  if(in_array($p,['baixo','baixa'],true)) return 'baixo';
+  return 'medio';
+}
+function prioridadeLabel($s){
+  $c = prioridadeCategoria($s);
+  if($c==='urgente') return 'Urgente';
+  if($c==='baixo') return 'Baixo';
+  return 'Medio';
+}
 function departamentoCanonico($s){
   $d = norm($s);
   if(in_array($d, ['oficina','transporte'], true)) return $d;
@@ -69,6 +81,7 @@ function movimentarBudjet(
 function garantir(PDO $pdo){
 $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_requisicoes (id INT AUTO_INCREMENT PRIMARY KEY,codigo VARCHAR(40) UNIQUE,origem VARCHAR(150) NOT NULL,destino VARCHAR(150) NOT NULL,item VARCHAR(180) NOT NULL,quantidade DECIMAL(12,2) NOT NULL DEFAULT 0,unidade VARCHAR(20) NOT NULL DEFAULT 'un',prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',status VARCHAR(20) NOT NULL DEFAULT 'Pendente',data_requisicao DATE NOT NULL,responsavel VARCHAR(150) NULL,observacoes TEXT NULL,origem_modulo VARCHAR(40) NOT NULL DEFAULT 'logistica',categoria_item VARCHAR(40) NULL,escopo_logistica VARCHAR(20) NOT NULL DEFAULT 'operacional',area_solicitante VARCHAR(30) NOT NULL DEFAULT 'oficina',valor_total DECIMAL(14,2) NOT NULL DEFAULT 0,custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,referencia_cotacao VARCHAR(120) NULL,anexo_preco_por VARCHAR(150) NULL,anexo_preco_em DATETIME NULL,decidido_por VARCHAR(150) NULL,decidido_em DATETIME NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_fornecedores (id INT AUTO_INCREMENT PRIMARY KEY,nome VARCHAR(180) NOT NULL,contacto VARCHAR(150) NULL,telefone VARCHAR(50) NULL,email VARCHAR(150) NULL,nuit VARCHAR(50) NULL,tipo_fornecedor VARCHAR(80) NOT NULL DEFAULT 'Pecas',escopo_logistica VARCHAR(20) NOT NULL DEFAULT 'operacional',status VARCHAR(20) NOT NULL DEFAULT 'Ativo',observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$pdo->exec("CREATE TABLE IF NOT EXISTS logistica_fornecedor_credito_mov (id INT AUTO_INCREMENT PRIMARY KEY,fornecedor_id INT NOT NULL,material_nome VARCHAR(180) NOT NULL,especificacoes VARCHAR(255) NULL,quantidade DECIMAL(12,2) NOT NULL DEFAULT 0,preco_unitario DECIMAL(14,2) NOT NULL DEFAULT 0,total DECIMAL(14,2) NOT NULL DEFAULT 0,saldo_usado DECIMAL(14,2) NOT NULL DEFAULT 0,divida_gerada DECIMAL(14,2) NOT NULL DEFAULT 0,observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,INDEX idx_fornecedor_data (fornecedor_id,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_pecas (id INT AUTO_INCREMENT PRIMARY KEY,codigo VARCHAR(50) UNIQUE,nome VARCHAR(180) NOT NULL,categoria VARCHAR(80) NOT NULL DEFAULT 'Peca',unidade VARCHAR(20) NOT NULL DEFAULT 'un',stock_atual DECIMAL(12,2) NOT NULL DEFAULT 0,stock_minimo DECIMAL(12,2) NOT NULL DEFAULT 0,preco_referencia DECIMAL(14,2) NOT NULL DEFAULT 0,fornecedor_preferencial_id INT NULL,escopo_logistica VARCHAR(20) NOT NULL DEFAULT 'operacional',area_aplicacao VARCHAR(30) NOT NULL DEFAULT 'oficina',created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_movimentos_stock (id INT AUTO_INCREMENT PRIMARY KEY,peca_id INT NOT NULL,tipo_movimento ENUM('Entrada','Saida','Ajuste') NOT NULL DEFAULT 'Entrada',quantidade DECIMAL(12,2) NOT NULL DEFAULT 0,custo_unitario DECIMAL(14,2) NOT NULL DEFAULT 0,referencia VARCHAR(120) NULL,observacoes TEXT NULL,criado_por INT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_cotacoes (id INT AUTO_INCREMENT PRIMARY KEY,fornecedor_id INT NOT NULL,item_nome VARCHAR(180) NOT NULL,categoria_item VARCHAR(80) NOT NULL DEFAULT 'Peca',preco_unitario DECIMAL(14,2) NOT NULL DEFAULT 0,prazo_dias INT NOT NULL DEFAULT 0,validade DATE NULL,escopo_logistica VARCHAR(20) NOT NULL DEFAULT 'operacional',area_solicitante VARCHAR(30) NOT NULL DEFAULT 'oficina',observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -76,7 +89,7 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_pecas_substituidas (id INT AUTO
  $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_fin_facturas (id INT AUTO_INCREMENT PRIMARY KEY,codigo VARCHAR(40) UNIQUE,fornecedor_id INT NULL,departamento VARCHAR(30) NOT NULL DEFAULT 'oficina',descricao VARCHAR(180) NOT NULL,valor_total DECIMAL(14,2) NOT NULL DEFAULT 0,data_factura DATE NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'Pendente',observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
  $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_fin_pagamentos (id INT AUTO_INCREMENT PRIMARY KEY,codigo VARCHAR(40) UNIQUE,factura_id INT NULL,descricao VARCHAR(180) NOT NULL,valor_pago DECIMAL(14,2) NOT NULL DEFAULT 0,data_pagamento DATE NOT NULL,metodo VARCHAR(40) NOT NULL DEFAULT 'Transferencia',observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
  $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_pecas_avariadas (id INT AUTO_INCREMENT PRIMARY KEY,peca_id INT NULL,codigo_peca VARCHAR(50) NULL,nome_peca VARCHAR(180) NOT NULL,quantidade DECIMAL(12,2) NOT NULL DEFAULT 1,motivo VARCHAR(200) NULL,data_registo DATE NOT NULL,status VARCHAR(20) NOT NULL DEFAULT 'Avariada',observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
- $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_operacional_custos (id INT AUTO_INCREMENT PRIMARY KEY,categoria VARCHAR(40) NOT NULL,departamento VARCHAR(30) NOT NULL DEFAULT 'transporte',descricao VARCHAR(180) NOT NULL,valor DECIMAL(14,2) NOT NULL DEFAULT 0,data_lancamento DATE NOT NULL,responsavel VARCHAR(150) NULL,observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+ $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_operacional_custos (id INT AUTO_INCREMENT PRIMARY KEY,categoria VARCHAR(40) NOT NULL,departamento VARCHAR(30) NOT NULL DEFAULT 'transporte',fornecedor_id INT NULL,forma_pagamento VARCHAR(20) NOT NULL DEFAULT 'Numerario',referencia_cotacao VARCHAR(120) NULL,descricao VARCHAR(180) NOT NULL,valor DECIMAL(14,2) NOT NULL DEFAULT 0,data_lancamento DATE NOT NULL,responsavel VARCHAR(150) NULL,observacoes TEXT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
  $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_budjet_departamentos (id INT AUTO_INCREMENT PRIMARY KEY,departamento VARCHAR(30) NOT NULL UNIQUE,orcamento_total DECIMAL(14,2) NOT NULL DEFAULT 0,saldo_atual DECIMAL(14,2) NOT NULL DEFAULT 0,atualizado_em DATETIME NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
  $pdo->exec("CREATE TABLE IF NOT EXISTS logistica_budjet_movimentos (id INT AUTO_INCREMENT PRIMARY KEY,departamento VARCHAR(30) NOT NULL,tipo VARCHAR(20) NOT NULL,valor DECIMAL(14,2) NOT NULL DEFAULT 0,referencia VARCHAR(120) NULL,descricao VARCHAR(255) NULL,origem_tabela VARCHAR(80) NULL,origem_id INT NULL,saldo_apos DECIMAL(14,2) NOT NULL DEFAULT 0,criado_por VARCHAR(150) NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,INDEX idx_budjet_dep_data (departamento,created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
@@ -116,6 +129,8 @@ $garantirColuna($pdo, 'logistica_fornecedores', 'escopo_logistica', "VARCHAR(20)
 $garantirColuna($pdo, 'logistica_fornecedores', 'tipo_fornecedor', "VARCHAR(80) NOT NULL DEFAULT 'Pecas'");
 $garantirColuna($pdo, 'logistica_fornecedores', 'status', "VARCHAR(20) NOT NULL DEFAULT 'Ativo'");
 $garantirColuna($pdo, 'logistica_fornecedores', 'saldo_budjet', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+$garantirColuna($pdo, 'logistica_fornecedores', 'modalidade_credito', "VARCHAR(20) NOT NULL DEFAULT 'Normal'");
+$garantirColuna($pdo, 'logistica_fornecedores', 'divida_atual', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
 
 $garantirColuna($pdo, 'logistica_pecas', 'escopo_logistica', "VARCHAR(20) NOT NULL DEFAULT 'operacional'");
 $garantirColuna($pdo, 'logistica_pecas', 'area_aplicacao', "VARCHAR(30) NOT NULL DEFAULT 'oficina'");
@@ -123,10 +138,16 @@ $garantirColuna($pdo, 'logistica_pecas', 'preco_referencia', 'DECIMAL(14,2) NOT 
 
 $garantirColuna($pdo, 'logistica_cotacoes', 'escopo_logistica', "VARCHAR(20) NOT NULL DEFAULT 'operacional'");
 $garantirColuna($pdo, 'logistica_cotacoes', 'area_solicitante', "VARCHAR(30) NOT NULL DEFAULT 'oficina'");
+$garantirColuna($pdo, 'logistica_cotacoes', 'quantidade', 'DECIMAL(12,2) NOT NULL DEFAULT 1');
+$garantirColuna($pdo, 'logistica_cotacoes', 'total_cotacao', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+$garantirColuna($pdo, 'logistica_cotacoes', 'anexo_cotacao', 'VARCHAR(255) NULL');
 
 $garantirColuna($pdo, 'logistica_pecas_substituidas', 'area_origem', "VARCHAR(30) NOT NULL DEFAULT 'Oficina'");
 $garantirColuna($pdo, 'logistica_fin_facturas', 'departamento', "VARCHAR(30) NOT NULL DEFAULT 'oficina'");
 $garantirColuna($pdo, 'logistica_operacional_custos', 'departamento', "VARCHAR(30) NOT NULL DEFAULT 'transporte'");
+$garantirColuna($pdo, 'logistica_operacional_custos', 'fornecedor_id', 'INT NULL');
+$garantirColuna($pdo, 'logistica_operacional_custos', 'forma_pagamento', "VARCHAR(20) NOT NULL DEFAULT 'Numerario'");
+$garantirColuna($pdo, 'logistica_operacional_custos', 'referencia_cotacao', 'VARCHAR(120) NULL');
 
 $pdo->exec("INSERT INTO logistica_budjet_departamentos (departamento,orcamento_total,saldo_atual,atualizado_em) VALUES ('oficina',0,0,NOW()) ON DUPLICATE KEY UPDATE departamento=departamento");
 $pdo->exec("INSERT INTO logistica_budjet_departamentos (departamento,orcamento_total,saldo_atual,atualizado_em) VALUES ('transporte',0,0,NOW()) ON DUPLICATE KEY UPDATE departamento=departamento");
@@ -139,10 +160,15 @@ $status_filtro = trim((string)($_GET['status'] ?? 'todos'));
 $departamento_filtro = trim((string)($_GET['departamento'] ?? 'todos'));
 $escopo_filtro = trim((string)($_GET['escopo'] ?? 'todos'));
 $periodo = trim((string)($_GET['periodo'] ?? 'mensal'));
-if(!in_array($view,['painel','requisicoes','fornecedores','pecas','cotacoes','substituicoes','relatorios','pedidos_oficina','extratos','facturas','pagamentos','pecas_avariadas','oper_uniforme','oper_alimentacao','oper_portagem','oper_multas','oper_seguros','oper_taxas_radios','oper_extintores','oper_manutencoes','budjet','alertas'],true)) $view='painel';
+$pedidos_prioridade = trim((string)($_GET['pedidos_prioridade'] ?? 'todos'));
+$compras_tab = trim((string)($_GET['compras_tab'] ?? 'requisicoes'));
+$item_nome_prefill = trim((string)($_GET['item_nome'] ?? ''));
+if(!in_array($view,['painel','requisicoes','fornecedores','pecas','cotacoes','substituicoes','relatorios','pedidos_oficina','extratos','facturas','recibos','pagamentos','pecas_avariadas','oper_uniforme','oper_alimentacao','oper_portagem','oper_multas','oper_seguros','oper_taxas_radios','oper_extintores','oper_manutencoes','budjet','alertas'],true)) $view='painel';
 if($view==='painel') $view='pedidos_oficina';
 if(!in_array($mode,['list','form'],true)) $mode='list';
-if(in_array($view,['painel','relatorios','pedidos_oficina','extratos','budjet','alertas'],true)) $mode='list';
+if(in_array($view,['painel','relatorios','pedidos_oficina','extratos','recibos','budjet','alertas'],true)) $mode='list';
+if(!in_array($pedidos_prioridade,['todos','urgente','medio','baixo'],true)) $pedidos_prioridade='todos';
+if(!in_array($compras_tab,['requisicoes','cotacoes','fornecedores'],true)) $compras_tab='requisicoes';
 
 $perfil = norm($_SESSION['usuario_perfil'] ?? '');
 $pode_oper = in_array($perfil,['logistica','logistico','logisticaoperacional','supervisorlogistica','admin','administrador'],true);
@@ -151,7 +177,8 @@ $operacional_sem_restricao = true;
 
 function secaoLogistica(string $view): string {
   if($view==='pedidos_oficina') return 'requisicoes';
-  if(in_array($view,['extratos','fornecedores','facturas','cotacoes','pagamentos'],true)) return 'financas';
+  if($view==='fornecedores') return 'requisicoes';
+  if(in_array($view,['extratos','facturas','recibos','cotacoes','pagamentos'],true)) return 'financas';
   if(in_array($view,['pecas','substituicoes','pecas_avariadas'],true)) return 'stock';
   if($view==='budjet') return 'budjet';
   if($view==='alertas') return 'alertas';
@@ -161,13 +188,12 @@ function secaoLogistica(string $view): string {
 $secao = secaoLogistica($view);
 
 function opcoesSecaoLogistica(string $secao): array {
-  if($secao==='requisicoes') return ['pedidos_oficina' => 'Pedidos recebidos da Oficina'];
+  if($secao==='requisicoes') return [];
   if($secao==='financas') return [
-    'extratos' => 'Extratos',
-    'fornecedores' => 'Fornecedores',
     'facturas' => 'Facturas',
-    'cotacoes' => 'Cotacoes',
+    'recibos' => 'Recibos',
     'pagamentos' => 'Pagamentos',
+    'extratos' => 'Dividas',
   ];
   if($secao==='stock') return [
     'pecas' => 'Armazem de pecas',
@@ -175,7 +201,7 @@ function opcoesSecaoLogistica(string $secao): array {
     'pecas_avariadas' => 'Pecas avariadas',
   ];
   if($secao==='operacional') return [
-    'oper_uniforme' => 'Controle uniforme',
+    'oper_uniforme' => 'Controle de EPs',
     'oper_alimentacao' => 'Alimentacao',
     'oper_portagem' => 'Custos de portagem',
     'oper_multas' => 'Multas',
@@ -191,7 +217,7 @@ function opcoesSecaoLogistica(string $secao): array {
 
 $depRaw = norm($_GET['departamento'] ?? '');
 $budjetDepartamentoSelecionado = in_array($depRaw, ['oficina','transporte'], true) ? $depRaw : '';
-$msg=''; $erro=''; $requisicoes=[]; $fornecedores=[]; $pecas=[]; $cotacoes=[]; $comp=[]; $subs=[]; $fornRef=[]; $pecasRef=[]; $rel=[]; $pedidosOficina=[]; $facturas=[]; $pagamentos=[]; $pecasAvariadas=[]; $custosOperacionais=[]; $budjetResumo=[]; $budjetMovimentos=[];
+$msg=''; $erro=''; $requisicoes=[]; $fornecedores=[]; $pecas=[]; $cotacoes=[]; $comp=[]; $subs=[]; $fornRef=[]; $fornCreditoRef=[]; $fornNomePorId=[]; $pecasRef=[]; $rel=[]; $pedidosOficina=[]; $facturas=[]; $pagamentos=[]; $pecasAvariadas=[]; $custosOperacionais=[]; $budjetResumo=[]; $budjetMovimentos=[];
 
 try {
   garantir($pdo);
@@ -204,8 +230,17 @@ try {
       if(!$operacional_sem_restricao && (($escopo==='operacional'&&!$pode_oper)||($escopo==='geral'&&!$pode_geral))) throw new RuntimeException('Sem permissao neste escopo');
       $origem=trim((string)($_POST['origem']??'')); $destino=trim((string)($_POST['destino']??'')); $item=trim((string)($_POST['item']??''));
       $qtd=(float)($_POST['quantidade']??0); if($origem===''||$destino===''||$item===''||$qtd<=0) throw new RuntimeException('Campos obrigatorios incompletos');
-      $stmt=$pdo->prepare("INSERT INTO logistica_requisicoes (origem,destino,item,quantidade,unidade,prioridade,status,data_requisicao,responsavel,observacoes,origem_modulo,categoria_item,escopo_logistica,area_solicitante,valor_total,custo_total) VALUES (:origem,:destino,:item,:qtd,:unidade,:prioridade,'Pendente',:data,:resp,:obs,'logistica',:cat,:escopo,:area,:valor,:valor)");
-      $stmt->execute(['origem'=>$origem,'destino'=>$destino,'item'=>$item,'qtd'=>$qtd,'unidade'=>trim((string)($_POST['unidade']??'un'))?:'un','prioridade'=>trim((string)($_POST['prioridade']??'Normal'))?:'Normal','data'=>trim((string)($_POST['data_requisicao']??date('Y-m-d'))),'resp'=>trim((string)($_POST['responsavel']??''))?:null,'obs'=>trim((string)($_POST['observacoes']??''))?:null,'cat'=>trim((string)($_POST['categoria_item']??'Peca')),'escopo'=>$escopo,'area'=>$area,'valor'=>(float)($_POST['valor_total']??0)]);
+      $obsCriar = trim((string)($_POST['observacoes']??''));
+      $fornCredId = (int)($_POST['fornecedor_credito_id'] ?? 0);
+      if($fornCredId > 0){
+        $stF = $pdo->prepare("SELECT nome FROM logistica_fornecedores WHERE id=:i LIMIT 1");
+        $stF->execute(['i'=>$fornCredId]);
+        $fn = (string)($stF->fetchColumn() ?: '');
+        $tagForn = 'Fornecedor a credito: ' . ($fn !== '' ? $fn : ('#'.$fornCredId));
+        $obsCriar = $obsCriar !== '' ? ($obsCriar . ' | ' . $tagForn) : $tagForn;
+      }
+      $stmt=$pdo->prepare("INSERT INTO logistica_requisicoes (origem,destino,item,quantidade,unidade,prioridade,status,data_requisicao,responsavel,observacoes,origem_modulo,categoria_item,escopo_logistica,area_solicitante,fornecedor_id,valor_total,custo_total) VALUES (:origem,:destino,:item,:qtd,:unidade,:prioridade,'Pendente',:data,:resp,:obs,'logistica',:cat,:escopo,:area,:forn,:valor,:valor)");
+      $stmt->execute(['origem'=>$origem,'destino'=>$destino,'item'=>$item,'qtd'=>$qtd,'unidade'=>trim((string)($_POST['unidade']??'un'))?:'un','prioridade'=>trim((string)($_POST['prioridade']??'Normal'))?:'Normal','data'=>trim((string)($_POST['data_requisicao']??date('Y-m-d'))),'resp'=>trim((string)($_POST['responsavel']??''))?:null,'obs'=>$obsCriar!==''?$obsCriar:null,'cat'=>trim((string)($_POST['categoria_item']??'Peca')),'escopo'=>$escopo,'area'=>$area,'forn'=>$fornCredId>0?$fornCredId:null,'valor'=>(float)($_POST['valor_total']??0)]);
       $id=(int)$pdo->lastInsertId(); $codigo=sprintf('REQ-LOG-%s-%04d',date('Y'),$id); $pdo->prepare('UPDATE logistica_requisicoes SET codigo=:c WHERE id=:i')->execute(['c'=>$codigo,'i'=>$id]);
       header('Location: ?view=requisicoes&mode=list&saved=1'); exit;
     }
@@ -333,15 +368,22 @@ try {
       }
 
       if($forma==='credito' && $fornecedorId){
-        $stFor = $pdo->prepare("SELECT saldo_budjet,nome FROM logistica_fornecedores WHERE id=:i LIMIT 1");
+        $stFor = $pdo->prepare("SELECT saldo_budjet,nome,modalidade_credito,COALESCE(divida_atual,0) AS divida_atual FROM logistica_fornecedores WHERE id=:i LIMIT 1");
         $stFor->execute(['i'=>$fornecedorId]);
         $forn = $stFor->fetch(PDO::FETCH_ASSOC);
         if(!$forn) throw new RuntimeException('Fornecedor nao encontrado para credito');
+        if(strtolower((string)($forn['modalidade_credito'] ?? 'normal')) !== 'credito'){
+          throw new RuntimeException('Este fornecedor esta definido como normal. Selecione fornecedor a credito.');
+        }
         $saldoAtual = (float)($forn['saldo_budjet'] ?? 0);
-        if($saldoAtual < $valor) throw new RuntimeException('Saldo de budjet insuficiente do fornecedor para esta compra');
-        $pdo->prepare("UPDATE logistica_fornecedores SET saldo_budjet = saldo_budjet - :v WHERE id=:i")
-          ->execute(['v'=>$valor,'i'=>$fornecedorId]);
-        $obs .= ($obs!=='' ? "\n" : '') . '[Credito] Debito no budjet do fornecedor: ' . (string)($forn['nome'] ?? ('#'.$fornecedorId));
+        $utilizadoSaldo = min($saldoAtual, $valor);
+        $valorDivida = max(0, $valor - $utilizadoSaldo);
+        $pdo->prepare("UPDATE logistica_fornecedores SET saldo_budjet = GREATEST(0, saldo_budjet - :v), divida_atual = divida_atual + :d WHERE id=:i")
+          ->execute(['v'=>$valor,'d'=>$valorDivida,'i'=>$fornecedorId]);
+        $obs .= ($obs!=='' ? "\n" : '') . '[Credito] Fornecedor: ' . (string)($forn['nome'] ?? ('#'.$fornecedorId)) . ' | Debitado saldo: ' . money($utilizadoSaldo);
+        if($valorDivida > 0){
+          $obs .= ' | Divida gerada: ' . money($valorDivida);
+        }
       }
 
       if($tipoCompra==='compra_direta'){
@@ -401,8 +443,85 @@ try {
     if($acao==='criar_fornecedor'){
       if(!$operacional_sem_restricao && !$pode_oper&&!$pode_geral) throw new RuntimeException('Sem permissao');
       $nome=trim((string)($_POST['nome']??'')); if($nome==='') throw new RuntimeException('Nome obrigatorio');
-      $pdo->prepare('INSERT INTO logistica_fornecedores (nome,contacto,telefone,email,nuit,tipo_fornecedor,escopo_logistica,status,saldo_budjet,observacoes) VALUES (:n,:c,:t,:e,:nu,:tipo,:esc,:st,:sb,:o)')->execute(['n'=>$nome,'c'=>trim((string)($_POST['contacto']??''))?:null,'t'=>trim((string)($_POST['telefone']??''))?:null,'e'=>trim((string)($_POST['email']??''))?:null,'nu'=>trim((string)($_POST['nuit']??''))?:null,'tipo'=>trim((string)($_POST['tipo_fornecedor']??'Pecas')),'esc'=>in_array($_POST['escopo_logistica']??'', ['operacional','geral'],true)?$_POST['escopo_logistica']:'operacional','st'=>in_array($_POST['status']??'', ['Ativo','Inativo'],true)?$_POST['status']:'Ativo','sb'=>(float)($_POST['saldo_budjet']??0),'o'=>trim((string)($_POST['observacoes']??''))?:null]);
-      header('Location: ?view=fornecedores&mode=list&saved=1'); exit;
+      $modalidade = in_array((string)($_POST['modalidade_credito'] ?? ''), ['Normal','Credito'], true) ? (string)$_POST['modalidade_credito'] : 'Normal';
+      $saldoInicial = $modalidade === 'Credito' ? (float)($_POST['saldo_budjet']??0) : 0.0;
+      $nomesRaw = $_POST['material_credito_nome'] ?? [];
+      $espRaw = $_POST['material_credito_especificacoes'] ?? [];
+      $qtdRaw = $_POST['material_credito_quantidade'] ?? [];
+      $preRaw = $_POST['material_credito_preco'] ?? [];
+      $totRaw = $_POST['material_credito_total'] ?? [];
+      $obsRaw = $_POST['material_credito_observacoes'] ?? [];
+      if(!is_array($nomesRaw)) $nomesRaw = [$nomesRaw];
+      if(!is_array($espRaw)) $espRaw = [$espRaw];
+      if(!is_array($qtdRaw)) $qtdRaw = [$qtdRaw];
+      if(!is_array($preRaw)) $preRaw = [$preRaw];
+      if(!is_array($totRaw)) $totRaw = [$totRaw];
+      if(!is_array($obsRaw)) $obsRaw = [$obsRaw];
+      $maxMatRows = max(count($nomesRaw), count($espRaw), count($qtdRaw), count($preRaw), count($totRaw), count($obsRaw));
+      $linhasMaterial = [];
+      for($i=0; $i<$maxMatRows; $i++){
+        $mNome = trim((string)($nomesRaw[$i] ?? ''));
+        $mEsp = trim((string)($espRaw[$i] ?? ''));
+        $mQtd = (float)($qtdRaw[$i] ?? 0);
+        $mPre = (float)($preRaw[$i] ?? 0);
+        $mTotInfo = (float)($totRaw[$i] ?? 0);
+        $mObs = trim((string)($obsRaw[$i] ?? ''));
+        $temAlgoLinha = ($mNome !== '' || $mEsp !== '' || $mQtd > 0 || $mPre > 0 || $mTotInfo > 0 || $mObs !== '');
+        if(!$temAlgoLinha) continue;
+        if($mNome === ''){
+          throw new RuntimeException('Informe o nome do material na linha ' . ($i + 1) . '.');
+        }
+        $mTotal = $mTotInfo > 0 ? $mTotInfo : (($mQtd > 0 && $mPre > 0) ? ($mQtd * $mPre) : 0.0);
+        if($mTotal <= 0){
+          throw new RuntimeException('Informe o total ou quantidade e preco validos na linha ' . ($i + 1) . '.');
+        }
+        $linhasMaterial[] = [
+          'nome' => $mNome,
+          'esp' => $mEsp,
+          'qtd' => $mQtd > 0 ? $mQtd : 0.0,
+          'pre' => $mPre > 0 ? $mPre : 0.0,
+          'tot' => $mTotal,
+          'obs' => $mObs
+        ];
+      }
+      $temRegistoMaterial = !empty($linhasMaterial);
+      if($temRegistoMaterial && $modalidade !== 'Credito'){
+        throw new RuntimeException('Registo de material a credito so e permitido para fornecedor na modalidade Credito.');
+      }
+
+      $pdo->beginTransaction();
+      $pdo->prepare('INSERT INTO logistica_fornecedores (nome,contacto,email,nuit,tipo_fornecedor,escopo_logistica,status,saldo_budjet,modalidade_credito,divida_atual,observacoes) VALUES (:n,:c,:e,:nu,:tipo,:esc,:st,:sb,:mc,0,:o)')
+        ->execute(['n'=>$nome,'c'=>trim((string)($_POST['contacto']??''))?:null,'e'=>trim((string)($_POST['email']??''))?:null,'nu'=>trim((string)($_POST['nuit']??''))?:null,'tipo'=>trim((string)($_POST['tipo_fornecedor']??'Pecas')),'esc'=>in_array($_POST['escopo_logistica']??'', ['operacional','geral'],true)?$_POST['escopo_logistica']:'operacional','st'=>in_array($_POST['status']??'', ['Ativo','Inativo'],true)?$_POST['status']:'Ativo','sb'=>$saldoInicial,'mc'=>$modalidade,'o'=>trim((string)($_POST['observacoes']??''))?:null]);
+      $fornecedorIdNovo = (int)$pdo->lastInsertId();
+
+      if($temRegistoMaterial && $fornecedorIdNovo > 0){
+        $saldoRestante = $saldoInicial;
+        $dividaTotal = 0.0;
+        $saldoUsadoTotal = 0.0;
+        $insMov = $pdo->prepare("INSERT INTO logistica_fornecedor_credito_mov (fornecedor_id,material_nome,especificacoes,quantidade,preco_unitario,total,saldo_usado,divida_gerada,observacoes) VALUES (:f,:m,:e,:q,:p,:t,:s,:d,:o)");
+        foreach($linhasMaterial as $ln){
+          $saldoUsadoLinha = min($saldoRestante, (float)$ln['tot']);
+          $dividaLinha = max(0, (float)$ln['tot'] - $saldoUsadoLinha);
+          $saldoRestante -= $saldoUsadoLinha;
+          $saldoUsadoTotal += $saldoUsadoLinha;
+          $dividaTotal += $dividaLinha;
+          $insMov->execute([
+            'f'=>$fornecedorIdNovo,
+            'm'=>$ln['nome'],
+            'e'=>$ln['esp']!==''?$ln['esp']:null,
+            'q'=>$ln['qtd'],
+            'p'=>$ln['pre'],
+            't'=>$ln['tot'],
+            's'=>$saldoUsadoLinha,
+            'd'=>$dividaLinha,
+            'o'=>$ln['obs']!==''?$ln['obs']:null
+          ]);
+        }
+        $pdo->prepare("UPDATE logistica_fornecedores SET saldo_budjet=:sb, divida_atual=:d WHERE id=:i")
+          ->execute(['sb'=>max(0, $saldoInicial - $saldoUsadoTotal),'d'=>$dividaTotal,'i'=>$fornecedorIdNovo]);
+      }
+      $pdo->commit();
+      header('Location: ?view=requisicoes&compras_tab=fornecedores&mode=list&saved=1'); exit;
     }
     if($acao==='criar_peca'){
       if(!$operacional_sem_restricao && !$pode_oper&&!$pode_geral) throw new RuntimeException('Sem permissao');
@@ -444,18 +563,100 @@ try {
     }
     if($acao==='criar_cotacao'){
       if(!$operacional_sem_restricao && !$pode_oper&&!$pode_geral) throw new RuntimeException('Sem permissao');
-      $fid=(int)($_POST['fornecedor_id']??0); $item=trim((string)($_POST['item_nome']??'')); $pre=(float)($_POST['preco_unitario']??0);
-      if($fid<=0||$item===''||$pre<=0) throw new RuntimeException('Fornecedor, item e preco obrigatorios');
-      $pdo->prepare('INSERT INTO logistica_cotacoes (fornecedor_id,item_nome,categoria_item,preco_unitario,prazo_dias,validade,escopo_logistica,area_solicitante,observacoes) VALUES (:f,:i,:c,:p,:d,:v,:e,:a,:o)')->execute(['f'=>$fid,'i'=>$item,'c'=>trim((string)($_POST['categoria_item']??'Peca')),'p'=>$pre,'d'=>(int)($_POST['prazo_dias']??0),'v'=>trim((string)($_POST['validade']??''))?:null,'e'=>in_array($_POST['escopo_logistica']??'', ['operacional','geral'],true)?$_POST['escopo_logistica']:'operacional','a'=>in_array($_POST['area_solicitante']??'', ['oficina','transporte','geral'],true)?$_POST['area_solicitante']:'oficina','o'=>trim((string)($_POST['observacoes']??''))?:null]);
-      header('Location: ?view=cotacoes&mode=list&saved=1'); exit;
+      $item=trim((string)($_POST['item_nome']??''));
+      if($item==='') throw new RuntimeException('Informe o item da cotacao.');
+
+      $fornRaw = $_POST['fornecedor_id'] ?? [];
+      $qtdRaw = $_POST['quantidade'] ?? [];
+      $preRaw = $_POST['preco_unitario'] ?? [];
+      if(!is_array($fornRaw)) $fornRaw = [$fornRaw];
+      if(!is_array($qtdRaw)) $qtdRaw = [$qtdRaw];
+      if(!is_array($preRaw)) $preRaw = [$preRaw];
+
+      $maxRows = max(count($fornRaw), count($qtdRaw), count($preRaw));
+      $linhas = [];
+      for($i=0; $i<$maxRows; $i++){
+        $fid = (int)($fornRaw[$i] ?? 0);
+        $qtd = (float)($qtdRaw[$i] ?? 0);
+        $pre = (float)($preRaw[$i] ?? 0);
+        $temAlgum = $fid > 0 || $qtd > 0 || $pre > 0;
+        if(!$temAlgum) continue;
+        if($fid<=0 || $qtd<=0 || $pre<=0){
+          throw new RuntimeException('Cada cotacao deve ter fornecedor, quantidade e preco validos.');
+        }
+        $linhas[] = ['idx'=>$i,'fid'=>$fid,'qtd'=>$qtd,'pre'=>$pre,'total'=>$qtd*$pre];
+      }
+      if(count($linhas) < 3){
+        throw new RuntimeException('Adicione no minimo 3 cotacoes.');
+      }
+      $fornUnicos = [];
+      foreach($linhas as $ln){ $fornUnicos[(string)$ln['fid']] = true; }
+      if(count($fornUnicos) < 3){
+        throw new RuntimeException('As 3 cotacoes devem ser de fornecedores diferentes.');
+      }
+
+      $salvarAnexo = static function(int $idx) : ?string {
+        if(!isset($_FILES['anexo_cotacao']) || !is_array($_FILES['anexo_cotacao'])) return null;
+        $names = $_FILES['anexo_cotacao']['name'] ?? null;
+        if(!is_array($names)) return null;
+        $err = (int)($_FILES['anexo_cotacao']['error'][$idx] ?? UPLOAD_ERR_NO_FILE);
+        if($err === UPLOAD_ERR_NO_FILE) return null;
+        if($err !== UPLOAD_ERR_OK) throw new RuntimeException('Falha ao anexar cotacao.');
+        $tmp = (string)($_FILES['anexo_cotacao']['tmp_name'][$idx] ?? '');
+        $orig = (string)($_FILES['anexo_cotacao']['name'][$idx] ?? '');
+        $ext = strtolower((string)pathinfo($orig, PATHINFO_EXTENSION));
+        $permit = ['pdf','png','jpg','jpeg','doc','docx','xls','xlsx'];
+        if(!in_array($ext, $permit, true)) throw new RuntimeException('Formato de anexo nao permitido.');
+        $dirFs = dirname(__DIR__, 3) . '/uploads/logistica/cotacoes';
+        if(!is_dir($dirFs) && !@mkdir($dirFs, 0775, true)) throw new RuntimeException('Nao foi possivel criar pasta de anexos.');
+        $file = 'cotacao_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $destFs = $dirFs . '/' . $file;
+        if(!@move_uploaded_file($tmp, $destFs)) throw new RuntimeException('Nao foi possivel guardar anexo da cotacao.');
+        return '/vilcon-systemon/public/uploads/logistica/cotacoes/' . $file;
+      };
+
+      $ins = $pdo->prepare('INSERT INTO logistica_cotacoes (fornecedor_id,item_nome,categoria_item,preco_unitario,quantidade,total_cotacao,anexo_cotacao,prazo_dias,validade,escopo_logistica,area_solicitante,observacoes) VALUES (:f,:i,:c,:p,:q,:t,:an,:d,:v,:e,:a,:o)');
+      foreach($linhas as $ln){
+        $ins->execute([
+          'f'=>$ln['fid'],
+          'i'=>$item,
+          'c'=>trim((string)($_POST['categoria_item']??'Peca')),
+          'p'=>$ln['pre'],
+          'q'=>$ln['qtd'],
+          't'=>$ln['total'],
+          'an'=>$salvarAnexo((int)$ln['idx']),
+          'd'=>(int)($_POST['prazo_dias']??0),
+          'v'=>trim((string)($_POST['validade']??''))?:null,
+          'e'=>in_array($_POST['escopo_logistica']??'', ['operacional','geral'],true)?$_POST['escopo_logistica']:'operacional',
+          'a'=>in_array($_POST['area_solicitante']??'', ['oficina','transporte','geral'],true)?$_POST['area_solicitante']:'oficina',
+          'o'=>trim((string)($_POST['observacoes']??''))?:null
+        ]);
+      }
+      header('Location: ?view=requisicoes&compras_tab=cotacoes&mode=list&saved=1'); exit;
     }
     if($acao==='registar_substituicao'){
       if(!$operacional_sem_restricao && !$pode_oper) throw new RuntimeException('Substituicoes exigem operacional');
       $pid=(int)($_POST['peca_id']??0); $mat=trim((string)($_POST['matricula_ativo']??'')); $qtd=(float)($_POST['quantidade']??1);
       if($pid<=0||$mat===''||$qtd<=0) throw new RuntimeException('Dados invalidos');
       $pdo->beginTransaction();
-      $pdo->prepare('INSERT INTO logistica_pecas_substituidas (peca_id,matricula_ativo,area_origem,quantidade,custo_unitario,data_substituicao,motivo,responsavel,referencia_os) VALUES (:p,:m,:a,:q,:c,:d,:mo,:r,:os)')->execute(['p'=>$pid,'m'=>$mat,'a'=>in_array($_POST['area_origem']??'', ['Oficina','Transporte'],true)?$_POST['area_origem']:'Oficina','q'=>$qtd,'c'=>(float)($_POST['custo_unitario']??0),'d'=>trim((string)($_POST['data_substituicao']??date('Y-m-d'))),'mo'=>trim((string)($_POST['motivo']??''))?:null,'r'=>trim((string)($_POST['responsavel']??''))?:null,'os'=>trim((string)($_POST['referencia_os']??''))?:null]);
+      $areaOrigem = in_array($_POST['area_origem']??'', ['Oficina','Transporte'],true)?$_POST['area_origem']:'Oficina';
+      $custoUnitSub = (float)($_POST['custo_unitario']??0);
+      $pdo->prepare('INSERT INTO logistica_pecas_substituidas (peca_id,matricula_ativo,area_origem,quantidade,custo_unitario,data_substituicao,motivo,responsavel,referencia_os) VALUES (:p,:m,:a,:q,:c,:d,:mo,:r,:os)')->execute(['p'=>$pid,'m'=>$mat,'a'=>$areaOrigem,'q'=>$qtd,'c'=>$custoUnitSub,'d'=>trim((string)($_POST['data_substituicao']??date('Y-m-d'))),'mo'=>trim((string)($_POST['motivo']??''))?:null,'r'=>trim((string)($_POST['responsavel']??''))?:null,'os'=>trim((string)($_POST['referencia_os']??''))?:null]);
       $pdo->prepare('UPDATE logistica_pecas SET stock_atual=GREATEST(0,stock_atual-:q) WHERE id=:i')->execute(['q'=>$qtd,'i'=>$pid]);
+      $valorSub = $qtd * $custoUnitSub;
+      if($valorSub > 0){
+        movimentarBudjet(
+          $pdo,
+          strtolower($areaOrigem)==='transporte' ? 'transporte' : 'oficina',
+          'debito',
+          $valorSub,
+          trim((string)($_POST['referencia_os'] ?? '')) !== '' ? trim((string)$_POST['referencia_os']) : ('SUB-' . date('YmdHis')),
+          'Substituicao de peca: ' . $mat,
+          'logistica_pecas_substituidas',
+          null,
+          (string)($_SESSION['usuario_nome'] ?? 'Logistica')
+        );
+      }
       $pdo->commit(); header('Location: ?view=substituicoes&mode=list&saved=1'); exit;
     }
     if($acao==='criar_factura'){
@@ -507,9 +708,19 @@ try {
       $categoria=trim((string)($_POST['categoria']??'')); $descricao=trim((string)($_POST['descricao']??'')); $valor=(float)($_POST['valor']??0); $data=trim((string)($_POST['data_lancamento']??date('Y-m-d')));
       if($categoria===''||$descricao===''||$valor<=0) throw new RuntimeException('Categoria, descricao e valor sao obrigatorios');
       $departamento = departamentoCanonico($_POST['departamento'] ?? 'transporte');
+      $fornecedorId = ((int)($_POST['fornecedor_id'] ?? 0)) > 0 ? (int)$_POST['fornecedor_id'] : null;
+      $formaPagamento = trim((string)($_POST['forma_pagamento'] ?? 'Numerario'));
+      if(!in_array($formaPagamento, ['Numerario','Transferencia','Cheque','Credito','Cotacao'], true)) $formaPagamento = 'Numerario';
+      $referenciaCotacao = trim((string)($_POST['referencia_cotacao'] ?? ''));
+      if(in_array($formaPagamento, ['Credito','Cotacao'], true) && !$fornecedorId){
+        throw new RuntimeException('Selecione o fornecedor quando o pagamento for a credito ou via cotacao.');
+      }
+      if($formaPagamento === 'Cotacao' && $referenciaCotacao === ''){
+        throw new RuntimeException('Informe a referencia da cotacao para pagamento via cotacao.');
+      }
       $pdo->beginTransaction();
-      $pdo->prepare('INSERT INTO logistica_operacional_custos (categoria,departamento,descricao,valor,data_lancamento,responsavel,observacoes) VALUES (:c,:dep,:d,:v,:dt,:r,:o)')
-        ->execute(['c'=>$categoria,'dep'=>$departamento,'d'=>$descricao,'v'=>$valor,'dt'=>$data,'r'=>trim((string)($_POST['responsavel']??''))?:null,'o'=>trim((string)($_POST['observacoes']??''))?:null]);
+      $pdo->prepare('INSERT INTO logistica_operacional_custos (categoria,departamento,fornecedor_id,forma_pagamento,referencia_cotacao,descricao,valor,data_lancamento,responsavel,observacoes) VALUES (:c,:dep,:f,:fp,:rc,:d,:v,:dt,:r,:o)')
+        ->execute(['c'=>$categoria,'dep'=>$departamento,'f'=>$fornecedorId,'fp'=>$formaPagamento,'rc'=>$referenciaCotacao!==''?$referenciaCotacao:null,'d'=>$descricao,'v'=>$valor,'dt'=>$data,'r'=>trim((string)($_POST['responsavel']??''))?:null,'o'=>trim((string)($_POST['observacoes']??''))?:null]);
       $idCusto = (int)$pdo->lastInsertId();
       movimentarBudjet(
         $pdo,
@@ -540,13 +751,43 @@ try {
   $requisicoes=array_values(array_filter($rows,function($r) use($q,$status_filtro,$departamento_filtro){ $t=strtolower(($r['codigo']??'').' '.($r['origem']??'').' '.($r['destino']??'').' '.($r['item']??'').' '.($r['responsavel']??'').' '.($r['area_solicitante']??'')); if($q!=='' && strpos($t,strtolower($q))===false) return false; if($status_filtro!=='todos'&&$status_filtro!==''&&st((string)($r['status']??''))!==strtolower($status_filtro)) return false; if($departamento_filtro!=='todos' && $departamento_filtro!=='' && strtolower((string)($r['area_solicitante']??''))!==strtolower($departamento_filtro)) return false; return true; }));
 
   $fornecedores=$pdo->query('SELECT * FROM logistica_fornecedores ORDER BY id DESC')->fetchAll(PDO::FETCH_ASSOC)?:[];
+  foreach($fornecedores as $f){ $fornNomePorId[(int)($f['id'] ?? 0)] = (string)($f['nome'] ?? ''); }
   $fornRef=$pdo->query("SELECT id,nome FROM logistica_fornecedores WHERE status='Ativo' ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC)?:[];
+  $fornCreditoRef = array_values(array_filter($fornecedores, static function(array $f): bool {
+    return strtolower(trim((string)($f['status'] ?? ''))) === 'ativo'
+      && strtolower(trim((string)($f['modalidade_credito'] ?? 'normal'))) === 'credito';
+  }));
   $pecas=$pdo->query('SELECT p.*, f.nome AS fornecedor_preferencial FROM logistica_pecas p LEFT JOIN logistica_fornecedores f ON f.id=p.fornecedor_preferencial_id ORDER BY p.id DESC')->fetchAll(PDO::FETCH_ASSOC)?:[];
   $pecasRef=$pdo->query('SELECT id,codigo,nome FROM logistica_pecas ORDER BY nome ASC')->fetchAll(PDO::FETCH_ASSOC)?:[];
   $cotacoes=$pdo->query('SELECT c.*, f.nome AS fornecedor_nome FROM logistica_cotacoes c INNER JOIN logistica_fornecedores f ON f.id=c.fornecedor_id ORDER BY c.id DESC')->fetchAll(PDO::FETCH_ASSOC)?:[];
-  $comp=$pdo->query('SELECT item_nome,categoria_item,MIN(preco_unitario) AS melhor_preco,MAX(preco_unitario) AS maior_preco,AVG(preco_unitario) AS preco_medio,COUNT(*) AS total_cotacoes FROM logistica_cotacoes GROUP BY item_nome,categoria_item ORDER BY item_nome ASC')->fetchAll(PDO::FETCH_ASSOC)?:[];
+  $comp=$pdo->query("
+    SELECT
+      c.item_nome,
+      c.categoria_item,
+      MIN(c.preco_unitario) AS melhor_preco,
+      MAX(c.preco_unitario) AS maior_preco,
+      AVG(c.preco_unitario) AS preco_medio,
+      COUNT(*) AS total_cotacoes,
+      (
+        SELECT f2.nome
+        FROM logistica_cotacoes c2
+        INNER JOIN logistica_fornecedores f2 ON f2.id = c2.fornecedor_id
+        WHERE c2.item_nome = c.item_nome
+          AND c2.categoria_item = c.categoria_item
+        ORDER BY c2.preco_unitario ASC, c2.id DESC
+        LIMIT 1
+      ) AS melhor_fornecedor
+    FROM logistica_cotacoes c
+    GROUP BY c.item_nome, c.categoria_item
+    ORDER BY c.item_nome ASC
+  ")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $subs=$pdo->query('SELECT s.*, p.codigo AS peca_codigo, p.nome AS peca_nome FROM logistica_pecas_substituidas s INNER JOIN logistica_pecas p ON p.id=s.peca_id ORDER BY s.id DESC')->fetchAll(PDO::FETCH_ASSOC)?:[];
-  $pedidosOficina=$pdo->query("SELECT r.id,r.codigo,r.item,r.quantidade,r.unidade,r.status,r.data_requisicao,r.responsavel,r.referencia_cotacao,r.fornecedor_id,r.forma_pagamento,r.tipo_compra,r.cotacao_automatica,r.cotacao_id,COALESCE(r.valor_total,r.custo_total,0) AS valor_total,f.nome AS fornecedor_nome FROM logistica_requisicoes r LEFT JOIN logistica_fornecedores f ON f.id=r.fornecedor_id WHERE r.origem_modulo='oficina' ORDER BY r.id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
+  $pedidosOficina=$pdo->query("SELECT r.id,r.codigo,r.item,r.quantidade,r.unidade,r.status,r.prioridade,r.data_requisicao,r.responsavel FROM logistica_requisicoes r WHERE r.origem_modulo='oficina' ORDER BY r.id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
+  if($pedidos_prioridade!=='todos'){
+    $pedidosOficina = array_values(array_filter($pedidosOficina, static function(array $p) use ($pedidos_prioridade): bool {
+      return prioridadeCategoria((string)($p['prioridade'] ?? '')) === $pedidos_prioridade;
+    }));
+  }
   $facturas=$pdo->query("SELECT f.*, fr.nome AS fornecedor_nome FROM logistica_fin_facturas f LEFT JOIN logistica_fornecedores fr ON fr.id=f.fornecedor_id ORDER BY f.id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $pagamentos=$pdo->query("SELECT p.*, f.codigo AS factura_codigo FROM logistica_fin_pagamentos p LEFT JOIN logistica_fin_facturas f ON f.id=p.factura_id ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $pecasAvariadas=$pdo->query("SELECT * FROM logistica_pecas_avariadas ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
@@ -591,6 +832,13 @@ try {
 
 $total=count($requisicoes); $pend=0; $ap=0; $ng=0;
 foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendente')$pend++; if(in_array($s,['aprovada','entregue'],true))$ap++; if(in_array($s,['negada','cancelada'],true))$ng++; }
+$pedUrg=0; $pedMed=0; $pedBai=0;
+foreach($pedidosOficina as $p){
+  $cat = prioridadeCategoria((string)($p['prioridade'] ?? ''));
+  if($cat==='urgente') $pedUrg++;
+  elseif($cat==='baixo') $pedBai++;
+  else $pedMed++;
+}
 ?>
 <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
@@ -602,8 +850,6 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             --logi-dark: #1a1a1a;
             --logi-soft: #fdf2e9;
             --logi-border: #f3c99f;
-            --vilcon-black: #1a1a1a;
-            --vilcon-orange: #f39c12;
         }
         body {
             background: #f8fafc !important;
@@ -629,19 +875,12 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
         }
         .logi-page { padding: 16px; background: transparent !important; }
         .logi-card { background: #fff !important; border: 1px solid #e5e7eb !important; border-radius: 12px; padding: 14px; }
-        .logi-main-tabs { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:12px; margin-bottom:12px; }
-        .tab-menu { display: flex; gap: 8px; flex-wrap: wrap; }
-        .tab-btn { padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 11px; border: 1px solid #ddd; color: #666 !important; text-transform: uppercase; transition: 0.3s; display: flex; align-items: center; gap: 8px; background:#fff; }
-        .tab-btn.active { background: var(--vilcon-orange); color: #fff !important; border-color: var(--vilcon-orange); }
-        .sub-tab-container { background: #eee; padding: 8px; border-radius: 8px; margin: 10px 0 12px 0; display: flex; gap: 5px; flex-wrap: wrap; }
-        .sub-tab-btn { padding: 8px 18px; border-radius: 5px; text-decoration: none; font-weight: 700; font-size: 10px; color: #555; text-transform: uppercase; transition: 0.2s; background:transparent; }
-        .sub-tab-btn.active { background: #fff; color: var(--vilcon-black); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .logi-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+        .logi-tab { text-decoration: none; padding: 8px 12px; border-radius: 999px; border: 1px solid #d1d5db; color: #334155 !important; background: #fff !important; font-size: 13px; }
+        .logi-tab.active { background: var(--logi-soft) !important; color: var(--logi-dark) !important; border-color: var(--logi-primary) !important; }
         .logi-kpis { display: grid; grid-template-columns: repeat(4,minmax(120px,1fr)); gap: 8px; margin-bottom: 10px; }
         .logi-kpi { border: 1px solid #e5e7eb; background: #f8fafc !important; border-radius: 10px; padding: 10px; font-size: 13px; color:#0f172a !important; }
         .logi-filters, .logi-form, .logi-inline-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-        .logi-inner-nav { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; padding-bottom:12px; border-bottom:1px dashed #ddd; flex-wrap:wrap; }
-        .logi-filters.fixed-position { margin-bottom: 0; align-items:center; }
-        .logi-filters.fixed-position input[name="q"] { min-width: 300px; }
         .logi-filters input, .logi-filters select, .logi-form input, .logi-form select, .logi-inline-form input, .logi-inline-form select {
             border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 13px; min-height: 36px;
         }
@@ -649,9 +888,34 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             border: 1px solid var(--logi-primary); border-radius: 8px; background: var(--logi-primary); color: #fff; padding: 8px 12px; font-size: 13px; cursor: pointer;
         }
         .logi-filters button:hover, .logi-form button:hover, .logi-inline-form button:hover, .logi-action-btn:hover { background: var(--logi-primary-dark); border-color: var(--logi-primary-dark); }
-        .mode-selector { margin-bottom: 10px; display: flex; gap: 10px; flex-wrap:wrap; }
-        .btn-mode { padding: 8px 15px; border-radius: 20px; font-size: 11px; font-weight: 700; text-decoration: none; text-transform: uppercase; border: 1px solid #ddd; color: #666; background: #fff; }
-        .btn-mode.active { background: var(--vilcon-black); color: #fff; border-color: var(--vilcon-black); }
+        .logi-toggle { margin-bottom: 10px; display: flex; gap: 8px; }
+        .logi-toggle a { text-decoration: none; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; color: #334155; font-size: 13px; }
+        .logi-toggle a.active { background: var(--logi-soft); border-color: var(--logi-primary); color: var(--logi-dark); }
+        .logi-subtabs {
+            background: #f3f4f6;
+            padding: 8px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .logi-subtabs .logi-subtab-btn {
+            padding: 8px 15px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 10px;
+            font-weight: 700;
+            color: #374151;
+            text-transform: uppercase;
+            border: 1px solid transparent;
+        }
+        .logi-subtabs .logi-subtab-btn.active {
+            background: #ffffff;
+            color: #111827;
+            box-shadow: 0 2px 4px rgba(0,0,0,.08);
+            border-color: #e5e7eb;
+        }
         .logi-alert { border-radius: 8px; padding: 9px 10px; margin-bottom: 10px; font-size: 13px; }
         .logi-alert.error { color: #991b1b; background: #fee2e2; border: 1px solid #fecaca; }
         .logi-alert.success { color: #166534; background: #ecfdf3; border: 1px solid #bbf7d0; }
@@ -664,6 +928,26 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
         .logi-status.warn { background: #fef3c7; border-color: #fde68a; color: #92400e; }
         .logi-status.info { background: #fdf2e9; border-color: #f3c99f; color: #7c2d12; }
         .logi-status.danger { background: #fee2e2; border-color: #fecaca; color: #991b1b; }
+        .logi-actions { display:flex; gap:6px; flex-wrap:wrap; }
+        .logi-action-link {
+            display:inline-flex;
+            align-items:center;
+            gap:6px;
+            padding:6px 10px;
+            border-radius:999px;
+            text-decoration:none;
+            border:1px solid #d1d5db;
+            background:#fff;
+            color:#334155;
+            font-size:12px;
+            font-weight:700;
+            transition: all .15s ease;
+        }
+        .logi-action-link i { font-size:13px; }
+        .logi-action-link:hover { transform: translateY(-1px); }
+        .logi-action-link.stock { border-color:#bfdbfe; color:#1d4ed8; background:#eff6ff; }
+        .logi-action-link.req { border-color:#fed7aa; color:#c2410c; background:#fff7ed; }
+        .logi-action-link.cot { border-color:#c7d2fe; color:#4338ca; background:#eef2ff; }
         .budjet-grid { display:grid; grid-template-columns:repeat(2,minmax(280px,1fr)); gap:16px; }
         .budjet-card { border:1px solid var(--logi-border); border-radius:14px; padding:18px; background:linear-gradient(180deg,#ffffff 0%,#fff8f2 100%); box-shadow:0 2px 10px rgba(230,126,34,.10); }
         .budjet-card h3 { margin:0 0 6px 0; font-size:22px; color:#0f172a; }
@@ -678,6 +962,7 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
         .budjet-box .v { font-size:20px; font-weight:700; color:#0f172a; }
         .budjet-reforco { margin:10px 0 14px; padding:10px; border:1px dashed var(--logi-primary); border-radius:10px; background:var(--logi-soft); }
         .budjet-reforco .logi-inline-form { margin:0; }
+        .logi-budget-note { width:100%; font-size:12px; color:#7c2d12; background:#fff8f2; border:1px dashed #f3c99f; border-radius:8px; padding:8px 10px; }
         @media (max-width: 900px) { .logi-kpis { grid-template-columns: repeat(2,minmax(120px,1fr)); } }
         @media (max-width: 900px) { .budjet-grid { grid-template-columns: 1fr; } .budjet-resumo { grid-template-columns: 1fr; } }
     </style>
@@ -688,212 +973,233 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
     </div>
 
     <div class="dashboard-container logi-page">
-        <div class="logi-main-tabs">
-            <div class="tab-menu">
-                <a href="?view=pedidos_oficina&mode=list" class="tab-btn <?= $secao==='requisicoes' ? 'active' : '' ?>">Pedidos recebidos da Oficina</a>
-                <a href="?view=extratos&mode=list" class="tab-btn <?= $secao==='financas' ? 'active' : '' ?>">Financas</a>
-                <a href="?view=pecas&mode=list" class="tab-btn <?= $secao==='stock' ? 'active' : '' ?>">Controle de Stock</a>
-                <a href="?view=oper_uniforme&mode=list" class="tab-btn <?= $secao==='operacional' ? 'active' : '' ?>">Logistica Operacional</a>
-                <a href="?view=budjet&mode=list" class="tab-btn <?= $secao==='budjet' ? 'active' : '' ?>">Budjet</a>
-                <a href="?view=alertas&mode=list" class="tab-btn <?= $secao==='alertas' ? 'active' : '' ?>">Alertas</a>
-                <a href="?view=relatorios&mode=list" class="tab-btn <?= $view==='relatorios' ? 'active' : '' ?>">Relatorios</a>
-            </div>
+        <div class="logi-tabs">
+            <a href="?view=pedidos_oficina" class="logi-tab <?= $view==='pedidos_oficina' ? 'active' : '' ?>">Formularios recebidos</a>
+            <a href="?view=requisicoes&mode=list" class="logi-tab <?= in_array($view,['requisicoes','fornecedores'],true) ? 'active' : '' ?>">Compras</a>
+            <a href="?view=extratos" class="logi-tab <?= $secao==='financas' ? 'active' : '' ?>">Financas</a>
+            <a href="?view=pecas" class="logi-tab <?= $secao==='stock' ? 'active' : '' ?>">Controle de Stock</a>
+            <a href="?view=oper_uniforme" class="logi-tab <?= $secao==='operacional' ? 'active' : '' ?>">Logistica Operacional</a>
+            <a href="?view=budjet" class="logi-tab <?= $secao==='budjet' ? 'active' : '' ?>">Budjet</a>
+            <a href="?view=alertas" class="logi-tab <?= $secao==='alertas' ? 'active' : '' ?>">Alertas</a>
+            <a href="?view=relatorios" class="logi-tab <?= $view==='relatorios' ? 'active' : '' ?>">Relatorios</a>
         </div>
         <?php $opcoesSecao = opcoesSecaoLogistica($secao); ?>
-        <?php if(!empty($opcoesSecao) && $secao !== 'budjet' && $secao !== 'requisicoes'): ?>
-            <div class="sub-tab-container">
+        <?php if(!empty($opcoesSecao) && $view!=='requisicoes'): ?>
+            <div class="logi-subtabs">
                 <?php foreach($opcoesSecao as $k => $lbl): ?>
-                    <a
-                        href="?view=<?= urlencode((string)$k) ?>&mode=list"
-                        class="sub-tab-btn <?= $view===$k ? 'active' : '' ?>"
-                    ><?= htmlspecialchars((string)$lbl) ?></a>
+                    <a class="logi-subtab-btn <?= $view===$k ? 'active' : '' ?>" href="?view=<?= urlencode((string)$k) ?>&mode=list"><?= htmlspecialchars((string)$lbl) ?></a>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
 
         <div class="logi-card">
-            <?php if(!in_array($view, ['requisicoes','pedidos_oficina','budjet'], true)): ?>
-                <div class="logi-kpis">
-                    <div class="logi-kpi">Total: <b><?= $total ?></b></div>
-                    <div class="logi-kpi">Pendentes: <b><?= $pend ?></b></div>
-                    <div class="logi-kpi">Aprovadas: <b><?= $ap ?></b></div>
-                    <div class="logi-kpi">Negadas: <b><?= $ng ?></b></div>
-                </div>
-                <div class="logi-alert success" style="background:#f8fafc;border-color:#e5e7eb;color:#334155;">
-                    Resumo: Valor <?= htmlspecialchars(money((float)($rel['total_valor_requisicoes'] ?? 0))) ?> |
-                    Stock baixo <?= (int)($rel['pecas_stock_baixo'] ?? 0) ?> |
-                    Fornecedores ativos <?= (int)($rel['fornecedores_ativos'] ?? 0) ?>
-                </div>
-            <?php endif; ?>
-
             <?php if($erro): ?><div class="logi-alert error"><?= htmlspecialchars($erro) ?></div><?php endif; ?>
             <?php if($msg): ?><div class="logi-alert success"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
 
-            <?php if($view !== 'budjet'): ?>
-                <div class="logi-inner-nav">
-                    <form method="GET" class="logi-filters fixed-position">
-                        <input type="hidden" name="view" value="<?= htmlspecialchars((string)$view) ?>">
-                        <input type="hidden" name="mode" value="<?= htmlspecialchars((string)$mode) ?>">
-                        <input type="text" name="q" value="<?= htmlspecialchars($q) ?>" placeholder="<?= in_array($view,['requisicoes','pedidos_oficina'],true) ? 'Pesquisar por codigo, item ou responsavel' : 'Pesquisar' ?>">
-                    <?php if(in_array($view,['requisicoes','pedidos_oficina'],true)): ?>
-                        <select name="status">
-                                <option value="todos">Status: Todos</option>
-                                <option value="pendente" <?= $status_filtro==='pendente'?'selected':'' ?>>Status: Pendente</option>
-                                <option value="aprovada" <?= $status_filtro==='aprovada'?'selected':'' ?>>Status: Aprovada</option>
-                                <option value="negada" <?= $status_filtro==='negada'?'selected':'' ?>>Status: Negada</option>
-                                <option value="em transito" <?= $status_filtro==='em transito'?'selected':'' ?>>Status: Em transito</option>
-                                <option value="entregue" <?= $status_filtro==='entregue'?'selected':'' ?>>Status: Entregue</option>
-                        </select>
-                    <?php endif; ?>
-                    <?php if($view==='requisicoes'): ?>
-                        <select name="departamento">
-                            <option value="todos">Departamento: Todos</option>
-                            <option value="oficina" <?= $departamento_filtro==='oficina'?'selected':'' ?>>Departamento: Oficina</option>
-                            <option value="transporte" <?= $departamento_filtro==='transporte'?'selected':'' ?>>Departamento: Transporte</option>
-                        </select>
-                    <?php endif; ?>
-                    <button class="btn-mode">Aplicar</button>
-                        <a class="btn-mode" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=<?= urlencode((string)$view) ?>&mode=<?= urlencode((string)$mode) ?>">Limpar</a>
-                    </form>
-                </div>
-            <?php endif; ?>
-
             <?php if(in_array($view,['fornecedores','pecas','cotacoes','substituicoes','facturas','pagamentos','pecas_avariadas','oper_uniforme','oper_alimentacao','oper_portagem','oper_multas','oper_seguros','oper_taxas_radios','oper_extintores','oper_manutencoes'],true)): ?>
-                <div class="mode-selector">
-                    <a class="btn-mode <?= $mode==='list' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=list">Lista</a>
-                    <a class="btn-mode <?= $mode==='form' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=form">Novo Registo</a>
+                <div class="logi-toggle">
+                    <a class="<?= $mode==='list' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=list">Lista</a>
+                    <a class="<?= $mode==='form' ? 'active' : '' ?>" href="?view=<?= urlencode((string)$view) ?>&mode=form">Novo Registo</a>
                 </div>
             <?php endif; ?>
 
-            <?php if($view==='requisicoes' && $mode==='form'): ?>
-                <form method="POST" class="logi-form">
-                    <input type="hidden" name="acao" value="criar_requisicao">
-                    <input name="origem" placeholder="Origem" required>
-                    <input name="destino" placeholder="Destino" required>
-                    <input name="item" placeholder="Item" required>
-                    <input type="number" step="0.01" min="0.01" name="quantidade" placeholder="Qtd" required>
-                    <input name="unidade" value="un">
-                    <input type="number" step="0.01" min="0" name="valor_total" value="0" placeholder="Valor">
-                    <select name="escopo_logistica"><option value="operacional">Operacional</option><option value="geral">Geral</option></select>
-                    <select name="area_solicitante"><option value="oficina">Oficina</option><option value="transporte">Transporte</option><option value="geral">Geral</option></select>
-                    <button>Guardar</button>
-                </form>
-            <?php elseif($view==='requisicoes'): ?>
-                <div class="logi-table-wrap">
-                    <table class="logi-table">
-                        <tr><th>Codigo</th><th>Departamento</th><th>Item</th><th>Origem -> Destino</th><th>Qtd</th><th>Valor</th><th>Status</th><th>Proxima acao</th></tr>
-                        <?php if(!$requisicoes): ?>
-                            <tr><td colspan="8">Sem requisicoes encontradas para os filtros selecionados.</td></tr>
-                        <?php endif; ?>
-                        <?php foreach($requisicoes as $r): $sn=st((string)$r['status']); ?>
-                            <tr>
-                                <td><?= htmlspecialchars((string)$r['codigo']) ?></td>
-                                <td>
-                                    <?php $depReq = strtolower((string)($r['area_solicitante'] ?? 'oficina')); ?>
-                                    <span class="logi-status <?= $depReq==='transporte' ? 'info' : 'warn' ?>">
-                                        <?= htmlspecialchars(ucfirst($depReq)) ?>
-                                    </span>
-                                </td>
-                                <td><?= htmlspecialchars((string)$r['item']) ?></td>
-                                <td><?= htmlspecialchars((string)$r['origem']) ?> -> <?= htmlspecialchars((string)$r['destino']) ?></td>
-                                <td><?= htmlspecialchars((string)$r['quantidade']) ?></td>
-                                <td>
-                                    <?= htmlspecialchars(money((float)($r['valor_total_calc'] ?? $r['valor_total'] ?? 0))) ?>
-                                    <?php if(!empty($r['referencia_cotacao'])): ?>
-                                        <div style="font-size:11px;color:#64748b;">Ref: <?= htmlspecialchars((string)$r['referencia_cotacao']) ?></div>
-                                    <?php endif; ?>
-                                </td>
-                                <td><span class="logi-status <?= badge((string)$r['status']) ?>"><?= htmlspecialchars(stLabel((string)$r['status'])) ?></span></td>
-                                <td>
-                                    <div style="display:flex;flex-direction:column;gap:6px;">
-                                        <?php if($sn==='pendente'): ?>
-                                            <form method="POST" class="logi-inline-form">
-                                                <input type="hidden" name="acao" value="anexar_preco">
-                                                <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                                                <input type="hidden" name="ret_view" value="requisicoes">
-                                                <input type="hidden" name="escopo_logistica" value="<?= htmlspecialchars((string)$r['escopo_logistica']) ?>">
-                                                <input type="number" step="0.01" min="0.01" name="valor_total" placeholder="Preco (MZN)" style="max-width:120px;" required>
-                                                <input type="text" name="referencia_cotacao" placeholder="Referencia" style="max-width:120px;">
-                                                <input type="text" name="nota_preco" placeholder="Obs." style="max-width:120px;">
-                                                <button>Guardar preco</button>
-                                            </form>
-                                        <?php endif; ?>
-                                        <form method="POST" class="logi-inline-form">
-                                            <input type="hidden" name="acao" value="mudar_status">
-                                            <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                                            <input type="hidden" name="escopo_logistica" value="<?= htmlspecialchars((string)$r['escopo_logistica']) ?>">
-                                            <input type="hidden" name="area_solicitante" value="<?= htmlspecialchars((string)$r['area_solicitante']) ?>">
-                                            <?php if($sn==='pendente'): ?>
-                                                <select name="novo_status" required>
-                                                    <option value="aprovada">Aprovar</option>
-                                                    <option value="negada">Negar</option>
-                                                </select>
-                                                <button>Atualizar</button>
-                                            <?php elseif($sn==='aprovada'): ?>
-                                                <input type="hidden" name="novo_status" value="em transito">
-                                                <button>Despachar</button>
-                                            <?php elseif($sn==='em transito'): ?>
-                                                <input type="hidden" name="novo_status" value="entregue">
-                                                <button>Marcar entregue</button>
-                                            <?php endif; ?>
-                                        </form>
-                                    </div>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </table>
+            <?php if($view==='requisicoes'): ?>
+                <div class="logi-subtabs">
+                    <a class="logi-subtab-btn <?= ($view==='requisicoes' && $compras_tab==='requisicoes') ? 'active' : '' ?>" href="?view=requisicoes&mode=list&compras_tab=requisicoes">Requisicoes</a>
+                    <a class="logi-subtab-btn <?= ($view==='requisicoes' && $compras_tab==='cotacoes') ? 'active' : '' ?>" href="?view=requisicoes&mode=list&compras_tab=cotacoes">Cotacoes</a>
+                    <a class="logi-subtab-btn <?= ($view==='requisicoes' && $compras_tab==='fornecedores') ? 'active' : '' ?>" href="?view=requisicoes&mode=list&compras_tab=fornecedores">Fornecedores</a>
                 </div>
+                <?php if($view==='requisicoes' && $compras_tab==='requisicoes'): ?>
+                    <div class="logi-toggle">
+                        <a class="<?= $mode==='list' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=requisicoes&mode=list">Ver Lista</a>
+                        <a class="<?= $mode==='form' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=requisicoes&mode=form">Adicionar Novo</a>
+                    </div>
+                    <?php if($mode==='form'): ?>
+                        <form method="POST" class="logi-form">
+                            <input type="hidden" name="acao" value="criar_requisicao">
+                            <input type="hidden" name="origem" value="Logistica">
+                            <input type="hidden" name="destino" value="Compras">
+                            <input type="hidden" name="escopo_logistica" value="operacional">
+                            <input type="hidden" name="area_solicitante" value="oficina">
+                            <input name="item" placeholder="Item / material" required>
+                            <input type="number" name="quantidade" step="0.01" min="0.01" placeholder="Quantidade" required>
+                            <input name="unidade" value="un" placeholder="Unidade">
+                            <select name="prioridade">
+                                <option value="Urgente">Urgente</option>
+                                <option value="Normal" selected>Medio</option>
+                                <option value="Baixo">Baixo</option>
+                            </select>
+                            <input type="date" name="data_requisicao" value="<?= date('Y-m-d') ?>" required>
+                            <input name="responsavel" value="<?= htmlspecialchars((string)($_SESSION['usuario_nome'] ?? '')) ?>" placeholder="Responsavel">
+                            <input type="number" step="0.01" min="0" name="valor_total" placeholder="Valor estimado (MZN)">
+                            <select name="fornecedor_credito_id">
+                                <option value="">Fornecedor que leva material a credito (opcional)</option>
+                                <?php foreach($fornCreditoRef as $f): ?>
+                                    <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars((string)$f['nome']) ?> - Saldo <?= htmlspecialchars(money((float)($f['saldo_budjet'] ?? 0))) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <input name="observacoes" placeholder="Observacoes">
+                            <button>Enviar para aprovacao</button>
+                        </form>
+                    <?php else: ?>
+                        <div class="logi-table-wrap">
+                            <table class="logi-table">
+                                <tr><th>Codigo</th><th>Item</th><th>Quantidade</th><th>Fornecedor credito</th><th>Prioridade</th><th>Status</th><th>Responsavel</th><th>Data</th></tr>
+                                <?php if(!$requisicoes): ?><tr><td colspan="8">Sem requisicoes registadas.</td></tr><?php endif; ?>
+                                <?php foreach($requisicoes as $r): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string)($r['codigo'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($r['item'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)(($r['quantidade'] ?? '0') . ' ' . ($r['unidade'] ?? ''))) ?></td>
+                                        <td><?= htmlspecialchars((string)($fornNomePorId[(int)($r['fornecedor_id'] ?? 0)] ?? '-')) ?></td>
+                                        <td><span class="logi-status <?= prioridadeCategoria((string)($r['prioridade'] ?? 'Normal')) === 'urgente' ? 'danger' : (prioridadeCategoria((string)($r['prioridade'] ?? 'Normal')) === 'baixo' ? 'ok' : 'warn') ?>"><?= htmlspecialchars(prioridadeLabel((string)($r['prioridade'] ?? 'Normal'))) ?></span></td>
+                                        <td><span class="logi-status <?= badge((string)($r['status'] ?? '')) ?>"><?= htmlspecialchars(stLabel((string)($r['status'] ?? ''))) ?></span></td>
+                                        <td><?= htmlspecialchars((string)($r['responsavel'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($r['data_requisicao'] ?? '-')) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if($compras_tab==='cotacoes'): ?>
+                    <div class="logi-toggle">
+                        <a class="<?= $mode==='list' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=cotacoes&mode=list">Ver Lista</a>
+                        <a class="<?= $mode==='form' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=cotacoes&mode=form">Adicionar Novo</a>
+                    </div>
+                    <?php if($mode==='form'): ?>
+                        <form method="POST" class="logi-form" enctype="multipart/form-data">
+                            <input type="hidden" name="acao" value="criar_cotacao">
+                            <input name="item_nome" value="<?= htmlspecialchars($item_nome_prefill) ?>" placeholder="Item" required>
+                            <div id="cotacoes_linhas" style="display:flex;flex-direction:column;gap:8px;width:100%;">
+                                <?php for($i=0;$i<3;$i++): ?>
+                                    <div class="logi-inline-form cotacao-linha" style="margin:0;">
+                                        <select name="fornecedor_id[]" required>
+                                            <option value="">Fornecedor</option>
+                                            <?php foreach($fornRef as $f): ?>
+                                                <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars((string)$f['nome']) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <input type="number" class="cot-qtd" name="quantidade[]" step="0.01" min="0.01" value="1" placeholder="Quantidade" required>
+                                        <input type="number" class="cot-preco" name="preco_unitario[]" step="0.01" min="0.01" placeholder="Preco" required>
+                                        <input type="text" class="cot-total" placeholder="Total" readonly>
+                                        <input type="file" name="anexo_cotacao[]" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx">
+                                        <button type="button" class="btn_remove_cotacao">- Menos</button>
+                                    </div>
+                                <?php endfor; ?>
+                            </div>
+                            <button type="button" id="btn_add_cotacao">+ Cotacao</button>
+                            <button>Enviar para aprovacao</button>
+                        </form>
+                    <?php else: ?>
+                        <div class="logi-table-wrap">
+                            <table class="logi-table">
+                                <tr><th>Fornecedor</th><th>Item</th><th>Quantidade</th><th>Preco</th><th>Total</th><th>Anexo cotacao</th><th>Data</th></tr>
+                                <?php if(!$cotacoes): ?><tr><td colspan="7">Sem cotacoes registadas.</td></tr><?php endif; ?>
+                                <?php foreach($cotacoes as $c): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string)($c['fornecedor_nome'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)$c['item_nome']) ?></td>
+                                        <td><?= htmlspecialchars((string)number_format((float)($c['quantidade'] ?? 1), 2, ',', '.')) ?></td>
+                                        <td><?= htmlspecialchars(money((float)($c['preco_unitario'] ?? 0))) ?></td>
+                                        <td><?= htmlspecialchars(money((float)($c['total_cotacao'] ?? ((float)($c['quantidade'] ?? 1) * (float)($c['preco_unitario'] ?? 0))))) ?></td>
+                                        <td>
+                                            <?php if(!empty($c['anexo_cotacao'])): ?>
+                                                <a href="<?= htmlspecialchars((string)$c['anexo_cotacao']) ?>" target="_blank" rel="noopener">Abrir</a>
+                                            <?php else: ?>
+                                                -
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?= htmlspecialchars((string)($c['created_at'] ?? '-')) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if($compras_tab==='fornecedores'): ?>
+                    <div class="logi-toggle">
+                        <a class="<?= $mode==='list' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=fornecedores&mode=list">Ver Lista</a>
+                        <a class="<?= $mode==='form' ? 'active' : '' ?>" href="?view=requisicoes&compras_tab=fornecedores&mode=form">Adicionar Novo</a>
+                    </div>
+                    <?php if($mode==='form'): ?>
+                        <form method="POST" class="logi-form js-fornecedor-form">
+                            <input type="hidden" name="acao" value="criar_fornecedor">
+                            <input type="hidden" name="escopo_logistica" value="operacional">
+                            <input name="nome" placeholder="Nome" required>
+                            <input name="contacto" placeholder="Contacto">
+                            <input name="email" placeholder="Email">
+                            <select name="modalidade_credito" class="forn-modalidade">
+                                <option value="Normal">Fornecedor normal</option>
+                                <option value="Credito">Fornecedor a credito</option>
+                            </select>
+                            <input type="number" name="saldo_budjet" min="0" step="0.01" value="0" placeholder="Saldo para credito">
+                            <small style="font-size:12px;color:#64748b;">Se o fornecedor for a credito e o saldo acabar, o restante da compra vira divida.</small>
+                            <div class="forn-credito-box" style="display:none;width:100%;border:1px dashed #f3c99f;padding:10px;border-radius:10px;background:#fff8f2;">
+                                <div class="forn-credito-linhas" style="display:flex;flex-direction:column;gap:8px;">
+                                    <div class="logi-inline-form material-credito-linha" style="margin:0;">
+                                        <input name="material_credito_nome[]" placeholder="Material (opcional)">
+                                        <input name="material_credito_especificacoes[]" placeholder="Especificacoes (opcional)">
+                                        <input type="number" class="mat-qtd" name="material_credito_quantidade[]" min="0" step="0.01" placeholder="Quantidade">
+                                        <input type="number" class="mat-preco" name="material_credito_preco[]" min="0" step="0.01" placeholder="Preco">
+                                        <input type="number" class="mat-total" name="material_credito_total[]" min="0" step="0.01" placeholder="Total">
+                                        <input name="material_credito_observacoes[]" placeholder="Obs. (opcional)">
+                                        <button type="button" class="btn_remove_material_credito">-</button>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn_add_material_credito">+ Material</button>
+                            </div>
+                            <button>Guardar</button>
+                        </form>
+                    <?php else: ?>
+                        <div class="logi-table-wrap"><table class="logi-table"><tr><th>ID</th><th>Nome</th><th>Contacto</th><th>Modalidade</th><th>Status</th><th>Saldo credito</th><th>Divida</th></tr><?php if(!$fornecedores): ?><tr><td colspan="7">Sem fornecedores registados.</td></tr><?php endif; ?><?php foreach($fornecedores as $f): ?><tr><td><?= (int)$f['id'] ?></td><td><?= htmlspecialchars((string)$f['nome']) ?></td><td><?= htmlspecialchars((string)($f['contacto']??'-')) ?></td><td><?= htmlspecialchars((string)($f['modalidade_credito'] ?? 'Normal')) ?></td><td><span class="logi-status <?= badge((string)$f['status']) ?>"><?= htmlspecialchars((string)$f['status']) ?></span></td><td><?= htmlspecialchars(money((float)($f['saldo_budjet'] ?? 0))) ?></td><td><?= htmlspecialchars(money((float)($f['divida_atual'] ?? 0))) ?></td></tr><?php endforeach; ?></table></div>
+                    <?php endif; ?>
+                <?php endif; ?>
 
             <?php elseif($view==='pedidos_oficina'): ?>
-                <div class="logi-alert success" style="background:#f8fafc;border-color:#e5e7eb;color:#334155;">
-                    Fluxo simples: informe valor, escolha pagamento e clique em <b>Confirmar compra</b>.
+                <form method="GET" class="logi-filters">
+                    <input type="hidden" name="view" value="pedidos_oficina">
+                    <input type="hidden" name="mode" value="list">
+                    <select name="pedidos_prioridade">
+                        <option value="todos" <?= $pedidos_prioridade==='todos'?'selected':'' ?>>Prioridade: Todos</option>
+                        <option value="urgente" <?= $pedidos_prioridade==='urgente'?'selected':'' ?>>Prioridade: Urgente</option>
+                        <option value="medio" <?= $pedidos_prioridade==='medio'?'selected':'' ?>>Prioridade: Medio</option>
+                        <option value="baixo" <?= $pedidos_prioridade==='baixo'?'selected':'' ?>>Prioridade: Baixo</option>
+                    </select>
+                    <button>Aplicar filtro</button>
+                    <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=pedidos_oficina&mode=list&pedidos_prioridade=todos">Limpar</a>
+                </form>
+                <div class="logi-kpis">
+                    <div class="logi-kpi">Urgente: <b><?= (int)$pedUrg ?></b></div>
+                    <div class="logi-kpi">Medio: <b><?= (int)$pedMed ?></b></div>
+                    <div class="logi-kpi">Baixo: <b><?= (int)$pedBai ?></b></div>
+                    <div class="logi-kpi">Total: <b><?= count($pedidosOficina) ?></b></div>
                 </div>
                 <div class="logi-table-wrap">
                     <table class="logi-table">
-                        <tr><th>Codigo</th><th>Item</th><th>Quantidade</th><th>Status</th><th>Responsavel</th><th>Compra</th></tr>
-                        <?php if(!$pedidosOficina): ?><tr><td colspan="6">Sem pedidos recebidos da Oficina.</td></tr><?php endif; ?>
-                        <?php foreach($pedidosOficina as $p): $sp = st((string)($p['status'] ?? '')); ?>
+                        <tr><th>Codigo</th><th>Item</th><th>Quantidade</th><th>Prioridade</th><th>Status</th><th>Responsavel</th><th>Data</th><th>Acoes</th></tr>
+                        <?php if(!$pedidosOficina): ?><tr><td colspan="8">Sem formularios recebidos para os filtros selecionados.</td></tr><?php endif; ?>
+                        <?php foreach($pedidosOficina as $p): ?>
                             <tr>
                                 <td><?= htmlspecialchars((string)($p['codigo'] ?? '-')) ?></td>
                                 <td><?= htmlspecialchars((string)($p['item'] ?? '-')) ?></td>
                                 <td><?= htmlspecialchars((string)(($p['quantidade'] ?? '0') . ' ' . ($p['unidade'] ?? ''))) ?></td>
+                                <td><span class="logi-status <?= prioridadeCategoria((string)($p['prioridade'] ?? '')) === 'urgente' ? 'danger' : (prioridadeCategoria((string)($p['prioridade'] ?? '')) === 'baixo' ? 'ok' : 'warn') ?>"><?= htmlspecialchars(prioridadeLabel((string)($p['prioridade'] ?? ''))) ?></span></td>
                                 <td><span class="logi-status <?= badge((string)($p['status'] ?? '')) ?>"><?= htmlspecialchars(stLabel((string)($p['status'] ?? ''))) ?></span></td>
                                 <td><?= htmlspecialchars((string)($p['responsavel'] ?? '-')) ?></td>
+                                <td><?= htmlspecialchars((string)($p['data_requisicao'] ?? '-')) ?></td>
                                 <td>
-                                    <?php if($sp==='pendente'): ?>
-                                        <form method="POST" class="logi-inline-form" style="min-width:460px;">
-                                            <input type="hidden" name="acao" value="processar_compra_requisicao">
-                                            <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
-                                            <input type="number" step="0.01" min="0.01" name="valor_total" value="<?= (float)($p['valor_total'] ?? 0) > 0 ? htmlspecialchars(number_format((float)$p['valor_total'], 2, '.', '')) : '' ?>" placeholder="Valor (MZN)" required>
-                                            <input type="text" name="referencia_cotacao" value="<?= htmlspecialchars((string)($p['referencia_cotacao'] ?? '')) ?>" placeholder="Ref cotacao (opcional)">
-                                            <select name="fornecedor_id">
-                                                <option value="">Fornecedor (opcional)</option>
-                                                <?php foreach($fornRef as $f): ?>
-                                                    <option value="<?= (int)$f['id'] ?>" <?= (int)($p['fornecedor_id'] ?? 0) === (int)$f['id'] ? 'selected' : '' ?>><?= htmlspecialchars((string)$f['nome']) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
-                                            <select name="forma_pagamento" required>
-                                                <option value="numerario">Numerario</option>
-                                                <option value="cheque">Cheque</option>
-                                                <option value="credito">Credito</option>
-                                            </select>
-                                            <select name="tipo_compra" required>
-                                                <option value="normal">Compra normal</option>
-                                                <option value="compra_direta">Compra direta (gera cotacao)</option>
-                                            </select>
-                                            <button>Confirmar compra</button>
-                                        </form>
-                                    <?php else: ?>
-                                        <div style="font-size:12px;color:#334155;">
-                                            Valor: <?= htmlspecialchars(money((float)($p['valor_total'] ?? 0))) ?><br>
-                                            Forma: <?= htmlspecialchars((string)($p['forma_pagamento'] ?? '-')) ?><br>
-                                            Tipo: <?= htmlspecialchars((string)($p['tipo_compra'] ?? '-')) ?><br>
-                                            Fornecedor: <?= htmlspecialchars((string)($p['fornecedor_nome'] ?? '-')) ?>
-                                            <?php if(!empty($p['cotacao_automatica']) && !empty($p['cotacao_id'])): ?>
-                                                <br>Cotacao auto: COT-<?= (int)$p['cotacao_id'] ?>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endif; ?>
+                                    <div class="logi-actions">
+                                        <a class="logi-action-link stock" href="?view=pecas&mode=list" title="Ver stock de pecas" aria-label="Ver stock de pecas">
+                                            <i class="fa-solid fa-warehouse"></i><span>Stock</span>
+                                        </a>
+                                        <a class="logi-action-link req" href="?view=requisicoes&mode=list&compras_tab=requisicoes" title="Ver requisicoes de compras" aria-label="Ver requisicoes de compras">
+                                            <i class="fa-solid fa-clipboard-check"></i><span>Requisicao</span>
+                                        </a>
+                                        <a class="logi-action-link cot" href="?view=requisicoes&mode=list&compras_tab=cotacoes" title="Ver cotacoes de compras" aria-label="Ver cotacoes de compras">
+                                            <i class="fa-solid fa-file-signature"></i><span>Cotacao</span>
+                                        </a>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -919,6 +1225,7 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
                     <select name="departamento" required><option value="oficina">Oficina</option><option value="transporte">Transporte</option></select>
                     <input name="descricao" placeholder="Descricao da factura" required>
                     <input type="number" name="valor_total" min="0.01" step="0.01" placeholder="Valor total" required>
+                    <div class="logi-budget-note">Valor a abater do Budjet: <strong class="js-abate-factura">0,00 MZN</strong></div>
                     <input type="date" name="data_factura" value="<?= date('Y-m-d') ?>" required>
                     <select name="status"><option>Pendente</option><option>Parcial</option><option>Pago</option></select>
                     <input name="observacoes" placeholder="Observacoes">
@@ -933,6 +1240,7 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
                     <select name="factura_id"><option value="">Factura (opcional)</option><?php foreach($facturas as $f): ?><option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars((string)(($f['codigo'] ?? 'FAT') . ' - ' . ($f['descricao'] ?? ''))) ?></option><?php endforeach; ?></select>
                     <input name="descricao" placeholder="Descricao do pagamento" required>
                     <input type="number" name="valor_pago" min="0.01" step="0.01" placeholder="Valor pago" required>
+                    <div class="logi-budget-note">Pagamento nao abate Budjet novamente quando a factura ja foi lancada.</div>
                     <input type="date" name="data_pagamento" value="<?= date('Y-m-d') ?>" required>
                     <select name="metodo"><option>Transferencia</option><option>Cheque</option><option>Numerario</option><option>Carteira movel</option></select>
                     <input name="observacoes" placeholder="Observacoes">
@@ -941,24 +1249,53 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
             <?php elseif($view==='pagamentos'): ?>
                 <div class="logi-table-wrap"><table class="logi-table"><tr><th>Codigo</th><th>Factura</th><th>Descricao</th><th>Valor pago</th><th>Data</th><th>Metodo</th></tr><?php if(!$pagamentos): ?><tr><td colspan="6">Sem pagamentos registados.</td></tr><?php endif; ?><?php foreach($pagamentos as $p): ?><tr><td><?= htmlspecialchars((string)($p['codigo'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['factura_codigo'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['descricao'] ?? '-')) ?></td><td><?= htmlspecialchars(money((float)($p['valor_pago'] ?? 0))) ?></td><td><?= htmlspecialchars((string)($p['data_pagamento'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['metodo'] ?? '-')) ?></td></tr><?php endforeach; ?></table></div>
 
+            <?php elseif($view==='recibos'): ?>
+                <div class="logi-table-wrap"><table class="logi-table"><tr><th>Recibo</th><th>Factura</th><th>Descricao</th><th>Valor</th><th>Data</th><th>Metodo</th></tr><?php if(!$pagamentos): ?><tr><td colspan="6">Sem recibos emitidos.</td></tr><?php endif; ?><?php foreach($pagamentos as $p): ?><tr><td><?= htmlspecialchars((string)($p['codigo'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['factura_codigo'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['descricao'] ?? '-')) ?></td><td><?= htmlspecialchars(money((float)($p['valor_pago'] ?? 0))) ?></td><td><?= htmlspecialchars((string)($p['data_pagamento'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($p['metodo'] ?? '-')) ?></td></tr><?php endforeach; ?></table></div>
+
             <?php elseif($view==='fornecedores' && $mode==='form'): ?>
-                <form method="POST" class="logi-form">
+                <form method="POST" class="logi-form js-fornecedor-form">
                     <input type="hidden" name="acao" value="criar_fornecedor">
+                    <input type="hidden" name="escopo_logistica" value="operacional">
                     <input name="nome" placeholder="Nome" required>
                     <input name="contacto" placeholder="Contacto">
-                    <input name="telefone" placeholder="Telefone">
                     <input name="email" placeholder="Email">
-                    <select name="escopo_logistica"><option value="operacional">Operacional</option><option value="geral">Geral</option></select>
-                    <input type="number" name="saldo_budjet" min="0" step="0.01" value="0" placeholder="Saldo budjet">
+                    <select name="modalidade_credito" class="forn-modalidade">
+                        <option value="Normal">Fornecedor normal</option>
+                        <option value="Credito">Fornecedor a credito</option>
+                    </select>
+                    <input type="number" name="saldo_budjet" min="0" step="0.01" value="0" placeholder="Saldo para credito">
+                    <small style="font-size:12px;color:#64748b;">Se o fornecedor for a credito e o saldo acabar, o restante da compra vira divida.</small>
+                    <div class="forn-credito-box" style="display:none;width:100%;border:1px dashed #f3c99f;padding:10px;border-radius:10px;background:#fff8f2;">
+                        <div class="forn-credito-linhas" style="display:flex;flex-direction:column;gap:8px;">
+                            <div class="logi-inline-form material-credito-linha" style="margin:0;">
+                                <input name="material_credito_nome[]" placeholder="Material (opcional)">
+                                <input name="material_credito_especificacoes[]" placeholder="Especificacoes (opcional)">
+                                <input type="number" class="mat-qtd" name="material_credito_quantidade[]" min="0" step="0.01" placeholder="Quantidade">
+                                <input type="number" class="mat-preco" name="material_credito_preco[]" min="0" step="0.01" placeholder="Preco">
+                                <input type="number" class="mat-total" name="material_credito_total[]" min="0" step="0.01" placeholder="Total">
+                                <input name="material_credito_observacoes[]" placeholder="Obs. (opcional)">
+                                <button type="button" class="btn_remove_material_credito">-</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn_add_material_credito">+ Material</button>
+                    </div>
                     <button>Guardar</button>
                 </form>
             <?php elseif($view==='fornecedores'): ?>
-                <div class="logi-table-wrap"><table class="logi-table"><tr><th>ID</th><th>Nome</th><th>Contacto</th><th>Escopo</th><th>Status</th><th>Saldo budjet</th></tr><?php if(!$fornecedores): ?><tr><td colspan="6">Sem fornecedores registados.</td></tr><?php endif; ?><?php foreach($fornecedores as $f): ?><tr><td><?= (int)$f['id'] ?></td><td><?= htmlspecialchars((string)$f['nome']) ?></td><td><?= htmlspecialchars((string)($f['contacto']??'-')) ?></td><td><?= htmlspecialchars((string)$f['escopo_logistica']) ?></td><td><span class="logi-status <?= badge((string)$f['status']) ?>"><?= htmlspecialchars((string)$f['status']) ?></span></td><td><?= htmlspecialchars(money((float)($f['saldo_budjet'] ?? 0))) ?></td></tr><?php endforeach; ?></table></div>
+                <div class="logi-table-wrap"><table class="logi-table"><tr><th>ID</th><th>Nome</th><th>Contacto</th><th>Modalidade</th><th>Status</th><th>Saldo credito</th><th>Divida</th></tr><?php if(!$fornecedores): ?><tr><td colspan="7">Sem fornecedores registados.</td></tr><?php endif; ?><?php foreach($fornecedores as $f): ?><tr><td><?= (int)$f['id'] ?></td><td><?= htmlspecialchars((string)$f['nome']) ?></td><td><?= htmlspecialchars((string)($f['contacto']??'-')) ?></td><td><?= htmlspecialchars((string)($f['modalidade_credito'] ?? 'Normal')) ?></td><td><span class="logi-status <?= badge((string)$f['status']) ?>"><?= htmlspecialchars((string)$f['status']) ?></span></td><td><?= htmlspecialchars(money((float)($f['saldo_budjet'] ?? 0))) ?></td><td><?= htmlspecialchars(money((float)($f['divida_atual'] ?? 0))) ?></td></tr><?php endforeach; ?></table></div>
 
             <?php elseif($view==='pecas' && $mode==='form'): ?>
                 <form method="POST" class="logi-form"><input type="hidden" name="acao" value="criar_peca"><input name="codigo" placeholder="Codigo"><input name="nome" placeholder="Nome" required><input type="number" name="stock_atual" step="0.01" min="0" value="0" placeholder="Stock"><input type="number" name="stock_minimo" step="0.01" min="0" value="0" placeholder="Min"><input type="number" name="preco_referencia" step="0.01" min="0" value="0" placeholder="Preco"><button>Guardar</button></form>
             <?php elseif($view==='pecas'): ?>
-                <form method="POST" class="logi-inline-form"><input type="hidden" name="acao" value="ajustar_stock"><select name="peca_id"><?php foreach($pecasRef as $p): ?><option value="<?= (int)$p['id'] ?>"><?= htmlspecialchars((string)($p['codigo'].' - '.$p['nome'])) ?></option><?php endforeach; ?></select><select name="tipo_movimento"><option>Entrada</option><option>Saida</option><option>Ajuste</option></select><input type="number" name="quantidade" step="0.01" min="0.01" required><button>Movimentar</button></form>
+                <form method="POST" class="logi-inline-form">
+                    <input type="hidden" name="acao" value="ajustar_stock">
+                    <select name="peca_id"><?php foreach($pecasRef as $p): ?><option value="<?= (int)$p['id'] ?>"><?= htmlspecialchars((string)($p['codigo'].' - '.$p['nome'])) ?></option><?php endforeach; ?></select>
+                    <select name="tipo_movimento"><option>Entrada</option><option>Saida</option><option>Ajuste</option></select>
+                    <input type="number" name="quantidade" step="0.01" min="0.01" required placeholder="Qtd">
+                    <input type="number" name="custo_unitario" step="0.01" min="0" placeholder="Custo unitario">
+                    <div class="logi-budget-note">Valor a abater do Budjet (somente Entrada): <strong class="js-abate-stock">0,00 MZN</strong></div>
+                    <button>Movimentar</button>
+                </form>
                 <div class="logi-table-wrap"><table class="logi-table"><tr><th>ID</th><th>Codigo</th><th>Nome</th><th>Stock</th><th>Minimo</th><th>Preco</th></tr><?php if(!$pecas): ?><tr><td colspan="6">Sem pecas em stock.</td></tr><?php endif; ?><?php foreach($pecas as $p): ?><tr><td><?= (int)$p['id'] ?></td><td><?= htmlspecialchars((string)$p['codigo']) ?></td><td><?= htmlspecialchars((string)$p['nome']) ?></td><td><?= htmlspecialchars((string)$p['stock_atual']) ?></td><td><?= htmlspecialchars((string)$p['stock_minimo']) ?></td><td><?= htmlspecialchars(money((float)$p['preco_referencia'])) ?></td></tr><?php endforeach; ?></table></div>
 
             <?php elseif($view==='cotacoes' && $mode==='form'): ?>
@@ -967,7 +1304,7 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
                 <h4>Comparacao de precos</h4><div class="logi-table-wrap"><table class="logi-table"><tr><th>Item</th><th>Melhor</th><th>Maior</th><th>Medio</th><th>Cotacoes</th></tr><?php if(!$comp): ?><tr><td colspan="5">Sem cotacoes para comparar.</td></tr><?php endif; ?><?php foreach($comp as $c): ?><tr><td><?= htmlspecialchars((string)$c['item_nome']) ?></td><td><?= htmlspecialchars(money((float)$c['melhor_preco'])) ?></td><td><?= htmlspecialchars(money((float)$c['maior_preco'])) ?></td><td><?= htmlspecialchars(money((float)$c['preco_medio'])) ?></td><td><?= (int)$c['total_cotacoes'] ?></td></tr><?php endforeach; ?></table></div>
 
             <?php elseif($view==='substituicoes' && $mode==='form'): ?>
-                <form method="POST" class="logi-form"><input type="hidden" name="acao" value="registar_substituicao"><select name="peca_id"><?php foreach($pecasRef as $p): ?><option value="<?= (int)$p['id'] ?>"><?= htmlspecialchars((string)($p['codigo'].' - '.$p['nome'])) ?></option><?php endforeach; ?></select><input name="matricula_ativo" placeholder="Matricula" required><input type="number" name="quantidade" step="0.01" min="0.01" value="1" required><input type="number" name="custo_unitario" step="0.01" min="0" value="0"><button>Guardar</button></form>
+                <form method="POST" class="logi-form"><input type="hidden" name="acao" value="registar_substituicao"><select name="peca_id"><?php foreach($pecasRef as $p): ?><option value="<?= (int)$p['id'] ?>"><?= htmlspecialchars((string)($p['codigo'].' - '.$p['nome'])) ?></option><?php endforeach; ?></select><input name="matricula_ativo" placeholder="Matricula" required><input type="number" name="quantidade" step="0.01" min="0.01" value="1" required><input type="number" name="custo_unitario" step="0.01" min="0" value="0"><div class="logi-budget-note">Valor a abater do Budjet: <strong class="js-abate-substituicao">0,00 MZN</strong></div><button>Guardar</button></form>
             <?php elseif($view==='substituicoes'): ?>
                 <div class="logi-table-wrap"><table class="logi-table"><tr><th>ID</th><th>Peca</th><th>Matricula</th><th>Qtd</th><th>Custo Unit.</th><th>Total</th><th>Data</th></tr><?php if(!$subs): ?><tr><td colspan="7">Sem pecas substituidas registadas.</td></tr><?php endif; ?><?php foreach($subs as $s): $tot=(float)$s['quantidade']*(float)$s['custo_unitario']; ?><tr><td><?= (int)$s['id'] ?></td><td><?= htmlspecialchars((string)($s['peca_codigo'].' - '.$s['peca_nome'])) ?></td><td><?= htmlspecialchars((string)$s['matricula_ativo']) ?></td><td><?= htmlspecialchars((string)$s['quantidade']) ?></td><td><?= htmlspecialchars(money((float)$s['custo_unitario'])) ?></td><td><?= htmlspecialchars(money($tot)) ?></td><td><?= htmlspecialchars((string)$s['data_substituicao']) ?></td></tr><?php endforeach; ?></table></div>
 
@@ -991,8 +1328,23 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
                     <input type="hidden" name="categoria" value="<?= htmlspecialchars((string)$view) ?>">
                     <input type="hidden" name="ret_view" value="<?= htmlspecialchars((string)$view) ?>">
                     <select name="departamento" required><option value="transporte">Transporte</option><option value="oficina">Oficina</option></select>
+                    <select name="fornecedor_id">
+                        <option value="">Fornecedor (opcional)</option>
+                        <?php foreach($fornRef as $f): ?>
+                            <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars((string)$f['nome']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <select name="forma_pagamento" required>
+                        <option value="Numerario">Numerario</option>
+                        <option value="Transferencia">Transferencia</option>
+                        <option value="Cheque">Cheque</option>
+                        <option value="Credito">Credito</option>
+                        <option value="Cotacao">Via cotacao</option>
+                    </select>
+                    <input name="referencia_cotacao" placeholder="Referencia da cotacao (se aplicavel)">
                     <input name="descricao" placeholder="Descricao do custo" required>
                     <input type="number" name="valor" min="0.01" step="0.01" placeholder="Valor" required>
+                    <div class="logi-budget-note">Valor a abater do Budjet: <strong class="js-abate-operacional">0,00 MZN</strong></div>
                     <input type="date" name="data_lancamento" value="<?= date('Y-m-d') ?>" required>
                     <input name="responsavel" placeholder="Responsavel">
                     <input name="observacoes" placeholder="Observacoes">
@@ -1004,7 +1356,7 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
                         return (string)($c['categoria'] ?? '') === $view;
                     }));
                 ?>
-                <div class="logi-table-wrap"><table class="logi-table"><tr><th>Departamento</th><th>Descricao</th><th>Valor</th><th>Data</th><th>Responsavel</th><th>Observacoes</th></tr><?php if(!$custosFiltrados): ?><tr><td colspan="6">Sem lancamentos nesta categoria.</td></tr><?php endif; ?><?php foreach($custosFiltrados as $c): ?><tr><td><?= htmlspecialchars(ucfirst((string)($c['departamento'] ?? 'transporte'))) ?></td><td><?= htmlspecialchars((string)($c['descricao'] ?? '-')) ?></td><td><?= htmlspecialchars(money((float)($c['valor'] ?? 0))) ?></td><td><?= htmlspecialchars((string)($c['data_lancamento'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['responsavel'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['observacoes'] ?? '-')) ?></td></tr><?php endforeach; ?></table></div>
+                <div class="logi-table-wrap"><table class="logi-table"><tr><th>Departamento</th><th>Fornecedor</th><th>Pagamento</th><th>Ref. cotacao</th><th>Descricao</th><th>Valor</th><th>Data</th><th>Responsavel</th><th>Observacoes</th></tr><?php if(!$custosFiltrados): ?><tr><td colspan="9">Sem lancamentos nesta categoria.</td></tr><?php endif; ?><?php foreach($custosFiltrados as $c): ?><tr><td><?= htmlspecialchars(ucfirst((string)($c['departamento'] ?? 'transporte'))) ?></td><td><?= htmlspecialchars((string)($fornNomePorId[(int)($c['fornecedor_id'] ?? 0)] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['forma_pagamento'] ?? 'Numerario')) ?></td><td><?= htmlspecialchars((string)($c['referencia_cotacao'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['descricao'] ?? '-')) ?></td><td><?= htmlspecialchars(money((float)($c['valor'] ?? 0))) ?></td><td><?= htmlspecialchars((string)($c['data_lancamento'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['responsavel'] ?? '-')) ?></td><td><?= htmlspecialchars((string)($c['observacoes'] ?? '-')) ?></td></tr><?php endforeach; ?></table></div>
 
             <?php elseif($view==='budjet'): ?>
                 <?php if($budjetDepartamentoSelecionado === ''): ?>
@@ -1122,4 +1474,214 @@ foreach($requisicoes as $r){ $s=st((string)($r['status']??'')); if($s==='pendent
         </div>
     </div>
 </div>
+<script>
+function formatMzn(v){
+    var n = Number(v || 0);
+    return n.toLocaleString('pt-PT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' MZN';
+}
+function atualizarPrevisaoAbates(){
+    var fatAcao = document.querySelector('form input[name="acao"][value="criar_factura"]');
+    if(fatAcao){
+        var ff = fatAcao.closest('form');
+        var iv = ff ? ff.querySelector('input[name="valor_total"]') : null;
+        var ov = ff ? ff.querySelector('.js-abate-factura') : null;
+        if(iv && ov) ov.textContent = formatMzn(iv.value || 0);
+    }
+    var opAcao = document.querySelector('form input[name="acao"][value="criar_custo_operacional"]');
+    if(opAcao){
+        var fo = opAcao.closest('form');
+        var io = fo ? fo.querySelector('input[name="valor"]') : null;
+        var oo = fo ? fo.querySelector('.js-abate-operacional') : null;
+        if(io && oo) oo.textContent = formatMzn(io.value || 0);
+    }
+    var stAcao = document.querySelector('form input[name="acao"][value="ajustar_stock"]');
+    if(stAcao){
+        var fs = stAcao.closest('form');
+        var it = fs ? fs.querySelector('select[name="tipo_movimento"]') : null;
+        var iq = fs ? fs.querySelector('input[name="quantidade"]') : null;
+        var ic = fs ? fs.querySelector('input[name="custo_unitario"]') : null;
+        var os = fs ? fs.querySelector('.js-abate-stock') : null;
+        if(it && iq && ic && os){
+            var total = (it.value === 'Entrada') ? (Number(iq.value || 0) * Number(ic.value || 0)) : 0;
+            os.textContent = formatMzn(total);
+        }
+    }
+    var subAcao = document.querySelector('form input[name="acao"][value="registar_substituicao"]');
+    if(subAcao){
+        var fb = subAcao.closest('form');
+        var iqb = fb ? fb.querySelector('input[name="quantidade"]') : null;
+        var icb = fb ? fb.querySelector('input[name="custo_unitario"]') : null;
+        var ob = fb ? fb.querySelector('.js-abate-substituicao') : null;
+        if(iqb && icb && ob) ob.textContent = formatMzn(Number(iqb.value || 0) * Number(icb.value || 0));
+    }
+}
+function baixarComparacaoCotacao(item, fornecedor, melhor, maior, medio, total){
+    var cab = ['Item','Fornecedor (melhor)','Melhor','Maior','Medio','Cotacoes'];
+    var row = [item || '-', fornecedor || '-', formatMzn(melhor), formatMzn(maior), formatMzn(medio), String(total || 0)];
+    var csv = cab.join(';') + '\n' + row.map(function(v){ return '"' + String(v).replace(/"/g, '""') + '"'; }).join(';');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'comparacao_cotacao_' + String(item || 'item').replace(/\s+/g, '_') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+function imprimirComparacaoCotacao(item, fornecedor, melhor, maior, medio, total){
+    var w = window.open('', '_blank', 'width=840,height=640');
+    if(!w) return;
+    var html = '<!doctype html><html><head><meta charset="utf-8"><title>Comparacao de cotacao</title>' +
+        '<style>body{font-family:Arial,sans-serif;padding:18px;color:#111}h2{margin:0 0 12px 0;font-size:18px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f5f5f5}</style>' +
+        '</head><body>' +
+        '<h2>Comparacao de cotacao</h2>' +
+        '<table><tr><th>Item</th><th>Fornecedor (melhor)</th><th>Melhor</th><th>Maior</th><th>Medio</th><th>Cotacoes</th></tr>' +
+        '<tr><td>' + String(item || '-') + '</td><td>' + String(fornecedor || '-') + '</td><td>' + formatMzn(melhor) + '</td><td>' + formatMzn(maior) + '</td><td>' + formatMzn(medio) + '</td><td>' + String(total || 0) + '</td></tr></table>' +
+        '<script>window.print();<\/script></body></html>';
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+}
+function atualizarTotaisCotacaoLinhas(){
+    document.querySelectorAll('.cotacao-linha').forEach(function(linha){
+        var qtd = linha.querySelector('.cot-qtd');
+        var preco = linha.querySelector('.cot-preco');
+        var total = linha.querySelector('.cot-total');
+        if(!qtd || !preco || !total) return;
+        total.value = formatMzn(Number(qtd.value || 0) * Number(preco.value || 0));
+    });
+}
+function adicionarLinhaCotacao(){
+    var box = document.getElementById('cotacoes_linhas');
+    if(!box) return;
+    var primeira = box.querySelector('.cotacao-linha');
+    if(!primeira) return;
+    var nova = primeira.cloneNode(true);
+    nova.querySelectorAll('input').forEach(function(i){
+        if(i.type === 'number'){ i.value = i.classList.contains('cot-qtd') ? '1' : ''; }
+        else if(i.type === 'file'){ i.value = ''; }
+        else { i.value = ''; }
+    });
+    var sel = nova.querySelector('select');
+    if(sel) sel.value = '';
+    box.appendChild(nova);
+    atualizarTotaisCotacaoLinhas();
+    atualizarEstadoRemoverCotacao();
+}
+function atualizarEstadoRemoverCotacao(){
+    var box = document.getElementById('cotacoes_linhas');
+    if(!box) return;
+    var linhas = box.querySelectorAll('.cotacao-linha');
+    var desativar = linhas.length <= 3;
+    linhas.forEach(function(linha){
+        var btn = linha.querySelector('.btn_remove_cotacao');
+        if(!btn) return;
+        btn.disabled = desativar;
+        btn.style.opacity = desativar ? '0.5' : '1';
+        btn.style.cursor = desativar ? 'not-allowed' : 'pointer';
+    });
+}
+function atualizarTotalMaterialLinha(linha){
+    var qtd = linha.querySelector('.mat-qtd');
+    var preco = linha.querySelector('.mat-preco');
+    var total = linha.querySelector('.mat-total');
+    if(!qtd || !preco || !total) return;
+    var q = Number(qtd.value || 0);
+    var p = Number(preco.value || 0);
+    if(q > 0 && p > 0){
+        total.value = (q * p).toFixed(2);
+    }
+}
+function atualizarEstadoRemoverMaterial(form){
+    var linhas = form.querySelectorAll('.material-credito-linha');
+    var desativar = linhas.length <= 1;
+    linhas.forEach(function(linha){
+        var btn = linha.querySelector('.btn_remove_material_credito');
+        if(!btn) return;
+        btn.disabled = desativar;
+        btn.style.opacity = desativar ? '0.5' : '1';
+        btn.style.cursor = desativar ? 'not-allowed' : 'pointer';
+    });
+}
+function inicializarFormularioFornecedorCredito(form){
+    var modalidade = form.querySelector('.forn-modalidade');
+    var box = form.querySelector('.forn-credito-box');
+    var linhasBox = form.querySelector('.forn-credito-linhas');
+    if(!modalidade || !box || !linhasBox) return;
+
+    function toggleCreditoBox(){
+        box.style.display = modalidade.value === 'Credito' ? 'block' : 'none';
+    }
+    function adicionarLinhaMaterial(){
+        var primeira = linhasBox.querySelector('.material-credito-linha');
+        if(!primeira) return;
+        var nova = primeira.cloneNode(true);
+        nova.querySelectorAll('input').forEach(function(i){ i.value = ''; });
+        linhasBox.appendChild(nova);
+        atualizarEstadoRemoverMaterial(form);
+    }
+    function removerLinhaMaterial(btn){
+        var linhas = linhasBox.querySelectorAll('.material-credito-linha');
+        if(linhas.length <= 1){
+            var unica = linhasBox.querySelector('.material-credito-linha');
+            if(unica) unica.querySelectorAll('input').forEach(function(i){ i.value=''; });
+            return;
+        }
+        var linha = btn.closest('.material-credito-linha');
+        if(linha) linha.remove();
+        atualizarEstadoRemoverMaterial(form);
+    }
+
+    form.addEventListener('change', function(ev){
+        if(ev.target === modalidade) toggleCreditoBox();
+    });
+    form.addEventListener('input', function(ev){
+        if(ev.target && (ev.target.classList.contains('mat-qtd') || ev.target.classList.contains('mat-preco'))){
+            var linha = ev.target.closest('.material-credito-linha');
+            if(linha) atualizarTotalMaterialLinha(linha);
+        }
+    });
+    form.addEventListener('click', function(ev){
+        if(ev.target && ev.target.classList.contains('btn_add_material_credito')){
+            adicionarLinhaMaterial();
+        }
+        if(ev.target && ev.target.classList.contains('btn_remove_material_credito')){
+            removerLinhaMaterial(ev.target);
+        }
+    });
+
+    linhasBox.querySelectorAll('.material-credito-linha').forEach(atualizarTotalMaterialLinha);
+    toggleCreditoBox();
+    atualizarEstadoRemoverMaterial(form);
+}
+document.addEventListener('input', function(ev){
+    if(ev.target && (ev.target.classList.contains('cot-qtd') || ev.target.classList.contains('cot-preco'))){
+        atualizarTotaisCotacaoLinhas();
+    }
+    atualizarPrevisaoAbates();
+});
+document.addEventListener('click', function(ev){
+    if(ev.target && ev.target.id === 'btn_add_cotacao'){
+        adicionarLinhaCotacao();
+    }
+    if(ev.target && ev.target.classList.contains('btn_remove_cotacao')){
+        var box = document.getElementById('cotacoes_linhas');
+        if(!box) return;
+        var linhas = box.querySelectorAll('.cotacao-linha');
+        if(linhas.length <= 3) return;
+        var linha = ev.target.closest('.cotacao-linha');
+        if(linha) linha.remove();
+        atualizarTotaisCotacaoLinhas();
+        atualizarEstadoRemoverCotacao();
+    }
+});
+document.addEventListener('change', function(){
+    atualizarPrevisaoAbates();
+});
+atualizarTotaisCotacaoLinhas();
+atualizarEstadoRemoverCotacao();
+document.querySelectorAll('.js-fornecedor-form').forEach(inicializarFormularioFornecedorCredito);
+atualizarPrevisaoAbates();
+</script>
 <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
