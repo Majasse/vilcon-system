@@ -4,7 +4,7 @@ final class DistanciaService
 {
     public function calcular(string $origem, string $destino): array
     {
-        // Coloque aqui integração Google/OSRM.
+        // Coloque aqui integraÃ§Ã£o Google/OSRM.
         return ['ok' => false, 'error' => 'Nao implementado'];
     }
 }

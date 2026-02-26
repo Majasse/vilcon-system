@@ -37,7 +37,7 @@ if (!function_exists('garantirPermissao')) {
             return;
         }
 
-        // Compatibilidade: se a tabela de permissões não existir ainda, não bloqueia o módulo.
+        // Compatibilidade: se a tabela de permiss�es n�o existir ainda, n�o bloqueia o m�dulo.
         $tblExistsStmt = $pdo->query("SHOW TABLES LIKE 'usuarios_permissoes'");
         $tblExists = $tblExistsStmt ? (bool) $tblExistsStmt->fetchColumn() : false;
         if (!$tblExists) {
@@ -56,7 +56,7 @@ if (!function_exists('garantirPermissao')) {
         $permitido = (int) ($st->fetchColumn() ?: 0) === 1;
         if (!$permitido) {
             http_response_code(403);
-            exit('Acesso negado: sem permissão para este módulo.');
+            exit('Acesso negado: sem permiss�o para este m�dulo.');
         }
     }
 }
@@ -79,7 +79,7 @@ if (!function_exists('auditarPostBasico')) {
                 registrarAuditoria($pdo, $acao . ($modulo ? " [$modulo]" : ''), 'request');
             }
         } catch (Throwable $e) {
-            // Não interromper fluxo por falha de auditoria.
+            // N�o interromper fluxo por falha de auditoria.
         }
     }
 }
@@ -455,11 +455,11 @@ function seedStockItensBasicos(PDO $pdo): void {
     $itens = [
         ['STK-DIESEL-BOMBA', 'Diesel - Bomba Vilcon', 'Combustivel', 'L', 0, 1000, 0, 'Bomba Principal'],
         ['STK-GASOLINA', 'Gasolina', 'Combustivel', 'L', 0, 500, 0, 'Bomba Secundaria'],
-        ['STK-OLEO-15W40', 'Óleo Motor 15W40', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
-        ['STK-OLEO-HID', 'Óleo Hidráulico', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
+        ['STK-OLEO-15W40', '�leo Motor 15W40', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
+        ['STK-OLEO-HID', '�leo Hidr�ulico', 'Oleo', 'L', 0, 100, 0, 'Armazem TO'],
         ['STK-LUB-GRAXA', 'Graxa Lubrificante', 'Lubrificante', 'KG', 0, 40, 0, 'Armazem TO'],
-        ['STK-ATF', 'Óleo Transmissão ATF', 'Lubrificante', 'L', 0, 60, 0, 'Armazem TO'],
-        ['STK-FLUIDO-FREIO', 'Fluido de Travão', 'Lubrificante', 'L', 0, 30, 0, 'Armazem TO'],
+        ['STK-ATF', '�leo Transmiss�o ATF', 'Lubrificante', 'L', 0, 60, 0, 'Armazem TO'],
+        ['STK-FLUIDO-FREIO', 'Fluido de Trav�o', 'Lubrificante', 'L', 0, 30, 0, 'Armazem TO'],
         ['STK-ADBLUE', 'AdBlue / Ureia', 'Aditivo', 'L', 0, 80, 0, 'Armazem TO']
     ];
 
@@ -499,7 +499,7 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
     $maxSize = 10 * 1024 * 1024; // 10MB
     $baseDir = __DIR__ . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . trim($subPasta, '\\/');
     if(!is_dir($baseDir) && !@mkdir($baseDir, 0777, true)) {
-        return ['ok' => false, 'error' => 'Não foi possível criar diretório de anexos'];
+        return ['ok' => false, 'error' => 'N�o foi poss�vel criar diret�rio de anexos'];
     }
 
     $salvos = [];
@@ -511,11 +511,11 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
         $size = (int) ($sizes[$i] ?? 0);
         if($err === UPLOAD_ERR_NO_FILE || $nomeOrig === '') continue;
         if($err !== UPLOAD_ERR_OK) return ['ok' => false, 'error' => 'Falha no upload de anexo'];
-        if($size <= 0 || $size > $maxSize) return ['ok' => false, 'error' => 'Anexo inválido ou acima de 10MB'];
+        if($size <= 0 || $size > $maxSize) return ['ok' => false, 'error' => 'Anexo inv�lido ou acima de 10MB'];
 
         $ext = strtolower((string) pathinfo($nomeOrig, PATHINFO_EXTENSION));
         if(!in_array($ext, $permitidos, true)) {
-            return ['ok' => false, 'error' => 'Formato não permitido. Use PDF/JPG/PNG/WEBP/GIF'];
+            return ['ok' => false, 'error' => 'Formato n�o permitido. Use PDF/JPG/PNG/WEBP/GIF'];
         }
 
         $baseNome = preg_replace('/[^a-zA-Z0-9_-]/', '_', (string) pathinfo($nomeOrig, PATHINFO_FILENAME));
@@ -523,7 +523,7 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
         $nomeFinal = date('Ymd_His') . '_' . $i . '_' . $baseNome . '.' . $ext;
         $destinoAbs = $baseDir . DIRECTORY_SEPARATOR . $nomeFinal;
         if(!@move_uploaded_file($tmp, $destinoAbs)) {
-            return ['ok' => false, 'error' => 'Não foi possível salvar anexo no servidor'];
+            return ['ok' => false, 'error' => 'N�o foi poss�vel salvar anexo no servidor'];
         }
         $salvos[] = 'uploads/' . trim($subPasta, '\\/') . '/' . $nomeFinal;
     }
@@ -581,7 +581,7 @@ function registrarMovimentoStock(
     ?string $dataMovimento = null
 ): array {
     if($itemId <= 0 || $quantidade < 0) {
-        return ['ok' => false, 'error' => 'Dados de movimento inválidos'];
+        return ['ok' => false, 'error' => 'Dados de movimento inv�lidos'];
     }
     $tipo = trim($tipoMovimento);
     if(!in_array($tipo, ['Entrada','Saida','Ajuste'], true)) {
@@ -591,7 +591,7 @@ function registrarMovimentoStock(
     $stItem = $pdo->prepare("SELECT stock_atual FROM transporte_stock_itens WHERE id = :id LIMIT 1");
     $stItem->execute([':id' => $itemId]);
     $item = $stItem->fetch(PDO::FETCH_ASSOC);
-    if(!$item) return ['ok' => false, 'error' => 'Item de stock não encontrado'];
+    if(!$item) return ['ok' => false, 'error' => 'Item de stock n�o encontrado'];
 
     $stockAtual = (float) ($item['stock_atual'] ?? 0);
     $novoSaldo = $stockAtual;
@@ -672,13 +672,13 @@ function detectarTipoEquipamentoChecklist(string $nome): string {
         'grader' => 'Niveladora',
         'niveladora' => 'Niveladora',
         'tlb' => 'TLB',
-        'pa carregadora' => 'Pá Carregadora',
-        'wheel loader' => 'Pá Carregadora',
+        'pa carregadora' => 'P� Carregadora',
+        'wheel loader' => 'P� Carregadora',
         'gru' => 'Grua',
         'tipper truck' => 'Basculante',
         'water bowser' => 'Water Bowser',
-        'camião cavalo' => 'Camião Cavalo',
-        'camiao cavalo' => 'Camião Cavalo',
+        'cami�o cavalo' => 'Cami�o Cavalo',
+        'camiao cavalo' => 'Cami�o Cavalo',
         'generator' => 'Gerador',
         'tractor' => 'Tractor',
         'forklift' => 'Forklift',
@@ -706,16 +706,16 @@ function detectarPeriodicidadeChecklist(string $nome): string {
 
 function itensPadraoChecklist(): array {
     return [
-        'Nível de óleo do motor',
-        'Nível de água/radiador',
-        'Nível de combustível',
+        'N�vel de �leo do motor',
+        'N�vel de �gua/radiador',
+        'N�vel de combust�vel',
         'Estado de pneus/esteiras',
         'Sistema de travagem',
-        'Luzes e sinalização',
-        'Buzina e alarme de ré',
+        'Luzes e sinaliza��o',
+        'Buzina e alarme de r�',
         'Extintor e kit de primeiros socorros',
-        'Vazamentos visíveis',
-        'Documentação e limpeza geral'
+        'Vazamentos vis�veis',
+        'Documenta��o e limpeza geral'
     ];
 }
 
@@ -819,11 +819,11 @@ function seedChecklistBasicoSeVazio(PDO $pdo): void {
         ['VIL.F.QAS.36', 'Cilindro Roller Compactar Checklist', 'Cilindro', 'Diario'],
         ['VIL.F.QAS.37', 'Niveladora Grader Weekly Checklist', 'Niveladora', 'Semanal'],
         ['VIL.F.QAS.38', 'TLB Daily Checklist', 'TLB', 'Diario'],
-        ['VIL.F.QAS.39', 'Pá Carregadora Weekly Checklist', 'Pá Carregadora', 'Semanal'],
+        ['VIL.F.QAS.39', 'P� Carregadora Weekly Checklist', 'P� Carregadora', 'Semanal'],
         ['VIL.F.QAS.40', 'Grua Truck Mounted Crane Checklist', 'Grua', 'Semanal'],
         ['VIL.F.QAS.41', 'Basculante Tipper Truck Checklist', 'Basculante', 'Diario'],
         ['VIL.F.QAS.42', 'Water Bowser Checklist', 'Water Bowser', 'Semanal'],
-        ['VIL.F.QAS.43', 'Camião Cavalo Checklist', 'Camião Cavalo', 'Semanal'],
+        ['VIL.F.QAS.43', 'Cami�o Cavalo Checklist', 'Cami�o Cavalo', 'Semanal'],
         ['VIL.F.QAS.44', 'Escavadora Excavator Checklist', 'Escavadora', 'Diario'],
         ['VIL.F.QAS.51', 'Generator Checklist', 'Gerador', 'Semanal'],
         ['VIL.F.QAS.53', 'Forklift Checklist', 'Forklift', 'Semanal'],
@@ -894,7 +894,7 @@ function janelaTrabalhoDia(DateTimeImmutable $dia): ?array {
     if($n === 6) {
         return [
             [new DateTimeImmutable($data . ' 07:00:00'), new DateTimeImmutable($data . ' 12:00:00')]
-        ]; // Sábado sem turno da tarde
+        ]; // S�bado sem turno da tarde
     }
     return [
         [new DateTimeImmutable($data . ' 07:00:00'), new DateTimeImmutable($data . ' 12:00:00')],
@@ -950,9 +950,9 @@ function calcularUrgenciaReservaPorPartida(?string $dataPartida): array {
 function recomendacaoGestorPorUrgencia(?string $urgencia): string {
     $u = strtolower(trim((string) $urgencia));
     if($u === 'urgente') return 'Atribuir viatura imediatamente';
-    if($u === 'alta') return 'Priorizar atribuição hoje';
+    if($u === 'alta') return 'Priorizar atribui��o hoje';
     if($u === 'media') return 'Programar em janela do dia';
-    return 'Pode planear com antecedência';
+    return 'Pode planear com anteced�ncia';
 }
 
 function usuarioPodeGerirReservas(): bool {
@@ -1136,8 +1136,8 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
         }
         if($rowDoc) {
             $texto = "Vilcon Operations - Documento\n";
-            $texto .= "Tipo: " . ($tipoDoc === 'req' ? 'Requisição Externa' : 'Evento Operacional') . "\n";
-            $texto .= "Código: " . (string) ($rowDoc['codigo'] ?? ('DOC-' . $idDoc)) . "\n";
+            $texto .= "Tipo: " . ($tipoDoc === 'req' ? 'Requisi��o Externa' : 'Evento Operacional') . "\n";
+            $texto .= "C�digo: " . (string) ($rowDoc['codigo'] ?? ('DOC-' . $idDoc)) . "\n";
             $texto .= "Data: " . (string) (($rowDoc['data_requisicao'] ?? $rowDoc['data_evento'] ?? $rowDoc['criado_em'] ?? '')) . "\n";
             if($tipoDoc === 'req') {
                 $texto .= "Item: " . (string) (($rowDoc['item_nome'] ?? '-') . " | " . ($rowDoc['quantidade_solicitada'] ?? '0') . " " . ($rowDoc['unidade'] ?? '')) . "\n";
@@ -1147,8 +1147,8 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
             } else {
                 $texto .= "Ativo: " . (string) (($rowDoc['ativo_descricao'] ?? '-') . (!empty($rowDoc['ativo_matricula']) ? ' | ' . $rowDoc['ativo_matricula'] : '')) . "\n";
                 $texto .= "Tipo Evento: " . (string) ($rowDoc['tipo_evento'] ?? '-') . "\n";
-                $texto .= "Descrição: " . (string) ($rowDoc['descricao_falha'] ?? '-') . "\n";
-                $texto .= "Ação Tomada: " . (string) ($rowDoc['acao_tomada'] ?? '-') . "\n";
+                $texto .= "Descri��o: " . (string) ($rowDoc['descricao_falha'] ?? '-') . "\n";
+                $texto .= "A��o Tomada: " . (string) ($rowDoc['acao_tomada'] ?? '-') . "\n";
                 $texto .= "Custo Estimado: " . (string) ($rowDoc['custo_estimado'] ?? '0') . "\n";
             }
 
@@ -1188,7 +1188,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $horasAntecedencia = isset($calcUrg['horas_antecedencia']) ? (float) $calcUrg['horas_antecedencia'] : null;
 
         if($departamento === '' || $destino === '' || $dataPartida === '' || $atividade === '') {
-            $erro_form = 'Departamento, destino, data/hora de partida e atividade são obrigatórios.';
+            $erro_form = 'Departamento, destino, data/hora de partida e atividade s�o obrigat�rios.';
         } else {
             $nextResStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_reservas");
             $nextResId = (int) $nextResStmt->fetchColumn();
@@ -1239,9 +1239,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $reserva = $stRes->fetch(PDO::FETCH_ASSOC) ?: null;
 
                 if(!$reserva) {
-                    $erro_form = 'Reserva não encontrada.';
+                    $erro_form = 'Reserva n�o encontrada.';
                 } elseif(!empty($reserva['ordem_servico_id'])) {
-                    $erro_form = 'Esta reserva já foi convertida em OS.';
+                    $erro_form = 'Esta reserva j� foi convertida em OS.';
                 } else {
                     $pdo->beginTransaction();
                     try {
@@ -1338,7 +1338,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $guiaId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
 
         if($guiaId <= 0) {
-            $erro_form = "Guia inválida para abastecimento.";
+            $erro_form = "Guia inv�lida para abastecimento.";
         } else {
             $guiaStmt = $pdo->prepare("SELECT km_saida, consumo_l_100km, tipo_equipamento, projeto, viatura_id, condutor, quantidade_inicial_l FROM transporte_guias WHERE id = :id LIMIT 1");
             $guiaStmt->execute([':id' => $guiaId]);
@@ -1445,7 +1445,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'Bomba Principal',
                         'OS-' . str_pad((string) $guiaId, 4, '0', STR_PAD_LEFT),
                         $_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? null),
-                        'Baixa automática por abastecimento da OS',
+                        'Baixa autom�tica por abastecimento da OS',
                         'Abastecimento OS',
                         date('Y-m-d')
                     );
@@ -1474,7 +1474,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':km_horimetro' => $kmMomento,
                     ':litros' => $litrosParaBaixa,
                     ':responsavel' => $_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? null),
-                    ':observacoes' => 'Gerado automaticamente a partir da Ordem de Serviço'
+                    ':observacoes' => 'Gerado automaticamente a partir da Ordem de Servi�o'
                 ]);
             }
             $pdo->commit();
@@ -1582,7 +1582,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $respostas = isset($_POST['resultado_item']) && is_array($_POST['resultado_item']) ? $_POST['resultado_item'] : [];
 
         if($templateId <= 0) {
-            $erro_form = 'Template de checklist inválido.';
+            $erro_form = 'Template de checklist inv�lido.';
         } else {
             $nextChkStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_checklist_registos");
             $nextChkId = (int) $nextChkStmt->fetchColumn();
@@ -1749,12 +1749,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $local = trim((string) ($_POST['local_item_stock'] ?? ''));
 
         if($codigo === '' || $nome === '') {
-            $erro_form = 'Código e nome do item de stock são obrigatórios.';
+            $erro_form = 'C�digo e nome do item de stock s�o obrigat�rios.';
         } else {
             $chkCod = $pdo->prepare("SELECT id FROM transporte_stock_itens WHERE codigo = :codigo LIMIT 1");
             $chkCod->execute([':codigo' => $codigo]);
             if($chkCod->fetch(PDO::FETCH_ASSOC)) {
-                $erro_form = 'Já existe um item de stock com este código.';
+                $erro_form = 'J� existe um item de stock com este c�digo.';
             } else {
                 $insItemStock = $pdo->prepare("
                     INSERT INTO transporte_stock_itens
@@ -1820,14 +1820,14 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $finalidade = 'Projeto';
         }
         if($tipoMov === 'Saida' && $finalidade === 'Projeto' && $projeto === '') {
-            $erro_form = 'Informe o projeto para saída destinada a projeto.';
+            $erro_form = 'Informe o projeto para sa�da destinada a projeto.';
         }
         if($tipoMov === 'Saida' && $finalidade === 'Venda' && $clienteVenda === '') {
-            $erro_form = 'Informe o cliente/comprador para saída por venda.';
+            $erro_form = 'Informe o cliente/comprador para sa�da por venda.';
         }
 
         if($itemId <= 0 || $qtd <= 0) {
-            $erro_form = 'Selecione o item e informe uma quantidade válida.';
+            $erro_form = 'Selecione o item e informe uma quantidade v�lida.';
         } elseif($erro_form === '') {
             registrarMovimentoStock(
                 $pdo,
@@ -1881,7 +1881,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro_form = 'Informe a quantidade solicitada.';
         }
         if($precoUnitarioReq < 0) {
-            $erro_form = 'Preço unitário inválido.';
+            $erro_form = 'Pre�o unit�rio inv�lido.';
         }
         if(!in_array($prioridadeReq, ['Baixa','Media','Alta','Urgente'], true)) {
             $prioridadeReq = 'Media';
@@ -1919,7 +1919,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         if($erro_form === '') {
             $anexosReq = processarAnexosUpload('anexos_req', 'requisicoes');
             if(!$anexosReq['ok']) {
-                $erro_form = (string) ($anexosReq['error'] ?? 'Falha ao enviar anexos da requisição');
+                $erro_form = (string) ($anexosReq['error'] ?? 'Falha ao enviar anexos da requisi��o');
             }
         }
 
@@ -1992,7 +1992,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusReq = trim((string) ($_POST['status_req'] ?? 'Pendente'));
 
         if($reqId <= 0) {
-            $erro_form = 'Requisição inválida para atualização.';
+            $erro_form = 'Requisi��o inv�lida para atualiza��o.';
         }
         if($itemNomeReq === '') {
             $erro_form = 'Informe o item para requisitar.';
@@ -2001,7 +2001,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro_form = 'Informe a quantidade solicitada.';
         }
         if($precoUnitarioReq < 0) {
-            $erro_form = 'Preço unitário inválido.';
+            $erro_form = 'Pre�o unit�rio inv�lido.';
         }
         if(!in_array($prioridadeReq, ['Baixa','Media','Alta','Urgente'], true)) {
             $prioridadeReq = 'Media';
@@ -2044,7 +2044,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stAntes = $pdo->prepare("SELECT * FROM transporte_requisicoes WHERE id = :id LIMIT 1");
             $stAntes->execute([':id' => $reqId]);
             $reqAntes = $stAntes->fetch(PDO::FETCH_ASSOC) ?: null;
-            if(!$reqAntes) $erro_form = 'Requisição não encontrada.';
+            if(!$reqAntes) $erro_form = 'Requisi��o n�o encontrada.';
         }
 
         $anexosFinaisReq = [];
@@ -2059,7 +2059,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $upReq = processarAnexosUpload('anexos_req', 'requisicoes');
             if(!$upReq['ok']) {
-                $erro_form = (string) ($upReq['error'] ?? 'Falha ao enviar anexos da requisição');
+                $erro_form = (string) ($upReq['error'] ?? 'Falha ao enviar anexos da requisi��o');
             } elseif(!empty($upReq['files'])) {
                 $anexosFinaisReq = array_merge($anexosFinaisReq, $upReq['files']);
             }
@@ -2152,7 +2152,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $obsAtivo = trim((string) ($_POST['observacoes_ativo'] ?? ''));
 
         if($descricaoAtivo === '') {
-            $erro_form = 'Informe a descrição da viatura/máquina.';
+            $erro_form = 'Informe a descri��o da viatura/m�quina.';
         }
         if(!in_array($tipoAtivo, ['Viatura','Maquina','Equipamento'], true)) {
             $tipoAtivo = 'Viatura';
@@ -2204,10 +2204,10 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusEvento = trim((string) ($_POST['status_evento'] ?? 'Aberto'));
 
         if($ativoIdEvento <= 0) {
-            $erro_form = 'Selecione a viatura/máquina.';
+            $erro_form = 'Selecione a viatura/m�quina.';
         }
         if($descEvento === '') {
-            $erro_form = 'Descreva a intervenção/falha.';
+            $erro_form = 'Descreva a interven��o/falha.';
         }
         if(!in_array($tipoEvento, ['Avaria','Roubo Combustivel','Falha Mecanica','Falha Sistema','Manutencao Preventiva','Manutencao Corretiva','Outro'], true)) {
             $tipoEvento = 'Outro';
@@ -2272,13 +2272,13 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statusEvento = trim((string) ($_POST['status_evento'] ?? 'Aberto'));
 
         if($eventoId <= 0) {
-            $erro_form = 'Evento inválido para atualização.';
+            $erro_form = 'Evento inv�lido para atualiza��o.';
         }
         if($ativoIdEvento <= 0) {
-            $erro_form = 'Selecione a viatura/máquina.';
+            $erro_form = 'Selecione a viatura/m�quina.';
         }
         if($descEvento === '') {
-            $erro_form = 'Descreva a intervenção/falha.';
+            $erro_form = 'Descreva a interven��o/falha.';
         }
         if(!in_array($tipoEvento, ['Avaria','Roubo Combustivel','Falha Mecanica','Falha Sistema','Manutencao Preventiva','Manutencao Corretiva','Outro'], true)) {
             $tipoEvento = 'Outro';
@@ -2295,7 +2295,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stAntes = $pdo->prepare("SELECT * FROM transporte_frota_eventos WHERE id = :id LIMIT 1");
             $stAntes->execute([':id' => $eventoId]);
             $evtAntes = $stAntes->fetch(PDO::FETCH_ASSOC) ?: null;
-            if(!$evtAntes) $erro_form = 'Evento operacional não encontrado.';
+            if(!$evtAntes) $erro_form = 'Evento operacional n�o encontrado.';
         }
 
         $anexosFinaisEvt = [];
@@ -2372,7 +2372,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     if(isset($_POST['salvar_relatorio_atividade'])) {
         $osIdRa = isset($_POST['os_id_ra']) ? (int) $_POST['os_id_ra'] : 0;
         if($osIdRa <= 0) {
-            $erro_form = 'Selecione o número da Ordem de Serviço.';
+            $erro_form = 'Selecione o n�mero da Ordem de Servi�o.';
         }
 
         $osRelatorio = null;
@@ -2396,7 +2396,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmtOsRa->execute([':id' => $osIdRa]);
             $osRelatorio = $stmtOsRa->fetch(PDO::FETCH_ASSOC) ?: null;
             if(!$osRelatorio) {
-                $erro_form = 'Ordem de Serviço não encontrada.';
+                $erro_form = 'Ordem de Servi�o n�o encontrada.';
             }
         }
 
@@ -2792,7 +2792,7 @@ if($tab === 'transporte' && $view === 'checklist') {
                 $stmtItens->execute([':template_id' => $templateIdForm]);
                 $itens_checklist_form = $stmtItens->fetchAll(PDO::FETCH_ASSOC);
             } else {
-                $erro_form = 'Template de checklist não encontrado.';
+                $erro_form = 'Template de checklist n�o encontrado.';
             }
         } else {
             $stmtTplFirst = $pdo->query("
@@ -2813,7 +2813,7 @@ if($tab === 'transporte' && $view === 'checklist') {
                 $stmtItens->execute([':template_id' => (int) $template_checklist_form['id']]);
                 $itens_checklist_form = $stmtItens->fetchAll(PDO::FETCH_ASSOC);
             } else {
-                $erro_form = 'Nenhum template de checklist disponível.';
+                $erro_form = 'Nenhum template de checklist dispon�vel.';
             }
         }
     }
@@ -3038,7 +3038,7 @@ if($tab === 'gestao_frota' && $view === 'requisicoes') {
 
         $fornecedorSugerido = 'Fornecedor Geral';
         $cat = strtolower((string) ($r['categoria'] ?? ''));
-        if(strpos($cat, 'combust') !== false) $fornecedorSugerido = 'Fornecedor Combustível';
+        if(strpos($cat, 'combust') !== false) $fornecedorSugerido = 'Fornecedor Combust�vel';
         elseif(strpos($cat, 'oleo') !== false || strpos($cat, 'lubr') !== false) $fornecedorSugerido = 'Fornecedor Lubrificantes';
 
         $sugestoes_requisicoes[] = [
@@ -3267,7 +3267,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
         $valor = $litros > 0 ? ($litros * $precoMedioDiesel) : 0.0;
         $lista_relatorio_consumo[] = [
             'id_ref' => 'FR-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Formulários Recebidos',
+            'fonte' => 'Formul�rios Recebidos',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
@@ -3299,7 +3299,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsDiesel as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'CB-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Controle Combustível',
+            'fonte' => 'Controle Combust�vel',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
@@ -3365,7 +3365,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsReq as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'RQ-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Requisições',
+            'fonte' => 'Requisi��es',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => '',
             'ordem_servico_id' => 0,
@@ -3399,7 +3399,7 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
     foreach($rowsOper as $r) {
         $lista_relatorio_consumo[] = [
             'id_ref' => 'OP-' . (int) ($r['id'] ?? 0),
-            'fonte' => 'Gestão Operacional',
+            'fonte' => 'Gest�o Operacional',
             'data_ref' => (string) ($r['data_ref'] ?? ''),
             'projeto' => '',
             'ordem_servico_id' => 0,
@@ -3559,8 +3559,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             <!-- Aba principal Transporte -->
             <a href="?tab=transporte" class="tab-btn <?= $tab == 'transporte' ? 'active' : '' ?>"><i class="fas fa-route"></i> Transporte</a>
             
-            <!-- Aba principal GestÃ£o de Frota -->
-            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> GestÃ£o de Frota</a>
+            <!-- Aba principal Gest�o de Frota -->
+            <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> Gest�o de Frota</a>
             
             <!-- Aba principal Aluguer de Equipamentos -->
             <a href="?tab=aluguer" class="tab-btn <?= $tab == 'aluguer' ? 'active' : '' ?>"><i class="fas fa-truck"></i> Aluguer de Equipamentos</a>
@@ -3574,26 +3574,26 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <?php if($tab == 'transporte'): ?>
             <!-- Sub-abas de Transporte -->
             <a href="?tab=transporte&view=reservas&mode=list" class="sub-tab-btn <?= $view == 'reservas' ? 'active' : '' ?>">Reservas</a>
-            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de ServiÃ§o</a>
-            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de ReparaÃ§Ã£o</a>
+            <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de Servi�o</a>
+            <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de Repara��o</a>
             <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
-            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano ManutenÃ§Ã£o</a>
-            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
+            <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano Manuten��o</a>
+            <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">Relat�rio Geral</a>
         
         <?php elseif($tab == 'gestao_frota'): ?>
-            <!-- Sub-abas de GestÃ£o de Frota -->
-            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">FormulÃ¡rios Recebidos</a>
-            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle CombustÃ­vel</a>
+            <!-- Sub-abas de Gest�o de Frota -->
+            <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">Formul�rios Recebidos</a>
+            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle Combust�vel</a>
             <a href="?tab=gestao_frota&view=stock&mode=list" class="sub-tab-btn <?= $view == 'stock' ? 'active' : '' ?>">Controle de Stock</a>
-            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">RequisiÃ§Ãµes</a>
-            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">GestÃ£o Operacional</a>
-            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
+            <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">Requisi��es</a>
+            <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">Gest�o Operacional</a>
+            <a href="?tab=gestao_frota&view=relatorio_consumo&mode=list" class="sub-tab-btn <?= $view == 'relatorio_consumo' ? 'active' : '' ?>">Relat�rio Geral</a>
             
             
         
         <?php elseif($tab == 'aluguer'): ?>
             <!-- Sub-abas de Aluguer de Equipamentos -->
-            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e MÃ¡quinas</a>
+            <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e M�quinas</a>
             <a href="?tab=aluguer&view=timesheets&mode=list" class="sub-tab-btn <?= $view == 'timesheets' ? 'active' : '' ?>">Timesheets</a>
             <a href="?tab=aluguer&view=pagamentos&mode=list" class="sub-tab-btn <?= $view == 'pagamentos' ? 'active' : '' ?>">Pagamentos</a>
             <a href="?tab=aluguer&view=clientes&mode=list" class="sub-tab-btn <?= $view == 'clientes' ? 'active' : '' ?>">Clientes</a>
@@ -3621,8 +3621,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     <h3 style="text-transform: uppercase;">
                         <?php
                             $tituloView = str_replace('_', ' ', ucfirst($view));
-                            if($tab == 'transporte' && $view == 'relatorio_atividades') $tituloView = 'Relatório Geral';
-                            if($tab == 'gestao_frota' && $view == 'relatorio_consumo') $tituloView = 'Relatório Geral';
+                            if($tab == 'transporte' && $view == 'relatorio_atividades') $tituloView = 'Relat�rio Geral';
+                            if($tab == 'gestao_frota' && $view == 'relatorio_consumo') $tituloView = 'Relat�rio Geral';
                             echo htmlspecialchars($tituloView);
                         ?>
                     </h3>
@@ -3631,34 +3631,34 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label style="font-weight:800; font-size:12px; margin-right:6px;">Mostrar</label>
                         <select id="list-range" onchange="onRangeChange(this.value)">
                             <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
-                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Ãšltimos 7</option>
-                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Ãšltimos</option>
+                                <option value="last7" <?= (($_GET['list_range'] ?? 'last7') === 'last7') ? 'selected' : '' ?>>Últimos 7</option>
+                                <option value="last" <?= (($_GET['list_range'] ?? '') === 'last') ? 'selected' : '' ?>>Últimos</option>
                                 <option value="monthly" <?= (($_GET['list_range'] ?? '') === 'monthly') ? 'selected' : '' ?>>Mensal</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'combustivel'): ?>
                                 <option value="today" <?= (($_GET['list_range'] ?? '') === 'today') ? 'selected' : '' ?>>Ordens de Hoje</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                                 <option value="first_os" <?= (($_GET['list_range'] ?? '') === 'first_os') ? 'selected' : '' ?>>Primeiras OS</option>
-                                <option value="last_os" <?= (($_GET['list_range'] ?? 'last_os') === 'last_os') ? 'selected' : '' ?>>Últimas OS</option>
+                                <option value="last_os" <?= (($_GET['list_range'] ?? 'last_os') === 'last_os') ? 'selected' : '' ?>>�ltimas OS</option>
                                 <option value="all" <?= (($_GET['list_range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
-                                <option value="today" <?= (($filtro_consumo['range'] ?? '') === 'today') ? 'selected' : '' ?>>Diário</option>
+                                <option value="today" <?= (($filtro_consumo['range'] ?? '') === 'today') ? 'selected' : '' ?>>Di�rio</option>
                                 <option value="weekly" <?= (($filtro_consumo['range'] ?? '') === 'weekly') ? 'selected' : '' ?>>Semanal</option>
                                 <option value="monthly" <?= (($filtro_consumo['range'] ?? 'monthly') === 'monthly') ? 'selected' : '' ?>>Mensal</option>
                                 <option value="custom" <?= (($filtro_consumo['range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                                 <option value="all" <?= (($filtro_consumo['range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php else: ?>
                                 <option value="view">Ver</option>
-                                <option value="last">Ãšltimos</option>
+                                <option value="last">Últimos</option>
                                 <option value="first">Primeiros</option>
-                                <option value="last7" selected>Ãšltimos 7</option>
+                                <option value="last7" selected>Últimos 7</option>
                                 <option value="all">Todos</option>
                             <?php endif; ?>
                         </select>
                         <input id="custom-number" type="number" min="1" placeholder="Dias" value="<?= htmlspecialchars((string) ($_GET['list_custom'] ?? '')) ?>" style="width:80px; <?= ((($tab == 'transporte' && $view == 'relatorio_atividades' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'combustivel' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'relatorio_consumo' && (($filtro_consumo['range'] ?? '') === 'custom'))) ? '' : 'display:none;') ?> padding:8px; border-radius:6px; border:1px solid #ccc;">
                         <button class="btn-mode" onclick="applyRange()" style="background:#eee; color:#333;">Aplicar</button>
                         
-                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e GestÃ£o Frota -> FormulÃ¡rios Recebidos -->
+                        <!-- filtro por projecto: aparecer em Transporte -> Entrada e Gest�o Frota -> Formul�rios Recebidos -->
                         <?php if($tab == 'transporte' && $view == 'entrada'): ?>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
                             <select onchange="filterByProject(this.value,'transporte','entrada')">
@@ -3679,7 +3679,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <?php endif; ?>
 
                         <?php if($tab == 'transporte' && $view == 'checklist'): ?>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Máquina/Viatura</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">M�quina/Viatura</label>
                             <select onchange="filterByMachineChecklist(this.value)">
                                 <option value="">Todos</option>
                                 <?php foreach($tipos_checklist as $tipoChk): ?>
@@ -3712,7 +3712,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <option value="<?= htmlspecialchars((string) $proj) ?>" <?= (($_GET['project'] ?? '') === (string) $proj) ? 'selected' : '' ?>><?= htmlspecialchars((string) $proj) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/Máquina</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/M�quina</label>
                             <select onchange="filterByVehicle(this.value,'transporte','relatorio_atividades')">
                                 <option value="">Todas</option>
                                 <?php foreach($viaturas_relatorio as $vRel): ?>
@@ -3728,7 +3728,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <option value="<?= htmlspecialchars((string) $projCons) ?>" <?= (($filtro_consumo['project'] ?? '') === (string) $projCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $projCons) ?></option>
                                 <?php endforeach; ?>
                             </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/Máquina</label>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/M�quina</label>
                             <select onchange="filterByVehicle(this.value,'gestao_frota','relatorio_consumo')">
                                 <option value="">Todas</option>
                                 <?php foreach($viaturas_consumo as $vCons): ?>
@@ -3736,12 +3736,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <?php endforeach; ?>
                             </select>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">OS</label>
-                            <input type="number" id="filtro-ordem" value="<?= (int) ($filtro_consumo['order_id'] ?? 0) ?>" placeholder="Nº OS" style="width:90px; padding:8px; border-radius:6px; border:1px solid #ccc;">
+                            <input type="number" id="filtro-ordem" value="<?= (int) ($filtro_consumo['order_id'] ?? 0) ?>" placeholder="N� OS" style="width:90px; padding:8px; border-radius:6px; border:1px solid #ccc;">
                             <input type="text" id="search-q" value="<?= htmlspecialchars((string) ($filtro_consumo['q'] ?? '')) ?>" placeholder="Pesquisar..." style="width:180px; padding:8px; border-radius:6px; border:1px solid #ccc;">
                             <button class="btn-mode" onclick="aplicarFiltrosRelatorioConsumo()" style="background:#f7f7f7; color:#333;"><i class="fa-solid fa-magnifying-glass"></i></button>
                         <?php endif; ?>
                         
-                        <!-- manter botÃ£o Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
+                        <!-- manter bot�o Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
                         <?php if(!($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'transporte' && $view == 'checklist')): ?>
                             <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-save" style="background: var(--vilcon-orange); margin-left:12px;">Adicionar Novo</a>
                         <?php endif; ?>
@@ -3769,7 +3769,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <div class="stock-metric-card">
                             <div class="stock-metric-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
                             <div>
-                                <div class="stock-metric-label">Críticos</div>
+                                <div class="stock-metric-label">Cr�ticos</div>
                                 <div class="stock-metric-value"><?= (int) $itensCriticosStock ?></div>
                             </div>
                         </div>
@@ -3792,14 +3792,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
                 <?php if($tab == 'gestao_frota' && $view == 'stock' && !empty($alertas_stock)): ?>
                     <div style="background:#fff3cd; border:1px solid #ffe08a; color:#8a6d3b; padding:12px; border-radius:8px; margin-bottom:14px;">
-                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-bell"></i> Alerta de Stock Crítico</div>
+                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-bell"></i> Alerta de Stock Cr�tico</div>
                         <table class="history-table" style="background:#fff;">
                             <thead>
                                 <tr>
                                     <th>Item</th>
                                     <th>Saldo Atual</th>
-                                    <th>Mínimo</th>
-                                    <th>Saída Média/Dia</th>
+                                    <th>M�nimo</th>
+                                    <th>Sa�da M�dia/Dia</th>
                                     <th>Cobertura (Dias)</th>
                                 </tr>
                             </thead>
@@ -3827,23 +3827,23 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <?php if($tab == 'gestao_frota' && $view == 'combustivel'): ?>
                     <div style="background:#eef7ff; border:1px solid #cfe3ff; color:#2c3e50; padding:12px; border-radius:8px; margin-bottom:14px; display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
                         <div><strong>Litros hoje:</strong> <?= number_format((float) ($resumo_diesel['litros_dia'] ?? 0), 2, ',', '.') ?> L</div>
-                        <div><strong>Litros mês:</strong> <?= number_format((float) ($resumo_diesel['litros_mes'] ?? 0), 2, ',', '.') ?> L</div>
+                        <div><strong>Litros m�s:</strong> <?= number_format((float) ($resumo_diesel['litros_mes'] ?? 0), 2, ',', '.') ?> L</div>
                         <div><strong>Valor hoje:</strong> <?= number_format((float) ($resumo_diesel['valor_dia'] ?? 0), 2, ',', '.') ?></div>
-                        <div><strong>Valor mês:</strong> <?= number_format((float) ($resumo_diesel['valor_mes'] ?? 0), 2, ',', '.') ?></div>
-                        <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel automático com base nas Ordens de Serviço abastecidas.</div>
+                        <div><strong>Valor m�s:</strong> <?= number_format((float) ($resumo_diesel['valor_mes'] ?? 0), 2, ',', '.') ?></div>
+                        <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel autom�tico com base nas Ordens de Servi�o abastecidas.</div>
                     </div>
                 <?php endif; ?>
                 <?php if($tab == 'gestao_frota' && $view == 'requisicoes' && !empty($sugestoes_requisicoes)): ?>
                     <div style="background:#eefbf3; border:1px solid #bde8c9; color:#1f5130; padding:12px; border-radius:8px; margin-bottom:14px;">
-                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugestões Automáticas de Requisição por Déficit de Stock</div>
+                        <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles"></i> Sugest�es Autom�ticas de Requisi��o por D�ficit de Stock</div>
                         <table class="history-table" style="background:#fff;">
                             <thead>
                                 <tr>
                                     <th>Item</th>
-                                    <th>Saldo / Mínimo</th>
+                                    <th>Saldo / M�nimo</th>
                                     <th>Cobertura</th>
-                                    <th>Sugestão</th>
-                                    <th>Ação</th>
+                                    <th>Sugest�o</th>
+                                    <th>A��o</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -3866,18 +3866,18 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <div><strong>Com GPS:</strong> <?= (int) ($resumo_operacional['com_gps'] ?? 0) ?></div>
                         <div><strong>Com Sensor Comb.:</strong> <?= (int) ($resumo_operacional['com_sensor_combustivel'] ?? 0) ?></div>
                         <div><strong>Eventos Abertos:</strong> <?= (int) ($resumo_operacional['eventos_abertos'] ?? 0) ?></div>
-                        <div><strong>Roubo Combustível:</strong> <?= (int) ($resumo_operacional['roubo_combustivel'] ?? 0) ?></div>
-                        <div><strong>Falhas Mecânicas:</strong> <?= (int) ($resumo_operacional['falhas_mecanicas'] ?? 0) ?></div>
+                        <div><strong>Roubo Combust�vel:</strong> <?= (int) ($resumo_operacional['roubo_combustivel'] ?? 0) ?></div>
+                        <div><strong>Falhas Mec�nicas:</strong> <?= (int) ($resumo_operacional['falhas_mecanicas'] ?? 0) ?></div>
                     </div>
                     <?php if(!empty($lista_operacional_ativos)): ?>
                         <div style="background:#fff; border:1px solid #e5edf5; border-radius:8px; margin-bottom:14px; padding:10px;">
-                            <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase; color:#34495e;"><i class="fa-solid fa-truck"></i> Base de Viaturas e Máquinas</div>
+                            <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase; color:#34495e;"><i class="fa-solid fa-truck"></i> Base de Viaturas e M�quinas</div>
                             <table class="history-table">
                                 <thead>
                                     <tr>
-                                        <th>Código</th>
+                                        <th>C�digo</th>
                                         <th>Tipo</th>
-                                        <th>Descrição</th>
+                                        <th>Descri��o</th>
                                         <th>Sistemas</th>
                                         <th>Status</th>
                                     </tr>
@@ -3905,7 +3905,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <div><strong>Total Gasto:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_valor'] ?? 0), 2, ',', '.') ?></div>
                         <div><strong>Total Litros:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_litros'] ?? 0), 2, ',', '.') ?> L</div>
                         <div><strong>Total Registos:</strong> <?= (int) ($resumo_relatorio_consumo['total_registos'] ?? 0) ?></div>
-                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">Relatório automático consolidado: Formulários Recebidos, Controle Combustível, Controle de Stock, Requisições e Gestão Operacional.</div>
+                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">Relat�rio autom�tico consolidado: Formul�rios Recebidos, Controle Combust�vel, Controle de Stock, Requisi��es e Gest�o Operacional.</div>
                     </div>
                 <?php endif; ?>
                 
@@ -3916,7 +3916,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <th>Tipo</th>
                             <th>Data</th>
                             <th>Solicitante</th>
-                            <th>AÃ§Ãµes</th>
+                            <th>A��es</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -3963,7 +3963,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_diesel as $d): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($d['codigo'] ?? ('DIE-' . (int) $d['id']))) ?></td>
-                                    <td><?= htmlspecialchars((string) (($d['tipo_movimento'] ?? 'Combustível') . (($d['origem_registo'] ?? '') ? ' / ' . $d['origem_registo'] : ''))) ?></td>
+                                    <td><?= htmlspecialchars((string) (($d['tipo_movimento'] ?? 'Combust�vel') . (($d['origem_registo'] ?? '') ? ' / ' . $d['origem_registo'] : ''))) ?></td>
                                     <td><?= !empty($d['data_movimento']) ? date('d/m/Y', strtotime((string) $d['data_movimento'])) : '-' ?></td>
                                     <td><?= htmlspecialchars((string) (($d['projeto'] ?? '-') . ' / ' . ($d['viatura_id'] ?? '-') . ' / ' . ($d['documento_ref'] ?? '-'))) ?></td>
                                     <td>
@@ -3976,7 +3976,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_requisicoes as $rq): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rq['codigo'] ?? ('REQ-' . (int) $rq['id']))) ?></td>
-                                    <td><?= htmlspecialchars((string) (($rq['categoria'] ?? 'Requisição') . ' / ' . ($rq['prioridade'] ?? '-'))) ?></td>
+                                    <td><?= htmlspecialchars((string) (($rq['categoria'] ?? 'Requisi��o') . ' / ' . ($rq['prioridade'] ?? '-'))) ?></td>
                                     <td><?= !empty($rq['data_requisicao']) ? date('d/m/Y', strtotime((string) $rq['data_requisicao'])) : '-' ?></td>
                                     <td>
                                         <?= htmlspecialchars((string) (($rq['item_nome'] ?? '-') . ' | ' . number_format((float) ($rq['quantidade_solicitada'] ?? 0), 2, ',', '.') . ' ' . ($rq['unidade'] ?? ''))) ?>
@@ -4021,7 +4021,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_relatorio_consumo as $rc): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rc['id_ref'] ?? '-')) ?></td>
-                                    <td><?= htmlspecialchars((string) ($rc['fonte'] ?? 'Relatório')) ?></td>
+                                    <td><?= htmlspecialchars((string) ($rc['fonte'] ?? 'Relat�rio')) ?></td>
                                     <td><?= !empty($rc['data_ref']) ? date('d/m/Y H:i', strtotime((string) $rc['data_ref'])) : '-' ?></td>
                                     <td>
                                         <?=
@@ -4048,11 +4048,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                         <?= htmlspecialchars((string) ($rs['departamento'] ?? '-')) ?>
                                         <?= !empty($rs['solicitante']) ? ' / ' . htmlspecialchars((string) $rs['solicitante']) : '' ?>
                                         <?= !empty($rs['destino']) ? ' / ' . htmlspecialchars((string) $rs['destino']) : '' ?>
-                                        <?= !empty($rs['urgencia']) ? ' / Urgência: ' . htmlspecialchars((string) $rs['urgencia']) : '' ?>
+                                        <?= !empty($rs['urgencia']) ? ' / Urg�ncia: ' . htmlspecialchars((string) $rs['urgencia']) : '' ?>
                                         <?php if(isset($rs['horas_antecedencia']) && $rs['horas_antecedencia'] !== null): ?>
-                                            <?= ' / Antecedência útil: ' . number_format((float) $rs['horas_antecedencia'], 1, ',', '.') . ' h' ?>
+                                            <?= ' / Anteced�ncia �til: ' . number_format((float) $rs['horas_antecedencia'], 1, ',', '.') . ' h' ?>
                                         <?php endif; ?>
-                                        <?= ' / Ação Gestor: ' . htmlspecialchars(recomendacaoGestorPorUrgencia((string) ($rs['urgencia'] ?? ''))) ?>
+                                        <?= ' / A��o Gestor: ' . htmlspecialchars(recomendacaoGestorPorUrgencia((string) ($rs['urgencia'] ?? ''))) ?>
                                     </td>
                                     <td>
                                         <span style="margin-right:8px; font-weight:700; color:#555;"><?= htmlspecialchars((string) ($rs['status'] ?? 'Pendente Alinhamento')) ?></span>
@@ -4081,7 +4081,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_reparacao as $rep): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rep['codigo'] ?? ('PR-' . (int) $rep['id']))) ?></td>
-                                    <td>Pedido de Reparação</td>
+                                    <td>Pedido de Repara��o</td>
                                     <td><?= !empty($rep['criado_em']) ? date('d/m/Y H:i', strtotime($rep['criado_em'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($rep['solicitante'] ?? '-') ?></td>
                                     <td>
@@ -4094,7 +4094,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_relatorios as $ra): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($ra['codigo'] ?? ('RA-' . (int) $ra['id']))) ?></td>
-                                    <td>Relatório Geral</td>
+                                    <td>Relat�rio Geral</td>
                                     <td><?= !empty($ra['data_relatorio']) ? date('d/m/Y', strtotime($ra['data_relatorio'])) : '-' ?></td>
                                     <td>
                                         <?=
@@ -4116,7 +4116,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php foreach($lista_os as $os): ?>
                                 <tr>
                                     <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
-                                    <td>Ordem de Serviço</td>
+                                    <td>Ordem de Servi�o</td>
                                     <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime($os['data_saida'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($os['condutor'] ?? '-') ?></td>
                                     <td>
@@ -4147,10 +4147,10 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             <div class="white-card" style="max-width:780px;">
                 <h3 style="text-transform: uppercase; margin-bottom:12px;">Reserva Enviada com Sucesso</h3>
                 <div style="background:#eaf8ef; color:#1e8449; padding:12px; border-radius:8px; margin-bottom:12px; font-weight:700;">
-                    A sua parte foi concluída. A reserva foi registrada e enviada para o Gestor de Transporte.
+                    A sua parte foi conclu�da. A reserva foi registrada e enviada para o Gestor de Transporte.
                 </div>
                 <div style="font-size:13px; color:#555; margin-bottom:14px;">
-                    Agora o Gestor analisa a urgência e decide a viatura/máquina, convertendo automaticamente em Ordem de Serviço.
+                    Agora o Gestor analisa a urg�ncia e decide a viatura/m�quina, convertendo automaticamente em Ordem de Servi�o.
                 </div>
                 <div style="display:flex; gap:8px;">
                     <a href="/vilcon-systemon/public/app/modules/dashboard/index.php" class="btn-mode">Terminar</a>
@@ -4163,9 +4163,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;"><?= $reserva_form ? 'Aceitar Reserva e Gerar Ordem de Serviço' : 'Reserva de Viatura/Máquina por Departamento' ?></h3>
+                    <h3 style="text-transform: uppercase;"><?= $reserva_form ? 'Aceitar Reserva e Gerar Ordem de Servi�o' : 'Reserva de Viatura/M�quina por Departamento' ?></h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=reservas&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=reservas&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4179,33 +4179,33 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <form method="POST" class="form-grid">
                             <input type="hidden" name="reserva_id" value="<?= (int) ($reserva_form['id'] ?? 0) ?>">
                             <div class="section-title">Reserva Solicitada</div>
-                            <div class="form-group"><label>Código</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['codigo'] ?? '')) ?>" readonly></div>
+                            <div class="form-group"><label>C�digo</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['codigo'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Departamento</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['departamento'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Solicitante</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['solicitante'] ?? '')) ?>" readonly></div>
-                            <div class="form-group"><label>Urgência</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['urgencia'] ?? '')) ?>" readonly></div>
+                            <div class="form-group"><label>Urg�ncia</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['urgencia'] ?? '')) ?>" readonly></div>
                             <div class="form-group"><label>Data/Hora Partida</label><input type="text" value="<?= !empty($reserva_form['data_partida']) ? htmlspecialchars(date('d/m/Y H:i', strtotime((string) $reserva_form['data_partida']))) : '' ?>" readonly></div>
                             <div class="form-group"><label>Destino</label><input type="text" value="<?= htmlspecialchars((string) ($reserva_form['destino'] ?? '')) ?>" readonly></div>
                             <div class="form-group" style="grid-column: span 4;"><label>Atividade</label><textarea rows="2" readonly><?= htmlspecialchars((string) ($reserva_form['atividade'] ?? '')) ?></textarea></div>
-                            <div class="section-title">Decisão do Gestor para Gerar OS</div>
-                            <div class="form-group"><label>Viatura/Máquina</label><input type="text" name="viatura_id_os" required placeholder="Ex: CAT-320D / AF-582-MC"></div>
-                            <div class="form-group"><label>Matrícula</label><input type="text" name="matricula_os" placeholder="Opcional"></div>
-                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">Camião</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">Pá Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
+                            <div class="section-title">Decis�o do Gestor para Gerar OS</div>
+                            <div class="form-group"><label>Viatura/M�quina</label><input type="text" name="viatura_id_os" required placeholder="Ex: CAT-320D / AF-582-MC"></div>
+                            <div class="form-group"><label>Matr�cula</label><input type="text" name="matricula_os" placeholder="Opcional"></div>
+                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">Cami�o</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">P� Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
                             <div class="form-group"><label>Condutor</label><input type="text" name="condutor_os" value="A Definir"></div>
                             <div class="form-group"><label>Gestor de Transporte</label><input type="text" name="gestor_transporte_os" value="<?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? '')) ?>" required></div>
                             <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                                <button type="submit" name="aceitar_reserva" class="btn-save" style="background:var(--success);">Aceitar e Gerar OS Automática</button>
+                                <button type="submit" name="aceitar_reserva" class="btn-save" style="background:var(--success);">Aceitar e Gerar OS Autom�tica</button>
                             </div>
                         </form>
                     <?php endif; ?>
                 <?php else: ?>
                 <div class="calc-note" style="margin-bottom:12px; font-size:12px;">
-                    O departamento apenas solicita a reserva antecipadamente. O sistema calcula urgência por horas úteis e exibe ação recomendada para o Gestor decidir a viatura/máquina no momento certo.
+                    O departamento apenas solicita a reserva antecipadamente. O sistema calcula urg�ncia por horas �teis e exibe a��o recomendada para o Gestor decidir a viatura/m�quina no momento certo.
                 </div>
                 <form method="POST" class="form-grid">
                     <div class="section-title">Dados da Reserva e Prioridade</div>
                     <div class="form-group">
                         <label>Departamento</label>
-                        <input type="text" name="departamento_reserva" required placeholder="Ex: Produção / Logística / Engenharia">
+                        <input type="text" name="departamento_reserva" required placeholder="Ex: Produ��o / Log�stica / Engenharia">
                     </div>
                     <div class="form-group">
                         <label>Solicitante</label>
@@ -4215,12 +4215,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Tipo de Ativo</label>
                         <select name="tipo_ativo_reserva" required>
                             <option value="Viatura">Viatura</option>
-                            <option value="Maquina">Máquina</option>
+                            <option value="Maquina">M�quina</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Definição da Viatura</label>
-                        <input type="text" value="Definida pelo Gestor de Transporte após alinhamento" readonly>
+                        <label>Defini��o da Viatura</label>
+                        <input type="text" value="Definida pelo Gestor de Transporte ap�s alinhamento" readonly>
                     </div>
                     <div class="form-group">
                         <label>Destino</label>
@@ -4231,9 +4231,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="datetime-local" id="data_partida_reserva" name="data_partida_reserva" required>
                     </div>
                     <div class="form-group">
-                        <label>Nível de Urgência (Automático)</label>
-                        <input type="text" id="urgencia_auto_reserva" value="Será calculada pelo sistema" readonly>
-                        <div class="calc-note">Baseado em horas úteis (Seg-Sex 07h-16h, Sáb 07h-12h): até 4h = Urgente | até 8h = Alta | até 16h = Média | acima = Baixa.</div>
+                        <label>N�vel de Urg�ncia (Autom�tico)</label>
+                        <input type="text" id="urgencia_auto_reserva" value="Ser� calculada pelo sistema" readonly>
+                        <div class="calc-note">Baseado em horas �teis (Seg-Sex 07h-16h, S�b 07h-12h): at� 4h = Urgente | at� 8h = Alta | at� 16h = M�dia | acima = Baixa.</div>
                     </div>
                     <div class="section-title">Atividade e Alinhamento</div>
                     <div class="form-group" style="grid-column: span 4;">
@@ -4241,8 +4241,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <textarea name="atividade_reserva" rows="4" required placeholder="Descreva a atividade e motivo da reserva."></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações (opcional)</label>
-                        <textarea name="observacoes_reserva" rows="2" placeholder="Observações para alinhamento entre departamentos"></textarea>
+                        <label>Observa��es (opcional)</label>
+                        <textarea name="observacoes_reserva" rows="2" placeholder="Observa��es para alinhamento entre departamentos"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_reserva" class="btn-save" style="background:var(--vilcon-orange);">Salvar Reserva</button>
@@ -4256,8 +4256,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Ordem de ServiÃ§o - Gestor de Transporte</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Ordem de Servi�o - Gestor de Transporte</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar � Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
@@ -4265,11 +4265,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <form method="POST" class="form-grid">
                     <div class="section-title">1. Detalhes - Gestor de Transporte</div>
                     <div class="form-group">
-                        <label>NÃºmero OS</label>
+                        <label>N�mero OS</label>
                         <input type="text" value="<?= htmlspecialchars($proximo_id_os) ?>" readonly>
                     </div>
                     <div class="form-group">
-                        <label>Hora da Solicitação</label>
+                        <label>Hora da Solicita��o</label>
                         <input type="datetime-local" name="data_saida" required value="<?= date('Y-m-d\TH:i') ?>">
                     </div>
                     <div class="form-group">
@@ -4285,17 +4285,17 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" name="viatura_id" required placeholder="Ex: CAT-320D">
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>Matr�cula</label>
                         <input type="text" name="matricula" required placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
-                        <label>Tipo de Máquina / Viatura</label>
+                        <label>Tipo de M�quina / Viatura</label>
                         <select id="tipo_equipamento" name="tipo_equipamento" required>
                             <option value="">Selecionar</option>
-                            <option value="camiao">Camião</option>
+                            <option value="camiao">Cami�o</option>
                             <option value="pickup">Pickup</option>
                             <option value="escavadora">Escavadora</option>
-                            <option value="pa_carregadora">Pá Carregadora</option>
+                            <option value="pa_carregadora">P� Carregadora</option>
                             <option value="gerador">Gerador</option>
                             <option value="outro">Outro</option>
                         </select>
@@ -4304,13 +4304,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Condutor / Motorista</label>
                         <input type="text" name="condutor" required>
                     </div>
-                    <div class="section-title">Saída</div>
+                    <div class="section-title">Sa�da</div>
                     <div class="form-group">
-                        <label>Local de Saída</label>
+                        <label>Local de Sa�da</label>
                         <input type="text" id="local_saida_os" name="local_saida" required>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Saída</label>
+                        <label>Hora de Sa�da</label>
                         <input type="time" name="hora_saida" required>
                     </div>
                     <div class="form-group">
@@ -4330,22 +4330,22 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>KM final (na chegada)</label>
                         <input type="number" name="km_chegada_os" min="0" required>
                     </div>
-                    <div class="section-title">Serviço</div>
+                    <div class="section-title">Servi�o</div>
                     <div class="form-group">
-                        <label>Tipo de Serviço</label>
+                        <label>Tipo de Servi�o</label>
                         <select name="tipo_servico" required>
                             <option value="">Selecionar</option>
                             <option value="Interno">Interno</option>
-                            <option value="Prestação de Serviço">Prestação de Serviço</option>
+                            <option value="Presta��o de Servi�o">Presta��o de Servi�o</option>
                             <option value="Aluguer">Aluguer</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Início do Serviço</label>
+                        <label>Hora de In�cio do Servi�o</label>
                         <input type="time" name="servico_inicio" required>
                     </div>
                     <div class="form-group">
-                        <label>Hora de Fim do Serviço</label>
+                        <label>Hora de Fim do Servi�o</label>
                         <input type="time" name="servico_fim" required>
                     </div>
                     <div class="form-group">
@@ -4356,13 +4356,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Gestor de Transporte</label>
                         <input type="text" name="autorizado_por" required>
                     </div>
-                    <div class="section-title">2. DescriÃ§Ã£o do ServiÃ§o a ser Realizado</div>
+                    <div class="section-title">2. Descri��o do Servi�o a ser Realizado</div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>DescriÃ§Ã£o</label>
-                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviÃ§o..."></textarea>
+                        <label>Descri��o</label>
+                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de servi�o..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de ServiÃ§o</button>
+                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de Servi�o</button>
                     </div>
                 </form>
             </div>
@@ -4372,9 +4372,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Checklist - Validação</h3>
+                    <h3 style="text-transform: uppercase;">Checklist - Valida��o</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=checklist&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=checklist&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4391,13 +4391,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     </div>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="template_id" value="<?= (int) $template_checklist_form['id'] ?>">
-                        <div class="section-title">Dados da Inspecção</div>
+                        <div class="section-title">Dados da Inspec��o</div>
                         <div class="form-group">
-                            <label>Data da Inspecção</label>
+                            <label>Data da Inspec��o</label>
                             <input type="date" name="data_inspecao_chk" value="<?= date('Y-m-d') ?>" required>
                         </div>
                         <div class="form-group">
-                            <label>Viatura / Máquina</label>
+                            <label>Viatura / M�quina</label>
                             <input type="text" name="viatura_id_chk" required>
                         </div>
                         <div class="form-group">
@@ -4423,7 +4423,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <tr>
                                         <th>#</th>
                                         <th>Item</th>
-                                        <th>Validação</th>
+                                        <th>Valida��o</th>
                                         <th>Obs.</th>
                                     </tr>
                                 </thead>
@@ -4440,15 +4440,15 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                                     <button type="button" class="btn-mode active" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'na')" id="btn_na_<?= (int) $it['id'] ?>">N/A</button>
                                                 </div>
                                             </td>
-                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observação"></td>
+                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observa��o"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Observações Gerais</label>
-                            <textarea name="observacoes_chk" rows="3" placeholder="Observações gerais da inspeção..."></textarea>
+                            <label>Observa��es Gerais</label>
+                            <textarea name="observacoes_chk" rows="3" placeholder="Observa��es gerais da inspe��o..."></textarea>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                             <button type="submit" name="salvar_checklist" class="btn-save" style="background:var(--vilcon-orange);">Salvar Checklist</button>
@@ -4462,9 +4462,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Pedido de Reparação - Envio para Oficina</h3>
+                    <h3 style="text-transform: uppercase;">Pedido de Repara��o - Envio para Oficina</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4472,13 +4472,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <form method="POST" class="form-grid">
-                    <div class="section-title">Dados da Viatura / Máquina</div>
+                    <div class="section-title">Dados da Viatura / M�quina</div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
                         <input type="text" name="viatura_id_rep" required placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>Matr�cula</label>
                         <input type="text" name="matricula_rep" placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
@@ -4492,14 +4492,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
                     <div class="section-title">Dados da Avaria</div>
                     <div class="form-group">
-                        <label>Localização</label>
+                        <label>Localiza��o</label>
                         <input type="text" name="localizacao_rep" required placeholder="Ex: Pambarra, Vilanculos">
                     </div>
                     <div class="form-group">
                         <label>Prioridade</label>
                         <select name="prioridade_rep" required>
                             <option value="Alta">Alta</option>
-                            <option value="Media" selected>Média</option>
+                            <option value="Media" selected>M�dia</option>
                             <option value="Baixa">Baixa</option>
                         </select>
                     </div>
@@ -4508,8 +4508,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" name="solicitante_rep" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição da Avaria / Reparação Necessária</label>
-                        <textarea name="avaria_reportada" rows="5" required placeholder="Descreva os sintomas, falhas e serviço solicitado..."></textarea>
+                        <label>Descri��o da Avaria / Repara��o Necess�ria</label>
+                        <textarea name="avaria_reportada" rows="5" required placeholder="Descreva os sintomas, falhas e servi�o solicitado..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_pedido_reparacao" class="btn-save" style="background:var(--vilcon-orange);">Salvar e Enviar para Oficina</button>
@@ -4522,9 +4522,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Relatório Atividades - Automático por OS</h3>
+                    <h3 style="text-transform: uppercase;">Relat�rio Atividades - Autom�tico por OS</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4532,18 +4532,18 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <form method="POST" class="form-grid">
-                    <div class="ra-form-fields section-title">1. Seleção da Ordem de Serviço</div>
+                    <div class="ra-form-fields section-title">1. Sele��o da Ordem de Servi�o</div>
                     <div class="ra-form-fields form-group" style="grid-column: span 2;">
-                        <label>Número da OS</label>
+                        <label>N�mero da OS</label>
                         <select name="os_id_ra" id="os_id_ra" onchange="selecionarOsRelatorio(this.value)" required>
-                            <option value="">Selecionar Ordem de Serviço</option>
+                            <option value="">Selecionar Ordem de Servi�o</option>
                             <?php foreach($os_para_relatorio as $osRel): ?>
                                 <option value="<?= (int) $osRel['id'] ?>" <?= ($os_relatorio_selecionada && (int) $os_relatorio_selecionada['id'] === (int) $osRel['id']) ? 'selected' : '' ?>>
                                     OS-<?= str_pad((string) $osRel['id'], 4, '0', STR_PAD_LEFT) ?> | <?= htmlspecialchars((string) ($osRel['viatura_id'] ?? '-')) ?> | <?= htmlspecialchars((string) ($osRel['condutor'] ?? '-')) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <div class="calc-note">O relatório será preenchido automaticamente com base na OS selecionada.</div>
+                        <div class="calc-note">O relat�rio ser� preenchido automaticamente com base na OS selecionada.</div>
                     </div>
                     <div class="ra-form-fields form-group">
                         <label>Status da OS</label>
@@ -4554,7 +4554,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" id="ra_data_os" value="<?= !empty($os_relatorio_selecionada['data_saida']) ? htmlspecialchars(date('d/m/Y', strtotime((string) $os_relatorio_selecionada['data_saida']))) : '' ?>" readonly>
                     </div>
 
-                    <div class="ra-form-fields section-title">2. Dados Automáticos da Operação</div>
+                    <div class="ra-form-fields section-title">2. Dados Autom�ticos da Opera��o</div>
                     <div class="ra-form-fields form-group">
                         <label>Viatura / Equipamento</label>
                         <input type="text" id="ra_viatura" readonly value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['viatura_id'] ?? '')) ?>">
@@ -4568,7 +4568,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" id="ra_local" readonly value="<?= htmlspecialchars(trim((string) (($os_relatorio_selecionada['local_saida'] ?? '') . ' -> ' . ($os_relatorio_selecionada['destino'] ?? '')))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Hora Início</label>
+                        <label>Hora In�cio</label>
                         <input type="text" id="ra_hora_inicio" readonly value="<?= !empty($os_relatorio_selecionada['data_saida']) ? htmlspecialchars(date('H:i', strtotime((string) $os_relatorio_selecionada['data_saida']))) : '' ?>">
                     </div>
                     <div class="ra-form-fields form-group">
@@ -4588,11 +4588,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="number" id="ra_km_final" readonly value="<?= htmlspecialchars((string) (($os_relatorio_selecionada['km_chegada'] ?? $os_relatorio_selecionada['km_momento'] ?? ''))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Distância Percorrida (KM)</label>
+                        <label>Dist�ncia Percorrida (KM)</label>
                         <input type="number" id="ra_distancia" step="0.01" readonly value="<?= htmlspecialchars((string) (($os_relatorio_selecionada['distancia_mapa_km'] ?? $os_relatorio_selecionada['distancia_km'] ?? ''))) ?>">
                     </div>
                     <div class="ra-form-fields form-group">
-                        <label>Combustível Consumido (L)</label>
+                        <label>Combust�vel Consumido (L)</label>
                         <input type="number" id="ra_combustivel" step="0.01" readonly value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['litros_abastecidos'] ?? '')) ?>">
                     </div>
                     <div class="ra-form-fields form-group" style="grid-column: span 4;">
@@ -4600,7 +4600,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <textarea id="ra_atividade" rows="4" readonly><?= htmlspecialchars((string) ($os_relatorio_selecionada['atividade_prevista'] ?? '')) ?></textarea>
                     </div>
 
-                    <div class="ra-form-fields section-title">3. Complemento do Relatório</div>
+                    <div class="ra-form-fields section-title">3. Complemento do Relat�rio</div>
                     <div class="form-group">
                         <label>Projeto</label>
                         <input type="text" name="projeto_ra" placeholder="Ex: PROJ-001" required>
@@ -4610,20 +4610,20 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" name="supervisor_ra" value="<?= htmlspecialchars((string) ($os_relatorio_selecionada['autorizado_por'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
-                        <textarea name="observacoes_ra" rows="3" placeholder="Ocorrências, atrasos, incidentes, etc."></textarea>
+                        <label>Observa��es</label>
+                        <textarea name="observacoes_ra" rows="3" placeholder="Ocorr�ncias, atrasos, incidentes, etc."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_relatorio_atividade" class="btn-save" style="background:var(--vilcon-orange);">Salvar Relatório de Atividades</button>
+                        <button type="submit" name="salvar_relatorio_atividade" class="btn-save" style="background:var(--vilcon-orange);">Salvar Relat�rio de Atividades</button>
                     </div>
                 </form>
 
                 <div id="relatorio_print_sheet" class="relatorio-print-sheet">
-                    <div class="relatorio-print-title">RELATÓRIO DE ATIVIDADES - TRANSPORTE</div>
+                    <div class="relatorio-print-title">RELAT�RIO DE ATIVIDADES - TRANSPORTE</div>
                     <table class="relatorio-print-grid">
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Número da OS</span>
+                                <span class="relatorio-print-label">N�mero da OS</span>
                                 <span id="pv_os" class="relatorio-print-value"></span>
                             </td>
                             <td>
@@ -4657,7 +4657,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         </tr>
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Hora Início</span>
+                                <span class="relatorio-print-label">Hora In�cio</span>
                                 <span id="pv_hora_inicio" class="relatorio-print-value"></span>
                             </td>
                             <td>
@@ -4679,17 +4679,17 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <span id="pv_km_final" class="relatorio-print-value"></span>
                             </td>
                             <td>
-                                <span class="relatorio-print-label">Distância (KM)</span>
+                                <span class="relatorio-print-label">Dist�ncia (KM)</span>
                                 <span id="pv_distancia" class="relatorio-print-value"></span>
                             </td>
                         </tr>
                         <tr>
                             <td>
-                                <span class="relatorio-print-label">Combustível Consumido (L)</span>
+                                <span class="relatorio-print-label">Combust�vel Consumido (L)</span>
                                 <span id="pv_combustivel" class="relatorio-print-value"></span>
                             </td>
                             <td>
-                                <span class="relatorio-print-label">Consumo Médio (KM/L)</span>
+                                <span class="relatorio-print-label">Consumo M�dio (KM/L)</span>
                                 <span id="pv_media" class="relatorio-print-value"></span>
                             </td>
                             <td></td>
@@ -4702,13 +4702,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         </tr>
                         <tr>
                             <td colspan="3">
-                                <span class="relatorio-print-label">Observações</span>
+                                <span class="relatorio-print-label">Observa��es</span>
                                 <span id="pv_observacoes" class="relatorio-print-value"></span>
                             </td>
                         </tr>
                         <tr>
                             <td colspan="3" style="height:56px;">
-                                <span class="relatorio-print-label">Assinatura / Validação</span>
+                                <span class="relatorio-print-label">Assinatura / Valida��o</span>
                             </td>
                         </tr>
                     </table>
@@ -4720,9 +4720,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Gestão Operacional da Frota</h3>
+                    <h3 style="text-transform: uppercase;">Gest�o Operacional da Frota</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=operacional&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=operacional&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4731,21 +4731,21 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <?php endif; ?>
 
                 <form method="POST" class="form-grid">
-                    <div class="section-title">1. Cadastro de Viatura / Máquina</div>
+                    <div class="section-title">1. Cadastro de Viatura / M�quina</div>
                     <div class="form-group">
                         <label>Tipo de Ativo</label>
                         <select name="tipo_ativo" required>
                             <option value="Viatura">Viatura</option>
-                            <option value="Maquina">Máquina</option>
+                            <option value="Maquina">M�quina</option>
                             <option value="Equipamento">Equipamento</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Descrição</label>
-                        <input type="text" name="descricao_ativo" placeholder="Ex: Camião Basculante 12m3" required>
+                        <label>Descri��o</label>
+                        <input type="text" name="descricao_ativo" placeholder="Ex: Cami�o Basculante 12m3" required>
                     </div>
                     <div class="form-group">
-                        <label>Matrícula</label>
+                        <label>Matr�cula</label>
                         <input type="text" name="matricula_ativo" placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
@@ -4760,27 +4760,27 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Status Operacional</label>
                         <select name="status_operacional_ativo" required>
                             <option value="Operacional">Operacional</option>
-                            <option value="Em Manutencao">Em Manutenção</option>
+                            <option value="Em Manutencao">Em Manuten��o</option>
                             <option value="Parado">Parado</option>
-                            <option value="Indisponivel">Indisponível</option>
+                            <option value="Indisponivel">Indispon�vel</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Última Manutenção</label>
+                        <label>�ltima Manuten��o</label>
                         <input type="date" name="ultima_manutencao_ativo">
                     </div>
                     <div class="form-group">
-                        <label>Próxima Manutenção (KM)</label>
+                        <label>Pr�xima Manuten��o (KM)</label>
                         <input type="number" name="proxima_manutencao_km_ativo" min="0">
                     </div>
                     <div class="form-group" style="justify-content:flex-end;">
                         <label><input type="checkbox" name="tem_gps_ativo"> Tem sistema GPS</label>
                     </div>
                     <div class="form-group" style="justify-content:flex-end;">
-                        <label><input type="checkbox" name="tem_sensor_comb_ativo"> Tem sensor de combustível</label>
+                        <label><input type="checkbox" name="tem_sensor_comb_ativo"> Tem sensor de combust�vel</label>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
+                        <label>Observa��es</label>
                         <textarea name="observacoes_ativo" rows="2"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
@@ -4801,9 +4801,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="hidden" name="evento_id" value="<?= (int) ($evento_operacional_form['id'] ?? 0) ?>">
                         <input type="hidden" name="anexos_existentes_evento" value="<?= htmlspecialchars(json_encode($eventoAnexosList, JSON_UNESCAPED_UNICODE), ENT_QUOTES) ?>">
                     <?php endif; ?>
-                    <div class="section-title">2. Registro de Intervenção / Falha</div>
+                    <div class="section-title">2. Registro de Interven��o / Falha</div>
                     <div class="form-group" style="grid-column: span 2;">
-                        <label>Viatura / Máquina</label>
+                        <label>Viatura / M�quina</label>
                         <select name="ativo_id_evento" required>
                             <option value="">Selecionar ativo</option>
                             <?php foreach($lista_operacional_ativos as $atvEvt): ?>
@@ -4821,11 +4821,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Tipo de Evento</label>
                         <select name="tipo_evento" required>
                             <option value="Avaria" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Avaria')) ? 'selected' : '' ?>>Avaria</option>
-                            <option value="Roubo Combustivel" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Roubo Combustivel')) ? 'selected' : '' ?>>Roubo de Combustível</option>
-                            <option value="Falha Mecanica" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Mecanica')) ? 'selected' : '' ?>>Falha Mecânica</option>
+                            <option value="Roubo Combustivel" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Roubo Combustivel')) ? 'selected' : '' ?>>Roubo de Combust�vel</option>
+                            <option value="Falha Mecanica" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Mecanica')) ? 'selected' : '' ?>>Falha Mec�nica</option>
                             <option value="Falha Sistema" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Falha Sistema')) ? 'selected' : '' ?>>Falha no Sistema</option>
-                            <option value="Manutencao Preventiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Preventiva')) ? 'selected' : '' ?>>Manutenção Preventiva</option>
-                            <option value="Manutencao Corretiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Corretiva')) ? 'selected' : '' ?>>Manutenção Corretiva</option>
+                            <option value="Manutencao Preventiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Preventiva')) ? 'selected' : '' ?>>Manuten��o Preventiva</option>
+                            <option value="Manutencao Corretiva" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Manutencao Corretiva')) ? 'selected' : '' ?>>Manuten��o Corretiva</option>
                             <option value="Outro" <?= ($isEventoEdit && (($evento_operacional_form['tipo_evento'] ?? '') === 'Outro')) ? 'selected' : '' ?>>Outro</option>
                         </select>
                     </div>
@@ -4833,20 +4833,20 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Severidade</label>
                         <select name="severidade_evento" required>
                             <option value="Baixa" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Baixa')) ? 'selected' : '' ?>>Baixa</option>
-                            <option value="Media" <?= (!$isEventoEdit || (($evento_operacional_form['severidade'] ?? 'Media') === 'Media')) ? 'selected' : '' ?>>Média</option>
+                            <option value="Media" <?= (!$isEventoEdit || (($evento_operacional_form['severidade'] ?? 'Media') === 'Media')) ? 'selected' : '' ?>>M�dia</option>
                             <option value="Alta" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Alta')) ? 'selected' : '' ?>>Alta</option>
-                            <option value="Critica" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Critica')) ? 'selected' : '' ?>>Crítica</option>
+                            <option value="Critica" <?= ($isEventoEdit && (($evento_operacional_form['severidade'] ?? '') === 'Critica')) ? 'selected' : '' ?>>Cr�tica</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>KM / Horímetro</label>
+                        <label>KM / Hor�metro</label>
                         <input type="number" name="km_evento" min="0" value="<?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['km_horimetro'] ?? '')) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Status</label>
                         <select name="status_evento" required>
                             <option value="Aberto" <?= (!$isEventoEdit || (($evento_operacional_form['status'] ?? 'Aberto') === 'Aberto')) ? 'selected' : '' ?>>Aberto</option>
-                            <option value="Em Analise" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Em Analise')) ? 'selected' : '' ?>>Em Análise</option>
+                            <option value="Em Analise" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Em Analise')) ? 'selected' : '' ?>>Em An�lise</option>
                             <option value="Resolvido" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Resolvido')) ? 'selected' : '' ?>>Resolvido</option>
                             <option value="Fechado" <?= ($isEventoEdit && (($evento_operacional_form['status'] ?? '') === 'Fechado')) ? 'selected' : '' ?>>Fechado</option>
                         </select>
@@ -4856,16 +4856,16 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="number" name="custo_estimado_evento" min="0" step="0.01" value="<?= $isEventoEdit ? number_format((float) ($evento_operacional_form['custo_estimado'] ?? 0), 2, '.', '') : '0' ?>">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>Respons�vel</label>
                         <input type="text" name="responsavel_evento" value="<?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['responsavel'] ?? '')) : '' ?>">
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Descrição da Falha / Intervenção</label>
-                        <textarea name="descricao_evento" rows="3" required placeholder="Detalhar falha no sistema, avaria, roubo de combustível, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['descricao_falha'] ?? '')) : '' ?></textarea>
+                        <label>Descri��o da Falha / Interven��o</label>
+                        <textarea name="descricao_evento" rows="3" required placeholder="Detalhar falha no sistema, avaria, roubo de combust�vel, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['descricao_falha'] ?? '')) : '' ?></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Ação Tomada</label>
-                        <textarea name="acao_tomada_evento" rows="2" placeholder="Ex: Imobilização, inspeção técnica, chamada da oficina, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['acao_tomada'] ?? '')) : '' ?></textarea>
+                        <label>A��o Tomada</label>
+                        <textarea name="acao_tomada_evento" rows="2" placeholder="Ex: Imobiliza��o, inspe��o t�cnica, chamada da oficina, etc."><?= $isEventoEdit ? htmlspecialchars((string) ($evento_operacional_form['acao_tomada'] ?? '')) : '' ?></textarea>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
                         <label>Anexos (PDF/Fotos)</label>
@@ -4873,10 +4873,10 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <?php if(!empty($eventoAnexosList)): ?>
                             <div class="calc-note">Anexos atuais: <?= htmlspecialchars(implode(', ', array_map('basename', $eventoAnexosList))) ?></div>
                         <?php endif; ?>
-                        <div class="calc-note">Pode anexar fotos da falha, relatório técnico e comprovativos (máx. 10MB por ficheiro).</div>
+                        <div class="calc-note">Pode anexar fotos da falha, relat�rio t�cnico e comprovativos (m�x. 10MB por ficheiro).</div>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="<?= $isEventoEdit ? 'atualizar_frota_evento' : 'salvar_frota_evento' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isEventoEdit ? 'Atualizar Intervenção/Falha' : 'Salvar Intervenção/Falha' ?></button>
+                        <button type="submit" name="<?= $isEventoEdit ? 'atualizar_frota_evento' : 'salvar_frota_evento' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isEventoEdit ? 'Atualizar Interven��o/Falha' : 'Salvar Interven��o/Falha' ?></button>
                     </div>
                 </form>
             </div>
@@ -4886,9 +4886,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Requisições Externas por Déficit de Stock</h3>
+                    <h3 style="text-transform: uppercase;">Requisi��es Externas por D�ficit de Stock</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -4906,7 +4906,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     if(!$reqForm && !empty($sugestoes_requisicoes)) $reqForm = $sugestoes_requisicoes[0];
                 ?>
                 <?php if(!$reqForm): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Sem déficit de stock detectado no momento para gerar requisição automática.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Sem d�ficit de stock detectado no momento para gerar requisi��o autom�tica.</div>
                 <?php else: ?>
                     <form method="POST" enctype="multipart/form-data" class="form-grid">
                         <?php if($isReqEdit): ?>
@@ -4926,7 +4926,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="hidden" name="quantidade_sugerida_req" value="<?= number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>">
                         <input type="hidden" name="fornecedor_sugerido_req" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? '')) ?>">
 
-                        <div class="section-title">Análise Automática de Déficit</div>
+                        <div class="section-title">An�lise Autom�tica de D�ficit</div>
                         <div class="form-group">
                             <label>Item</label>
                             <input type="text" value="<?= htmlspecialchars((string) (($reqForm['codigo'] ?? '') . ' - ' . ($reqForm['nome'] ?? ''))) ?>" readonly>
@@ -4940,11 +4940,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <input type="text" value="<?= number_format((float) ($reqForm['stock_atual'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Stock Mínimo</label>
+                            <label>Stock M�nimo</label>
                             <input type="text" value="<?= number_format((float) ($reqForm['stock_minimo'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Saída Média / Dia</label>
+                            <label>Sa�da M�dia / Dia</label>
                             <input type="text" value="<?= number_format((float) ($reqForm['saida_media_dia'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
@@ -4960,13 +4960,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <input type="text" value="<?= htmlspecialchars((string) ($reqForm['prioridade'] ?? 'Media')) ?>" readonly>
                         </div>
 
-                        <div class="section-title">Dados da Requisição Externa</div>
+                        <div class="section-title">Dados da Requisi��o Externa</div>
                         <div class="form-group">
                             <label>Fornecedor Sugerido</label>
                             <input type="text" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? 'Fornecedor Geral')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Fornecedor (já cadastrado)</label>
+                            <label>Fornecedor (j� cadastrado)</label>
                             <select name="fornecedor_id_req" id="fornecedor_id_req" onchange="onFornecedorSelectReq(this)">
                                 <option value="">Selecionar fornecedor</option>
                                 <?php foreach($fornecedores_requisicao as $fornReq): ?>
@@ -4998,7 +4998,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <input type="number" id="quantidade_solicitada_req" name="quantidade_solicitada_req" min="0.01" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['quantidade_solicitada'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>" required oninput="atualizarCustoRequisicao()">
                         </div>
                         <div class="form-group">
-                            <label>Preço Unitário Estimado</label>
+                            <label>Pre�o Unit�rio Estimado</label>
                             <input type="number" id="preco_unitario_req" name="preco_unitario_req" min="0" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['preco_unitario_estimado'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['preco_medio'] ?? 0), 2, '.', '') ?>" oninput="atualizarCustoRequisicao()" required>
                         </div>
                         <div class="form-group">
@@ -5026,8 +5026,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <input type="text" name="solicitante_req" value="<?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['solicitante'] ?? '')) : '' ?>" required>
                         </div>
                         <div class="form-group" style="grid-column: span 3;">
-                            <label>Justificativa Técnica</label>
-                            <textarea name="justificativa_req" rows="3" required><?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['justificativa'] ?? '')) : 'Déficit automático detectado no stock (saldo abaixo do mínimo e/ou cobertura baixa). Requisição gerada para evitar ruptura operacional.' ?></textarea>
+                            <label>Justificativa T�cnica</label>
+                            <textarea name="justificativa_req" rows="3" required><?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['justificativa'] ?? '')) : 'D�ficit autom�tico detectado no stock (saldo abaixo do m�nimo e/ou cobertura baixa). Requisi��o gerada para evitar ruptura operacional.' ?></textarea>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
                             <label>Anexos (PDF/Fotos)</label>
@@ -5035,10 +5035,10 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <?php if(!empty($reqAnexosList)): ?>
                                 <div class="calc-note">Anexos atuais: <?= htmlspecialchars(implode(', ', array_map('basename', $reqAnexosList))) ?></div>
                             <?php endif; ?>
-                            <div class="calc-note">Anexe cotações, propostas de fornecedor, fotos e documentos de suporte.</div>
+                            <div class="calc-note">Anexe cota��es, propostas de fornecedor, fotos e documentos de suporte.</div>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar Requisição Externa' : 'Gerar Requisição Externa' ?></button>
+                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar Requisi��o Externa' : 'Gerar Requisi��o Externa' ?></button>
                         </div>
                     </form>
                 <?php endif; ?>
@@ -5049,9 +5049,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Controle Combustível - Mapa de Diesel</h3>
+                    <h3 style="text-transform: uppercase;">Controle Combust�vel - Mapa de Diesel</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=combustivel&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=combustivel&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5061,7 +5061,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <form method="POST" class="form-grid">
                     <div class="section-title">Mapa de Diesel</div>
                     <div class="form-group" style="grid-column: span 2;">
-                        <label>Ordem de Serviço</label>
+                        <label>Ordem de Servi�o</label>
                         <select name="ordem_servico_diesel" id="ordem_servico_diesel" onchange="preencherMapaDieselPorOs(this)">
                             <option value="">Selecionar OS (opcional)</option>
                             <?php foreach($os_para_diesel as $osDiesel): ?>
@@ -5078,7 +5078,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <div class="calc-note">Selecionando a OS, os campos principais são preenchidos automaticamente.</div>
+                        <div class="calc-note">Selecionando a OS, os campos principais s�o preenchidos automaticamente.</div>
                     </div>
                     <div class="form-group">
                         <label>Data do Movimento</label>
@@ -5092,14 +5092,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <label>Tipo de Movimento</label>
                         <select name="tipo_movimento_diesel" required>
                             <option value="Entrada">Entrada</option>
-                            <option value="Saida" selected>Saída</option>
-                            <option value="Transferencia">Transferência</option>
+                            <option value="Saida" selected>Sa�da</option>
+                            <option value="Transferencia">Transfer�ncia</option>
                             <option value="Ajuste">Ajuste</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Documento Ref.</label>
-                        <input type="text" id="documento_ref_diesel" name="documento_ref_diesel" placeholder="Ex: Guia/Requisição">
+                        <input type="text" id="documento_ref_diesel" name="documento_ref_diesel" placeholder="Ex: Guia/Requisi��o">
                     </div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
@@ -5115,11 +5115,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="number" id="litros_diesel" name="litros_diesel" min="0" step="0.01" oninput="atualizarTotalDiesel()" required>
                     </div>
                     <div class="form-group">
-                        <label>Preço Unitário</label>
+                        <label>Pre�o Unit�rio</label>
                         <input type="number" id="preco_unitario_diesel" name="preco_unitario_diesel" min="0" step="0.01" oninput="atualizarTotalDiesel()" required>
                     </div>
                     <div class="form-group">
-                        <label>Valor Total (Automático)</label>
+                        <label>Valor Total (Autom�tico)</label>
                         <input type="number" id="valor_total_diesel" step="0.01" readonly>
                     </div>
                     <div class="form-group">
@@ -5131,12 +5131,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" name="fornecedor_diesel">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>Respons�vel</label>
                         <input type="text" name="responsavel_diesel" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
-                        <textarea name="observacoes_diesel" rows="3" placeholder="Observações do movimento de combustível..."></textarea>
+                        <label>Observa��es</label>
+                        <textarea name="observacoes_diesel" rows="3" placeholder="Observa��es do movimento de combust�vel..."></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_mapa_diesel" class="btn-save" style="background:var(--vilcon-orange);">Salvar Mapa de Diesel</button>
@@ -5149,9 +5149,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;"><i class="fa-solid fa-warehouse"></i> Controle de Stock - Avançado</h3>
+                    <h3 style="text-transform: uppercase;"><i class="fa-solid fa-warehouse"></i> Controle de Stock - Avan�ado</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=stock&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=gestao_frota&view=stock&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5160,11 +5160,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <?php endif; ?>
                 <div class="stock-form-banner">
                     <i class="fa-solid fa-lightbulb"></i>
-                    Registe entradas, saídas e ajustes com rastreio por OS, projeto e responsável.
+                    Registe entradas, sa�das e ajustes com rastreio por OS, projeto e respons�vel.
                 </div>
 
                 <form method="POST" class="form-grid">
-                    <div class="section-title"><i class="fa-solid fa-right-left"></i> 1. Movimentação de Stock</div>
+                    <div class="section-title"><i class="fa-solid fa-right-left"></i> 1. Movimenta��o de Stock</div>
                     <div class="form-group">
                         <label>Data do Movimento</label>
                         <input type="date" name="data_movimento_stock" value="<?= date('Y-m-d') ?>" required>
@@ -5181,15 +5181,15 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Item não existe? Nome do novo item</label>
-                        <input type="text" name="novo_item_nome_stock" placeholder="Ex: Óleo Caixa 85W140">
-                        <div class="calc-note">Se preencher aqui, o item é cadastrado automaticamente.</div>
+                        <label>Item n�o existe? Nome do novo item</label>
+                        <input type="text" name="novo_item_nome_stock" placeholder="Ex: �leo Caixa 85W140">
+                        <div class="calc-note">Se preencher aqui, o item � cadastrado automaticamente.</div>
                     </div>
                     <div class="form-group">
                         <label>Categoria do novo item</label>
                         <select name="novo_item_categoria_stock">
-                            <option value="Combustivel">Combustível</option>
-                            <option value="Oleo">Óleo</option>
+                            <option value="Combustivel">Combust�vel</option>
+                            <option value="Oleo">�leo</option>
                             <option value="Lubrificante">Lubrificante</option>
                             <option value="Aditivo">Aditivo</option>
                             <option value="Outros" selected>Outros</option>
@@ -5205,13 +5205,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     </div>
                     <div class="form-group">
                         <label>Local do novo item</label>
-                        <input type="text" name="novo_item_local_stock" placeholder="Ex: Armazém TO">
+                        <input type="text" name="novo_item_local_stock" placeholder="Ex: Armaz�m TO">
                     </div>
                     <div class="form-group">
                         <label>Tipo Movimento</label>
                         <select name="tipo_movimento_stock" required>
                             <option value="Entrada">Entrada</option>
-                            <option value="Saida" selected>Saída</option>
+                            <option value="Saida" selected>Sa�da</option>
                             <option value="Ajuste">Ajuste</option>
                         </select>
                     </div>
@@ -5229,26 +5229,26 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     </div>
                     <div class="form-group">
                         <label>Cliente/Comprador (Venda)</label>
-                        <input type="text" name="cliente_venda_stock" placeholder="Obrigatório se finalidade = Venda">
+                        <input type="text" name="cliente_venda_stock" placeholder="Obrigat�rio se finalidade = Venda">
                     </div>
                     <div class="form-group">
                         <label>Quantidade</label>
                         <input type="number" id="quantidade_stock" name="quantidade_stock" min="0.01" step="0.01" required oninput="atualizarTotalMovStock()">
                     </div>
                     <div class="form-group">
-                        <label>Preço Unitário</label>
+                        <label>Pre�o Unit�rio</label>
                         <input type="number" id="preco_unitario_stock" name="preco_unitario_stock" min="0" step="0.01" oninput="atualizarTotalMovStock()">
                     </div>
                     <div class="form-group">
-                        <label>Valor Total (Automático)</label>
+                        <label>Valor Total (Autom�tico)</label>
                         <input type="number" id="valor_total_stock" step="0.01" readonly>
                     </div>
                     <div class="form-group">
                         <label>Projeto</label>
-                        <input type="text" name="projeto_stock" placeholder="Obrigatório se finalidade = Projeto">
+                        <input type="text" name="projeto_stock" placeholder="Obrigat�rio se finalidade = Projeto">
                     </div>
                     <div class="form-group">
-                        <label>OS Referência (Opcional)</label>
+                        <label>OS Refer�ncia (Opcional)</label>
                         <select name="ordem_servico_stock">
                             <option value="">Sem OS</option>
                             <?php foreach($os_para_stock as $osSt): ?>
@@ -5261,11 +5261,11 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="text" name="documento_ref_stock">
                     </div>
                     <div class="form-group">
-                        <label>Responsável</label>
+                        <label>Respons�vel</label>
                         <input type="text" name="responsavel_stock" required>
                     </div>
                     <div class="form-group" style="grid-column: span 4;">
-                        <label>Observações</label>
+                        <label>Observa��es</label>
                         <textarea name="observacoes_stock" rows="2"></textarea>
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
@@ -5274,20 +5274,20 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 </form>
 
                 <form method="POST" class="form-grid" style="margin-top:18px;">
-                    <div class="section-title"><i class="fa-solid fa-square-plus"></i> 2. Cadastro de Item (Combustível, Óleo, Lubrificante)</div>
+                    <div class="section-title"><i class="fa-solid fa-square-plus"></i> 2. Cadastro de Item (Combust�vel, �leo, Lubrificante)</div>
                     <div class="form-group">
-                        <label>Código</label>
+                        <label>C�digo</label>
                         <input type="text" name="codigo_item_stock" required placeholder="Ex: STK-OLEO-5W30">
                     </div>
                     <div class="form-group">
                         <label>Nome Item</label>
-                        <input type="text" name="nome_item_stock" required placeholder="Ex: Óleo Motor 5W30">
+                        <input type="text" name="nome_item_stock" required placeholder="Ex: �leo Motor 5W30">
                     </div>
                     <div class="form-group">
                         <label>Categoria</label>
                         <select name="categoria_item_stock" required>
-                            <option value="Combustivel">Combustível</option>
-                            <option value="Oleo">Óleo</option>
+                            <option value="Combustivel">Combust�vel</option>
+                            <option value="Oleo">�leo</option>
                             <option value="Lubrificante">Lubrificante</option>
                             <option value="Aditivo">Aditivo</option>
                             <option value="Outros">Outros</option>
@@ -5306,16 +5306,16 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="number" name="stock_inicial_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
-                        <label>Stock Mínimo</label>
+                        <label>Stock M�nimo</label>
                         <input type="number" name="stock_minimo_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
-                        <label>Preço Médio</label>
+                        <label>Pre�o M�dio</label>
                         <input type="number" name="preco_medio_item_stock" min="0" step="0.01" value="0">
                     </div>
                     <div class="form-group">
                         <label>Local Armazenamento</label>
-                        <input type="text" name="local_item_stock" placeholder="Ex: Bomba Principal / Armazém TO">
+                        <input type="text" name="local_item_stock" placeholder="Ex: Bomba Principal / Armaz�m TO">
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_item_stock" class="btn-save" style="background:#2c3e50;">Cadastrar Item de Stock</button>
@@ -5328,14 +5328,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Abastecimento - FormulÃ¡rios Recebidos</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <h3 style="text-transform: uppercase;">Abastecimento - Formul�rios Recebidos</h3>
+                    <div style="display:flex; gap:8px;"><a href="?tab=gestao_frota&view=recebidos&mode=list" class="btn-mode">Voltar � Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <?php if(empty($os_form)): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de ServiÃ§o na lista para preencher o abastecimento.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma Ordem de Servi�o na lista para preencher o abastecimento.</div>
                 <?php else: ?>
                     <?php
                         $tipoServicoResumo = trim((string) ($os_form['tipo_servico'] ?? ''));
@@ -5361,10 +5361,10 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>OS:</strong> OS-<?= str_pad((string) $os_form['id'], 4, '0', STR_PAD_LEFT) ?></div>
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Viatura/Maquina:</strong> <?= htmlspecialchars((string) ($os_form['viatura_id'] ?? '-')) ?></div>
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Condutor:</strong> <?= htmlspecialchars((string) ($os_form['condutor'] ?? '-')) ?></div>
-                        <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Tipo de Serviço:</strong> <?= htmlspecialchars($tipoServicoResumo !== '' ? $tipoServicoResumo : '-') ?></div>
+                        <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Tipo de Servi�o:</strong> <?= htmlspecialchars($tipoServicoResumo !== '' ? $tipoServicoResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Empresa/Cliente/Projeto:</strong> <?= htmlspecialchars($empresaProjetoResumo !== '' ? $empresaProjetoResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Quantidade Inicial Abastecida (L):</strong> <?= htmlspecialchars($quantidadeInicialResumo) ?></div>
-                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Descrição do Serviço a ser Realizado:</strong> <?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '-')) ?></div>
+                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Descri��o do Servi�o a ser Realizado:</strong> <?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '-')) ?></div>
                     </div>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
@@ -5375,7 +5375,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="hidden" id="consumo_l_100km_base" name="consumo_l_100km" value="<?= htmlspecialchars($consumoResumo !== '' ? $consumoResumo : '') ?>">
                         <div class="section-title">3. Abastecimento</div>
                         <div class="form-group">
-                            <label>Saída - Local de Saída</label>
+                            <label>Sa�da - Local de Sa�da</label>
                             <input type="text" value="<?= htmlspecialchars((string) ($os_form['local_saida'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
@@ -5396,14 +5396,14 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <input type="hidden" id="ultimo_litros_historico" value="<?= number_format((float) ($analise_consumo_os['ultimo_litros_historico'] ?? 0), 2, '.', '') ?>">
 
                         <div style="grid-column: span 4; display:flex; justify-content:flex-start; margin-top:6px;">
-                            <button type="button" id="toggle_mapa_btn" class="btn-mode" onclick="toggleMapaSection()"><strong>+</strong> Distância Inteligente (Mapa)</button>
+                            <button type="button" id="toggle_mapa_btn" class="btn-mode" onclick="toggleMapaSection()"><strong>+</strong> Dist�ncia Inteligente (Mapa)</button>
                         </div>
                         <div id="mapa_section_body" style="grid-column: span 4; display:none; grid-template-columns: repeat(4, 1fr); gap:10px;">
-                            <div class="section-title">4. Distância Inteligente (Mapa)</div>
-                            <div class="calc-note" style="grid-column: span 4;"><?= !empty($googleMapsApiKey) ? 'Motor de rota: Google Maps (com fallback automático).' : 'Google API não configurada; usando fallback OSRM.' ?></div>
+                            <div class="section-title">4. Dist�ncia Inteligente (Mapa)</div>
+                            <div class="calc-note" style="grid-column: span 4;"><?= !empty($googleMapsApiKey) ? 'Motor de rota: Google Maps (com fallback autom�tico).' : 'Google API n�o configurada; usando fallback OSRM.' ?></div>
                             <div class="form-group" style="grid-column: span 4; flex-direction:row; align-items:center; gap:8px;">
                                 <input type="checkbox" id="modo_manual_mapa">
-                                <label for="modo_manual_mapa" style="margin:0;">Modo manual avançado (ajuste de KM/tempo/consumo se o mapa divergir)</label>
+                                <label for="modo_manual_mapa" style="margin:0;">Modo manual avan�ado (ajuste de KM/tempo/consumo se o mapa divergir)</label>
                             </div>
                             <div class="form-group" style="grid-column: span 2;">
                                 <label>Origem (Mapa)</label>
@@ -5416,15 +5416,15 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <div class="form-group">
                                 <label>Leitura Final do Conta-KM</label>
                                 <input type="number" id="km_momento" name="km_momento" value="<?= htmlspecialchars((string) (($os_form['km_chegada'] ?? '') !== '' ? $os_form['km_chegada'] : ($os_form['km_saida'] ?? ''))) ?>" min="<?= (int) ($os_form['km_saida'] ?? 0) ?>" readonly required>
-                                <div class="calc-note">Valor do painel da viatura/máquina no fim do percurso.</div>
+                                <div class="calc-note">Valor do painel da viatura/m�quina no fim do percurso.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância Percorrida pelo Conta-KM (KM)</label>
+                                <label>Dist�ncia Percorrida pelo Conta-KM (KM)</label>
                                 <input type="number" id="distancia_km_calc" step="0.01" readonly>
                                 <div class="calc-note">Calculada automaticamente: leitura final menos leitura inicial.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância mapa (KM)</label>
+                                <label>Dist�ncia mapa (KM)</label>
                                 <input type="number" id="distancia_mapa_km" name="distancia_mapa_km" step="0.001" readonly>
                             </div>
                             <div class="form-group">
@@ -5432,7 +5432,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <input type="number" id="tempo_mapa_min" name="tempo_mapa_min" step="0.1" readonly>
                             </div>
                             <div class="form-group">
-                                <label>Duração (texto)</label>
+                                <label>Dura��o (texto)</label>
                                 <input type="text" id="tempo_mapa_humano" placeholder="Ex: 10 h 44 min" readonly>
                             </div>
                             <div class="form-group">
@@ -5440,23 +5440,23 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <input type="number" id="consumo_l_100km_view" min="0" step="0.01" value="<?= htmlspecialchars($consumoResumo !== '' ? $consumoResumo : '') ?>" placeholder="Ex: 28.00">
                             </div>
                             <div class="form-group">
-                                <label>Consumo Histórico Real (L/100 KM)</label>
+                                <label>Consumo Hist�rico Real (L/100 KM)</label>
                                 <input type="number" id="consumo_historico_real" value="<?= number_format((float) ($analise_consumo_os['consumo_historico_l100'] ?? 0), 2, '.', '') ?>" readonly>
                                 <div class="calc-note">
                                     <?php if((int) ($analise_consumo_os['amostras_historico'] ?? 0) > 0): ?>
-                                        Histórico com <?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?> registo(s)<?= !empty($analise_consumo_os['ultima_data_historico']) ? ' | Último em ' . date('d/m/Y', strtotime((string) $analise_consumo_os['ultima_data_historico'])) : '' ?>
+                                        Hist�rico com <?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?> registo(s)<?= !empty($analise_consumo_os['ultima_data_historico']) ? ' | �ltimo em ' . date('d/m/Y', strtotime((string) $analise_consumo_os['ultima_data_historico'])) : '' ?>
                                     <?php else: ?>
-                                        Sem histórico desta viatura/máquina ainda. O sistema usa o consumo base.
+                                        Sem hist�rico desta viatura/m�quina ainda. O sistema usa o consumo base.
                                     <?php endif; ?>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label>Margem de Segurança (%)</label>
+                                <label>Margem de Seguran�a (%)</label>
                                 <input type="number" id="margem_operacional" min="0" step="0.1" value="8.0">
-                                <div class="calc-note">Reserva extra para trânsito, carga, desvios e paragens.</div>
+                                <div class="calc-note">Reserva extra para tr�nsito, carga, desvios e paragens.</div>
                             </div>
                             <div class="form-group">
-                                <label>Distância Considerada no Cálculo (KM)</label>
+                                <label>Dist�ncia Considerada no C�lculo (KM)</label>
                                 <input type="number" id="distancia_utilizada_preview" step="0.001" readonly>
                             </div>
                             <div class="form-group">
@@ -5484,8 +5484,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                 <button type="button" class="btn-mode" onclick="aplicarLitrosRecomendados()">Aplicar litros recomendados</button>
                             </div>
                             <div class="form-group" style="grid-column: span 2;">
-                                <label>Status do Cálculo</label>
-                                <input type="text" id="map_status" value="Aguardando cálculo" readonly>
+                                <label>Status do C�lculo</label>
+                                <input type="text" id="map_status" value="Aguardando c�lculo" readonly>
                             </div>
                             <div class="form-group" style="grid-column: span 2; justify-content:flex-end;">
                                 <label>&nbsp;</label>
@@ -5502,8 +5502,8 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                             <button type="submit" name="rejeitar_abastecimento" class="btn-save" style="background:#c0392b; margin-left:10px;" onclick="prepararRejeicaoAbastecimento(this.form)">Rejeitar Abastecimento</button>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Motivo da Rejeição (obrigatório para rejeitar)</label>
-                            <textarea name="motivo_rejeicao" rows="2" placeholder="Explique por que a atividade não é viável para esta viatura/máquina..."></textarea>
+                            <label>Motivo da Rejei��o (obrigat�rio para rejeitar)</label>
+                            <textarea name="motivo_rejeicao" rows="2" placeholder="Explique por que a atividade n�o � vi�vel para esta viatura/m�quina..."></textarea>
                         </div>
                     </form>
                 <?php endif; ?>
@@ -5516,12 +5516,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 <div class="inner-nav">
                     <h3 style="text-transform: uppercase;">Frentista - Confirmar Abastecimento</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=frentista&view=tarefas&mode=list" class="btn-mode">Voltar à Lista</a>
+                        <a href="?tab=frentista&view=tarefas&mode=list" class="btn-mode">Voltar � Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
                 <?php if(empty($os_form)): ?>
-                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma OS pendente para confirmação.</div>
+                    <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma OS pendente para confirma��o.</div>
                 <?php else: ?>
                     <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:18px;">
                         <div><strong>OS:</strong> OS-<?= str_pad((string) $os_form['id'], 4, '0', STR_PAD_LEFT) ?></div>
@@ -5530,21 +5530,21 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         <div><strong>Status:</strong> <?= htmlspecialchars($os_form['status'] ?? '-') ?></div>
                         <div><strong>Origem:</strong> <?= htmlspecialchars((string) ($comb_form['origem_mapa'] ?? $os_form['local_saida'] ?? '-')) ?></div>
                         <div><strong>Destino:</strong> <?= htmlspecialchars((string) ($comb_form['destino_mapa'] ?? $os_form['destino'] ?? '-')) ?></div>
-                        <div><strong>Distância (KM):</strong> <?= htmlspecialchars((string) ($comb_form['distancia_mapa_km'] ?? $os_form['distancia_km'] ?? '-')) ?></div>
+                        <div><strong>Dist�ncia (KM):</strong> <?= htmlspecialchars((string) ($comb_form['distancia_mapa_km'] ?? $os_form['distancia_km'] ?? '-')) ?></div>
                         <div><strong>Tempo (Min):</strong> <?= htmlspecialchars((string) ($comb_form['tempo_mapa_min'] ?? '-')) ?></div>
                         <div><strong>Litros recomendados:</strong> <?= htmlspecialchars((string) ($comb_form['litros_recomendados'] ?? '-')) ?></div>
                         <div><strong>Litros abastecidos:</strong> <?= htmlspecialchars((string) ($comb_form['litros_abastecidos'] ?? '-')) ?></div>
                     </div>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
-                        <div class="section-title">Confirmação do Frentista</div>
+                        <div class="section-title">Confirma��o do Frentista</div>
                         <div class="form-group">
                             <label>Nome do Frentista</label>
                             <input type="text" name="frentista_nome" required>
                         </div>
                         <div class="form-group" style="grid-column: span 3;">
-                            <label>Observação (Opcional)</label>
-                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem divergências">
+                            <label>Observa��o (Opcional)</label>
+                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem diverg�ncias">
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                             <button type="submit" name="confirmar_abastecimento_frentista" class="btn-save" style="background:var(--success);">Confirmar e Encerrar Fluxo</button>
@@ -5906,13 +5906,13 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             const min = parseTempoHumanoParaMin(tempoHumanoEl.value);
             if(Number.isNaN(min) || min <= 0){
                 if(statusEl && tempoHumanoEl.value.trim() !== ''){
-                    statusEl.value = 'Formato de duração inválido. Use: 10 h 44 min, 10:44 ou minutos.';
+                    statusEl.value = 'Formato de dura��o inv�lido. Use: 10 h 44 min, 10:44 ou minutos.';
                 }
                 return;
             }
             tempoEl.value = min.toFixed(1);
             if(statusEl){
-                statusEl.value = `Duração manual aplicada: ${formatarMinutosHumanizado(min)} (${tempoEl.value} min)`;
+                statusEl.value = `Dura��o manual aplicada: ${formatarMinutosHumanizado(min)} (${tempoEl.value} min)`;
             }
             atualizarLitrosRecomendados();
         }
@@ -6110,7 +6110,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
 
         function estimarTempoMinPorDistancia(km){
             if(Number.isNaN(km) || km <= 0) return NaN;
-            // Média urbana prática para trajetos curtos quando o provedor não devolve duração
+            // M�dia urbana pr�tica para trajetos curtos quando o provedor n�o devolve dura��o
             const velocidadeMediaKmH = 30;
             return (km / velocidadeMediaKmH) * 60;
         }
@@ -6182,7 +6182,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             const isOpen = body.style.display === 'grid';
             const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : !isOpen;
             body.style.display = nextOpen ? 'grid' : 'none';
-            btn.innerHTML = nextOpen ? '<strong>-</strong> Distância Inteligente (Mapa)' : '<strong>+</strong> Distância Inteligente (Mapa)';
+            btn.innerHTML = nextOpen ? '<strong>-</strong> Dist�ncia Inteligente (Mapa)' : '<strong>+</strong> Dist�ncia Inteligente (Mapa)';
         }
 
         async function calcularDistanciaMapa(){
@@ -6205,7 +6205,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 const params = new URLSearchParams({ ajax: 'distance', origem, destino });
                 const resp = await fetch(`?${params.toString()}`);
                 const data = await resp.json();
-                if(!data.ok) throw new Error(data.error || 'Falha no cálculo');
+                if(!data.ok) throw new Error(data.error || 'Falha no c�lculo');
 
                 distEl.value = Number(data.km).toFixed(3);
                 if(tempoEl){
@@ -6215,9 +6215,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 }
                 sincronizarTempoMinParaHumano();
                 const motor = data.provider === 'google' ? 'Google Maps' : 'OSRM';
-                const extra = data.fallback ? ' (fallback automático)' : '';
+                const extra = data.fallback ? ' (fallback autom�tico)' : '';
                 const tempoTxt = tempoEl && tempoEl.value ? ` | ${formatarMinutosHumanizado(tempoEl.value)} (${tempoEl.value} min)` : '';
-                statusEl.value = `Distância calculada com sucesso - ${motor}${extra}${tempoTxt}`;
+                statusEl.value = `Dist�ncia calculada com sucesso - ${motor}${extra}${tempoTxt}`;
                 if(data.provider === 'osrm' && data.origem_match && data.destino_match){
                     statusEl.value += ` | ${data.origem_match} -> ${data.destino_match}`;
                 }
@@ -6357,7 +6357,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                         guardarLocaisAutomaticamente();
                     }
                 } catch(e){
-                    // sem bloquear o fluxo do formulário
+                    // sem bloquear o fluxo do formul�rio
                 }
             });
         }
@@ -6394,12 +6394,12 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 if(!dataPartidaReservaEl || !urgenciaAutoReservaEl) return;
                 const raw = String(dataPartidaReservaEl.value || '').trim();
                 if(raw === '') {
-                    urgenciaAutoReservaEl.value = 'Será calculada pelo sistema';
+                    urgenciaAutoReservaEl.value = 'Ser� calculada pelo sistema';
                     return;
                 }
                 const partida = new Date(raw);
                 if(Number.isNaN(partida.getTime())) {
-                    urgenciaAutoReservaEl.value = 'Data inválida';
+                    urgenciaAutoReservaEl.value = 'Data inv�lida';
                     return;
                 }
 
@@ -6415,7 +6415,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     let total = 0;
                     const cursor = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate(), 0, 0, 0, 0);
                     while(cursor <= fim){
-                        const dow = cursor.getDay(); // 0=Dom ... 6=Sáb
+                        const dow = cursor.getDay(); // 0=Dom ... 6=S�b
                         if(dow !== 0){
                             const inicioJ = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), 7, 0, 0, 0);
                             const fimJ = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), dow === 6 ? 12 : 16, 0, 0, 0);
@@ -6429,17 +6429,17 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                 };
 
                 const horasUteis = horasUteisEntre(agora, partida);
-                let nivel = 'Média';
+                let nivel = 'M�dia';
                 if(horasUteis <= 4) nivel = 'Urgente';
                 else if(horasUteis <= 8) nivel = 'Alta';
-                else if(horasUteis <= 16) nivel = 'Média';
+                else if(horasUteis <= 16) nivel = 'M�dia';
                 else nivel = 'Baixa';
                 let acao = 'Programar em janela do dia';
                 if(nivel === 'Urgente') acao = 'Atribuir viatura imediatamente';
-                else if(nivel === 'Alta') acao = 'Priorizar atribuição hoje';
-                else if(nivel === 'Baixa') acao = 'Pode planear com antecedência';
+                else if(nivel === 'Alta') acao = 'Priorizar atribui��o hoje';
+                else if(nivel === 'Baixa') acao = 'Pode planear com anteced�ncia';
 
-                urgenciaAutoReservaEl.value = `${nivel} (${horasUteis.toFixed(1)} h úteis | ${horasCorridas.toFixed(1)} h corridas) - ${acao}`;
+                urgenciaAutoReservaEl.value = `${nivel} (${horasUteis.toFixed(1)} h �teis | ${horasCorridas.toFixed(1)} h corridas) - ${acao}`;
             };
             if(dataPartidaReservaEl) {
                 dataPartidaReservaEl.addEventListener('input', atualizarUrgenciaAutoReserva);
@@ -6486,7 +6486,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
             atualizarCustoRequisicao();
             guardarLocaisAutomaticamente();
         });
-        // aÃ§Ãµes existentes (mantidas)
+        // a��es existentes (mantidas)
         function aprovarPedido(id){ if(confirm('Tem certeza que deseja aprovar este pedido?')) window.location.href = `aprovar_pedido.php?id=${id}`; }
         function rejeitarPedido(id){ const justificativa = prompt('Justificativa para rejeitar:'); if(justificativa) window.location.href = `rejeitar_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
         function pendentePedido(id){ const justificativa = prompt('Justificativa para pendente:'); if(justificativa) window.location.href = `pendente_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }

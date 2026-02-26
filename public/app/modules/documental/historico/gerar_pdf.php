@@ -52,6 +52,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
         .pdf-brand h1 { margin: 0; font-size: 18px; color: #111111; letter-spacing: 0.4px; }
         .pdf-meta { text-align: right; font-size: 11px; color: #333333; }
         .pdf-meta strong { display: block; color: #111111; margin-bottom: 4px; }
+        .pdf-cert img { width: 54px; height: auto; object-fit: contain; margin-left: 10px; }
         h2 { margin: 0 0 10px 0; color: #111111; font-size: 14px; text-transform: uppercase; }
         table { width: 100%; border-collapse: collapse; }
         thead th {
@@ -83,9 +84,12 @@ $titulo = 'DOCUMENTAL HISTORICO';
                     <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon">
                     <h1>VILCON</h1>
                 </div>
-                <div class="pdf-meta">
-                    <strong><?= htmlspecialchars($titulo) ?></strong>
-                    <span>Emitido em: <?= htmlspecialchars(date('d/m/Y H:i')) ?></span>
+                <div style="display:flex; align-items:center;">
+                    <div class="pdf-meta">
+                        <strong><?= htmlspecialchars($titulo) ?></strong>
+                        <span>Emitido em: <?= htmlspecialchars(date('d/m/Y H:i')) ?></span>
+                    </div>
+                    <div class="pdf-cert"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
                 </div>
             </div>
         </div>

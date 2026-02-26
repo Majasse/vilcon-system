@@ -17,12 +17,7 @@ $mode = $_GET['mode'] ?? 'list';
 $q = isset($_GET['q']) ? trim($_GET['q']) : '';
 $filtro = $_GET['filtro'] ?? 'todos';
 
-$registos_demo = [
-    ['data' => '2026-02-14', 'hora' => '07:32', 'viatura' => 'ABC-123-MP', 'motorista' => 'Joao Pedro', 'destino' => 'Obra X', 'status' => 'Autorizada'],
-    ['data' => '2026-02-14', 'hora' => '09:05', 'viatura' => 'ADF-778-MC', 'motorista' => 'Carlos Mateus', 'destino' => 'Oficina', 'status' => 'Pendente'],
-    ['data' => '2026-02-13', 'hora' => '17:48', 'viatura' => 'AXZ-541-MP', 'motorista' => 'Marta Cossa', 'destino' => 'Armazem Central', 'status' => 'Bloqueada'],
-    ['data' => '2026-02-13', 'hora' => '06:55', 'viatura' => 'AHG-992-MP', 'motorista' => 'Andreia Silva', 'destino' => 'Projeto Norte', 'status' => 'Autorizada'],
-];
+$registos_demo = [];
 
 $filtros_por_view = [
     'saidas' => [
@@ -189,17 +184,23 @@ $filtros_por_view = [
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($filtrados as $item): ?>
-                            <?php $status = strtolower($item['status']); ?>
+                        <?php if (count($filtrados) === 0): ?>
                             <tr>
-                                <td><?= htmlspecialchars($item['data']) ?></td>
-                                <td><?= htmlspecialchars($item['hora']) ?></td>
-                                <td><?= htmlspecialchars($item['viatura']) ?></td>
-                                <td><?= htmlspecialchars($item['motorista']) ?></td>
-                                <td><?= htmlspecialchars($item['destino']) ?></td>
-                                <td><span class="badge <?= htmlspecialchars($status) ?>"><?= htmlspecialchars($item['status']) ?></span></td>
+                                <td colspan="6" class="muted" style="text-align:center;">Sem registos para mostrar.</td>
                             </tr>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <?php foreach ($filtrados as $item): ?>
+                                <?php $status = strtolower($item['status']); ?>
+                                <tr>
+                                    <td><?= htmlspecialchars($item['data']) ?></td>
+                                    <td><?= htmlspecialchars($item['hora']) ?></td>
+                                    <td><?= htmlspecialchars($item['viatura']) ?></td>
+                                    <td><?= htmlspecialchars($item['motorista']) ?></td>
+                                    <td><?= htmlspecialchars($item['destino']) ?></td>
+                                    <td><span class="badge <?= htmlspecialchars($status) ?>"><?= htmlspecialchars($item['status']) ?></span></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             <?php elseif ($mode === 'form' && $view === 'saidas'): ?>

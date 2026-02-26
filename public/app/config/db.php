@@ -1,4 +1,7 @@
 <?php
+require_once dirname(__DIR__) . '/includes/mojibake_fix.php';
+vilcon_bootstrap_mojibake_fix();
+
 $host = 'localhost';
 $db = 'vilcon_vrp';
 $user = 'root';

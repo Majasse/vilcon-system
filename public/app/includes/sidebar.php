@@ -1,10 +1,15 @@
-﻿<?php
+<?php
 $pagina_atual = $_SERVER['PHP_SELF'];
 require_once dirname(__DIR__) . '/core/access_control.php';
 $perfilAtual = (string)($_SESSION['usuario_perfil'] ?? '');
 $acessos = modulosPorPerfil($perfilAtual);
 $tabAtual = trim((string)($_GET['tab'] ?? ''));
 $viewAtual = trim((string)($_GET['view'] ?? ''));
+$appActionFeedback = null;
+if (isset($_SESSION['app_action_feedback']) && is_array($_SESSION['app_action_feedback'])) {
+    $appActionFeedback = $_SESSION['app_action_feedback'];
+    unset($_SESSION['app_action_feedback']);
+}
 ?>
 
 <div class="sidebar">
@@ -57,8 +62,8 @@ $viewAtual = trim((string)($_GET['view'] ?? ''));
                    class="nav-link sub <?= (strpos($pagina_atual, '/transporte/') !== false && $tabAtual === 'gestao_frota') ? 'active' : '' ?>">
                     <i class="fa-solid fa-truck"></i> Gestão de Frota
                 </a>
-                <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=aluguer_equipamentos"
-                   class="nav-link sub <?= (strpos($pagina_atual, '/transporte/') !== false && $tabAtual === 'aluguer_equipamentos') ? 'active' : '' ?>">
+                <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=aluguer&view=modulo&mode=list"
+                   class="nav-link sub <?= (strpos($pagina_atual, '/transporte/') !== false && ($tabAtual === 'aluguer_equipamentos' || $tabAtual === 'aluguer')) ? 'active' : '' ?>">
                     <i class="fa-solid fa-warehouse"></i> Aluguer de Equipamentos
                 </a>
                 <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=frentista"
@@ -117,6 +122,16 @@ $viewAtual = trim((string)($_GET['view'] ?? ''));
 </a>
 
 
+</div>
+<div class="app-action-feedback-overlay" id="appActionFeedbackOverlay" aria-hidden="true">
+    <div class="app-action-feedback-card">
+        <div class="app-action-feedback-icon" id="appActionFeedbackIcon"></div>
+        <h4 class="app-action-feedback-title" id="appActionFeedbackTitle">Sucesso</h4>
+        <p class="app-action-feedback-text" id="appActionFeedbackText"></p>
+        <div class="app-action-feedback-actions" id="appActionFeedbackActions">
+            <button type="button" class="app-action-feedback-btn" id="appActionFeedbackClose">Fechar</button>
+        </div>
+    </div>
 </div>
 <style>
 /* ===== SIDEBAR BASE ===== */
@@ -245,4 +260,138 @@ $viewAtual = trim((string)($_GET['view'] ?? ''));
     background: #e74c3c;
     transform: scale(1.02);
 }
+
+/* ===== GLOBAL ACTION FEEDBACK ===== */
+.app-action-feedback-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.48);
+    z-index: 2500;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+.app-action-feedback-overlay.open { display: flex; }
+.app-action-feedback-card {
+    width: min(420px, 95vw);
+    border-radius: 14px;
+    border: 1px solid #dbe2ea;
+    background: #fff;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.28);
+    padding: 20px 18px;
+    text-align: center;
+}
+.app-action-feedback-icon {
+    width: 126px;
+    height: 126px;
+    margin: 0 auto 14px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 58px;
+    font-weight: 800;
+    color: #fff;
+    transform: scale(0.82);
+    opacity: 0;
+    animation: appFeedbackPop .36s ease forwards;
+}
+.app-action-feedback-icon.success {
+    background: #22c55e;
+    box-shadow: 0 0 0 10px rgba(34, 197, 94, 0.12);
+}
+.app-action-feedback-icon.error {
+    background: #ef4444;
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0.12);
+}
+.app-action-feedback-title {
+    margin: 0 0 6px 0;
+    font-size: 19px;
+    font-weight: 800;
+    color: #0f172a;
+}
+.app-action-feedback-text {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}
+.app-action-feedback-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: center;
+}
+.app-action-feedback-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    background: #0f172a;
+    cursor: pointer;
+}
+@keyframes appFeedbackPop {
+    from { transform: scale(0.82); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
 </style>
+<script>
+;(function() {
+    var overlay = document.getElementById('appActionFeedbackOverlay');
+    var icon = document.getElementById('appActionFeedbackIcon');
+    var title = document.getElementById('appActionFeedbackTitle');
+    var text = document.getElementById('appActionFeedbackText');
+    var actions = document.getElementById('appActionFeedbackActions');
+    var closeBtn = document.getElementById('appActionFeedbackClose');
+    if (!overlay || !icon || !title || !text || !actions || !closeBtn) return;
+
+    function closeOverlay() {
+        overlay.classList.remove('open');
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function showFeedback(opts) {
+        opts = opts || {};
+        var type = String(opts.type || 'success').toLowerCase() === 'error' ? 'error' : 'success';
+        var ttl = String(opts.title || (type === 'success' ? 'Operacao concluida' : 'Falha na operacao'));
+        var msg = String(opts.message || '');
+        var autoCloseMs = Number(opts.autoCloseMs || 0);
+        var redirectUrl = String(opts.redirectUrl || '');
+
+        icon.className = 'app-action-feedback-icon ' + type;
+        icon.innerHTML = type === 'success' ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-xmark"></i>';
+        title.textContent = ttl;
+        text.textContent = msg;
+        actions.style.display = autoCloseMs > 0 ? 'none' : 'flex';
+
+        overlay.classList.add('open');
+        overlay.setAttribute('aria-hidden', 'false');
+
+        if (autoCloseMs > 0) {
+            window.setTimeout(function() {
+                closeOverlay();
+                if (redirectUrl) window.location.href = redirectUrl;
+            }, autoCloseMs);
+        }
+    }
+
+    closeBtn.addEventListener('click', closeOverlay);
+    overlay.addEventListener('click', function(ev) {
+        if (ev.target === overlay) closeOverlay();
+    });
+
+    window.vilconActionFeedback = { show: showFeedback, close: closeOverlay };
+
+    var initial = <?= json_encode($appActionFeedback ?? null, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    if (initial && typeof initial === 'object') {
+        showFeedback({
+            type: initial.type || 'success',
+            title: initial.title || '',
+            message: initial.message || '',
+            autoCloseMs: initial.auto_close_ms || 0,
+            redirectUrl: initial.redirect || ''
+        });
+    }
+})();
+</script>

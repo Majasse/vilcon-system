@@ -1,5 +1,6 @@
 (function () {
     var loader = null;
+    var submitGuardAttr = 'data-loader-submitting';
 
     function getLoader() {
         if (loader && document.body.contains(loader)) {
@@ -42,7 +43,27 @@
         }
 
         var destination = new URL(anchor.href, window.location.href);
+        if (destination.hash && destination.pathname === window.location.pathname && destination.search === window.location.search) {
+            return false;
+        }
         return destination.href !== window.location.href;
+    }
+
+    function shouldHandleFormSubmit(form, event) {
+        if (!form || event.defaultPrevented) {
+            return false;
+        }
+        if (form.getAttribute('data-loader-skip') === '1') {
+            return false;
+        }
+        if (form.getAttribute(submitGuardAttr) === '1') {
+            return false;
+        }
+        var target = (form.getAttribute('target') || '').toLowerCase();
+        if (target === '_blank') {
+            return false;
+        }
+        return true;
     }
 
     window.VilconLoader = {
@@ -53,16 +74,36 @@
     document.addEventListener('DOMContentLoaded', function () {
         hideLoader();
 
-        document.addEventListener('submit', function () {
+        document.addEventListener('submit', function (event) {
+            var form = event.target;
+            if (!shouldHandleFormSubmit(form, event)) {
+                return;
+            }
+            event.preventDefault();
             showLoader();
-        }, true);
+            form.setAttribute(submitGuardAttr, '1');
+            window.requestAnimationFrame(function () {
+                window.setTimeout(function () {
+                    if (typeof form.submit === 'function') {
+                        form.submit();
+                    }
+                }, 20);
+            });
+        });
 
         document.addEventListener('click', function (event) {
             var anchor = event.target.closest('a');
             if (shouldHandleLink(anchor, event)) {
+                event.preventDefault();
                 showLoader();
+                var href = anchor.href;
+                window.requestAnimationFrame(function () {
+                    window.setTimeout(function () {
+                        window.location.href = href;
+                    }, 20);
+                });
             }
-        }, true);
+        });
     });
 
     window.addEventListener('beforeunload', function () {

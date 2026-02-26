@@ -59,7 +59,6 @@ if (isset($_SESSION['usuario_perfil'])) {
     </style>
 </head>
 <body>
-<?php renderUserProfileWidget(); ?>
 <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
     <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
         <span></span><span></span><span></span><span></span><span></span><span></span>

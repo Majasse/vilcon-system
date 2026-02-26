@@ -320,7 +320,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
             <a class="tab <?= $view === 'relatorios' ? 'active' : '' ?>" href="?view=relatorios">Relatorios</a>
         </div>
 
-        <div class="card">
+        <?php if ($view === 'projetos'): ?>
             <?php
                 if (isset($views[$view])) {
                     include __DIR__ . '/' . $views[$view];
@@ -328,7 +328,17 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                     echo '<p>Vista invalida.</p>';
                 }
             ?>
-        </div>
+        <?php else: ?>
+            <div class="card">
+                <?php
+                    if (isset($views[$view])) {
+                        include __DIR__ . '/' . $views[$view];
+                    } else {
+                        echo '<p>Vista invalida.</p>';
+                    }
+                ?>
+            </div>
+        <?php endif; ?>
 
         <script>
         function checkNovo(selectEl, inputId) {
@@ -469,6 +479,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
             var janela = window.open('', '_blank');
             if (!janela) return;
             var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
+            var certUrl = window.location.origin + '/vilcon-systemon/public/assets/img/innocertificate.png';
             var dataAtual = new Date().toLocaleString('pt-PT');
             var tabelaHtml = tabelaPdfSemAcoes(tabela);
             var html = `
@@ -488,6 +499,7 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                         .pdf-brand h1 { margin: 0; font-size: 18px; color: #111111; letter-spacing: 0.4px; }
                         .pdf-meta { text-align: right; font-size: 11px; color: #333333; }
                         .pdf-meta strong { display: block; color: #111111; margin-bottom: 4px; }
+                        .pdf-cert img { width: 54px; height: auto; object-fit: contain; margin-left: 10px; }
                         h2 { margin: 0 0 10px 0; color: #111111; font-size: 14px; text-transform: uppercase; }
                         table { width: 100%; border-collapse: collapse; }
                         thead th {
@@ -512,9 +524,12 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
                                     <img src="${logoUrl}" alt="Vilcon">
                                     <h1>VILCON</h1>
                                 </div>
-                                <div class="pdf-meta">
-                                    <strong>${titulo}</strong>
-                                    <span>Emitido em: ${dataAtual}</span>
+                                <div style="display:flex; align-items:center;">
+                                    <div class="pdf-meta">
+                                        <strong>${titulo}</strong>
+                                        <span>Emitido em: ${dataAtual}</span>
+                                    </div>
+                                    <div class="pdf-cert"><img src="${certUrl}" alt="INNO Certificate"></div>
                                 </div>
                             </div>
                         </div>

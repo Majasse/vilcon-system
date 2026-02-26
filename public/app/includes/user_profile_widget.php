@@ -42,6 +42,149 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
         }
     }
 
+    function vilconEnsureNotificationsTable(PDO $pdo): void {
+        static $ready = false;
+        if ($ready) {
+            return;
+        }
+        try {
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS usuarios_notificacoes (
+                    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    usuario_id INT NOT NULL,
+                    titulo VARCHAR(160) NOT NULL,
+                    mensagem TEXT NOT NULL,
+                    tipo VARCHAR(20) NOT NULL DEFAULT 'info',
+                    link VARCHAR(255) NULL,
+                    lida_em DATETIME NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_notif_usuario (usuario_id),
+                    INDEX idx_notif_usuario_lida (usuario_id, lida_em),
+                    INDEX idx_notif_data (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $ready = true;
+        } catch (Throwable $e) {
+            // Nao interromper telas por causa de alteracao estrutural.
+        }
+    }
+
+    function vilconFetchUserNotifications(PDO $pdo, int $uid, int $limit = 12): array {
+        if ($uid <= 0) {
+            return ['unread_count' => 0, 'items' => []];
+        }
+        vilconEnsureNotificationsTable($pdo);
+        $limit = max(1, min(30, $limit));
+        try {
+            $stCount = $pdo->prepare("SELECT COUNT(*) FROM usuarios_notificacoes WHERE usuario_id = :uid AND lida_em IS NULL");
+            $stCount->execute(['uid' => $uid]);
+            $unread = (int)$stCount->fetchColumn();
+
+            $stList = $pdo->prepare("
+                SELECT id, titulo, mensagem, tipo, link, lida_em, created_at
+                FROM usuarios_notificacoes
+                WHERE usuario_id = :uid
+                ORDER BY id DESC
+                LIMIT {$limit}
+            ");
+            $stList->execute(['uid' => $uid]);
+            $items = $stList->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            return ['unread_count' => $unread, 'items' => $items];
+        } catch (Throwable $e) {
+            return ['unread_count' => 0, 'items' => []];
+        }
+    }
+
+    function vilconMarkNotificationsAsRead(PDO $pdo, int $uid): void {
+        if ($uid <= 0) {
+            return;
+        }
+        vilconEnsureNotificationsTable($pdo);
+        try {
+            $st = $pdo->prepare("UPDATE usuarios_notificacoes SET lida_em = NOW() WHERE usuario_id = :uid AND lida_em IS NULL");
+            $st->execute(['uid' => $uid]);
+        } catch (Throwable $e) {
+            // Ignorar.
+        }
+    }
+
+    function vilconCreateUserNotification(int $usuarioId, string $titulo, string $mensagem, string $tipo = 'info', string $link = ''): bool {
+        $pdo = vilconProfileWidgetPdo();
+        if ($pdo === null || $usuarioId <= 0) {
+            return false;
+        }
+        vilconEnsureNotificationsTable($pdo);
+        $tiposPermitidos = ['info', 'success', 'warning', 'error'];
+        $tipo = strtolower(trim($tipo));
+        if (!in_array($tipo, $tiposPermitidos, true)) {
+            $tipo = 'info';
+        }
+        try {
+            $st = $pdo->prepare("
+                INSERT INTO usuarios_notificacoes (usuario_id, titulo, mensagem, tipo, link, created_at)
+                VALUES (:uid, :titulo, :mensagem, :tipo, :link, NOW())
+            ");
+            return $st->execute([
+                'uid' => $usuarioId,
+                'titulo' => trim($titulo) !== '' ? trim($titulo) : 'Notificacao',
+                'mensagem' => trim($mensagem) !== '' ? trim($mensagem) : 'Sem detalhes.',
+                'tipo' => $tipo,
+                'link' => trim($link),
+            ]);
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
+    function vilconCreateNotificationForAllUsers(string $titulo, string $mensagem, string $tipo = 'info', string $link = ''): int {
+        $pdo = vilconProfileWidgetPdo();
+        if ($pdo === null) {
+            return 0;
+        }
+        vilconEnsureNotificationsTable($pdo);
+        try {
+            $usuarios = $pdo->query("SELECT id FROM usuarios")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $total = 0;
+            foreach ($usuarios as $uid) {
+                if (vilconCreateUserNotification((int)$uid, $titulo, $mensagem, $tipo, $link)) {
+                    $total++;
+                }
+            }
+            return $total;
+        } catch (Throwable $e) {
+            return 0;
+        }
+    }
+
+    function vilconHandleNotificationsApi(): void {
+        if ((string)($_GET['__user_notifications_api'] ?? '') !== '1') {
+            return;
+        }
+
+        header('Content-Type: application/json; charset=utf-8');
+        $uid = (int)($_SESSION['usuario_id'] ?? 0);
+        $pdo = vilconProfileWidgetPdo();
+        if ($uid <= 0 || $pdo === null) {
+            echo json_encode(['ok' => false, 'unread_count' => 0, 'items' => []], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        if ((string)($_GET['mark_read'] ?? '') === '1') {
+            vilconMarkNotificationsAsRead($pdo, $uid);
+        }
+
+        $payload = vilconFetchUserNotifications($pdo, $uid, 15);
+        echo json_encode(
+            [
+                'ok' => true,
+                'unread_count' => (int)($payload['unread_count'] ?? 0),
+                'items' => $payload['items'] ?? [],
+            ],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+        exit;
+    }
+
     function vilconCurrentPageUrl(): string {
         $script = (string)($_SERVER['SCRIPT_NAME'] ?? '');
         $query = [];
@@ -222,6 +365,7 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
         exit;
     }
 
+    vilconHandleNotificationsApi();
     vilconHandleProfileSubmit();
 
     function renderUserProfileWidget(): void {
@@ -237,6 +381,12 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
             $a = strtoupper(substr((string)($p[0] ?? 'U'), 0, 1));
             $b = strtoupper(substr((string)($p[count($p) - 1] ?? 'S'), 0, 1));
             $iniciais = $a . $b;
+        }
+        $notificacoesIniciais = ['unread_count' => 0, 'items' => []];
+        $pdo = vilconProfileWidgetPdo();
+        $uid = (int)($u['id'] ?? 0);
+        if ($pdo !== null && $uid > 0) {
+            $notificacoesIniciais = vilconFetchUserNotifications($pdo, $uid, 15);
         }
         ?>
         <style>
@@ -270,21 +420,162 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
                 gap: 7px;
                 background: #ffffff;
             }
+            .user-bell-btn,
+            .user-notif-fab {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #0f172a;
+                width: 32px;
+                height: 32px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                position: relative;
+                box-shadow: 0 3px 10px rgba(15, 23, 42, 0.12);
+            }
+            .user-bell-btn i,
+            .user-notif-fab i { font-size: 13px; }
+            .user-notif-fab {
+                position: fixed;
+                top: 16px;
+                right: 62px;
+                z-index: 2000;
+                display: none;
+            }
+            .user-notif-fab.show { display: inline-flex; }
+            .user-notif-badge {
+                position: absolute;
+                top: -5px;
+                right: -5px;
+                min-width: 18px;
+                height: 18px;
+                padding: 0 5px;
+                border-radius: 999px;
+                background: #dc2626;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 700;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border: 2px solid #ffffff;
+            }
+            .user-notif-badge.hidden { display: none; }
+            .user-notif-panel {
+                position: fixed;
+                width: min(360px, calc(100vw - 16px));
+                max-height: 450px;
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                background: #ffffff;
+                box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+                z-index: 2200;
+                display: none;
+                overflow: hidden;
+            }
+            .user-notif-panel.open { display: block; }
+            .user-notif-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 12px;
+                border-bottom: 1px solid #e5e7eb;
+                background: #f8fafc;
+            }
+            .user-notif-head h5 {
+                margin: 0;
+                font-size: 12px;
+                text-transform: uppercase;
+                color: #0f172a;
+            }
+            .user-notif-read {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #334155;
+                border-radius: 8px;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 5px 7px;
+                cursor: pointer;
+            }
+            .user-notif-list {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                overflow-y: auto;
+                max-height: 390px;
+            }
+            .user-notif-empty {
+                padding: 14px 12px;
+                font-size: 12px;
+                color: #64748b;
+            }
+            .user-notif-item {
+                padding: 10px 12px;
+                border-bottom: 1px solid #eef2f7;
+                display: grid;
+                gap: 4px;
+            }
+            .user-notif-item.unread { background: #f8fbff; }
+            .user-notif-title {
+                font-size: 12px;
+                font-weight: 800;
+                color: #0f172a;
+            }
+            .user-notif-msg {
+                font-size: 12px;
+                color: #334155;
+                line-height: 1.35;
+            }
+            .user-notif-meta {
+                font-size: 10px;
+                color: #64748b;
+                display: flex;
+                justify-content: space-between;
+            }
+            .user-notif-toast-wrap {
+                position: fixed;
+                right: 12px;
+                bottom: 12px;
+                z-index: 2300;
+                display: grid;
+                gap: 8px;
+            }
+            .user-notif-toast {
+                background: #111827;
+                color: #ffffff;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 12px;
+                box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+            }
             .user-profile-overlay {
                 position: fixed;
                 inset: 0;
                 background: rgba(0, 0, 0, 0.45);
                 z-index: 2100;
                 display: none;
+                overflow-y: auto;
             }
-            .user-profile-overlay.open { display: block; }
+            .user-profile-overlay.open {
+                display: block;
+            }
             .user-profile-modal {
+                position: fixed;
+                top: 10px;
+                left: 50%;
+                transform: translateX(-50%);
                 max-width: 760px;
-                margin: 40px auto;
+                width: min(760px, 100%);
+                margin: 0;
+                max-height: calc(100vh - 20px);
+                overflow-y: auto;
                 background: #ffffff;
                 border: 1px solid #e5e7eb;
                 border-radius: 12px;
-                overflow: hidden;
                 box-shadow: 0 18px 40px rgba(15, 23, 42, 0.24);
             }
             .user-profile-head {
@@ -371,7 +662,15 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
             .user-flash.error { background: #fee2e2; border-color: #fecaca; color: #991b1b; }
             @media (max-width: 900px) {
                 .user-profile-fab { top: 10px; right: 10px; }
-                .user-profile-modal { margin: 10px; }
+                .user-notif-fab { top: 10px; right: 54px; }
+                .user-profile-modal {
+                    top: 6px;
+                    left: 6px;
+                    right: 6px;
+                    transform: none;
+                    width: auto;
+                    max-height: calc(100vh - 12px);
+                }
                 .user-profile-body { grid-template-columns: 1fr; }
                 .user-form .row { grid-template-columns: 1fr; }
             }
@@ -380,6 +679,22 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
         <button type="button" class="user-profile-fab" id="globalUserFab" title="Perfil">
             <i class="fa-regular fa-user"></i>
         </button>
+
+        <button type="button" class="user-notif-fab" id="globalUserNotifFab" title="Notificacoes">
+            <i class="fa-regular fa-bell"></i>
+            <span class="user-notif-badge <?= ((int)($notificacoesIniciais['unread_count'] ?? 0) > 0) ? '' : 'hidden' ?>" id="globalNotifBadge"><?= (int)($notificacoesIniciais['unread_count'] ?? 0) ?></span>
+        </button>
+
+        <div class="user-notif-panel" id="userNotifPanel" aria-hidden="true">
+            <div class="user-notif-head">
+                <h5>Notificacoes</h5>
+                <button type="button" class="user-notif-read" id="userNotifReadAll">Marcar lidas</button>
+            </div>
+            <ul class="user-notif-list" id="userNotifList"></ul>
+            <div class="user-notif-empty" id="userNotifEmpty">Sem notificacoes para mostrar.</div>
+        </div>
+
+        <div class="user-notif-toast-wrap" id="userNotifToastWrap"></div>
 
         <div class="user-profile-overlay" id="userProfileOverlay" aria-hidden="true">
             <div class="user-profile-modal" role="dialog" aria-modal="true" aria-label="Perfil do utilizador">
@@ -473,10 +788,22 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
         (function() {
             var overlay = document.getElementById('userProfileOverlay');
             var fab = document.getElementById('globalUserFab');
+            var notifFab = document.getElementById('globalUserNotifFab');
+            var globalNotifBadge = document.getElementById('globalNotifBadge');
+            var notifPanel = document.getElementById('userNotifPanel');
+            var notifListEl = document.getElementById('userNotifList');
+            var notifEmptyEl = document.getElementById('userNotifEmpty');
+            var notifReadAllBtn = document.getElementById('userNotifReadAll');
+            var notifToastWrap = document.getElementById('userNotifToastWrap');
             var closeBtn = document.getElementById('userProfileClose');
-            if (!overlay || !fab || !closeBtn) return;
+            var notificationButtons = [];
+            var lastUnreadCount = 0;
+            var firstFetchDone = false;
+            var initialPayload = <?= json_encode($notificacoesIniciais, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+            if (!overlay || !fab || !closeBtn || !notifFab || !notifPanel || !notifListEl || !notifEmptyEl || !notifReadAllBtn || !notifToastWrap || !globalNotifBadge) return;
 
             function openModal() {
+                closeNotifPanel();
                 overlay.classList.add('open');
                 overlay.setAttribute('aria-hidden', 'false');
             }
@@ -486,22 +813,200 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
                 overlay.setAttribute('aria-hidden', 'true');
             }
 
+            function escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            function formatDateIso(value) {
+                if (!value) return '';
+                var d = new Date(value.replace(' ', 'T'));
+                if (Number.isNaN(d.getTime())) return value;
+                var day = String(d.getDate()).padStart(2, '0');
+                var month = String(d.getMonth() + 1).padStart(2, '0');
+                var year = d.getFullYear();
+                var hh = String(d.getHours()).padStart(2, '0');
+                var mm = String(d.getMinutes()).padStart(2, '0');
+                return day + '/' + month + '/' + year + ' ' + hh + ':' + mm;
+            }
+
+            function setUnreadBadge(count) {
+                var value = parseInt(count || 0, 10);
+                if (Number.isNaN(value) || value < 0) value = 0;
+                var text = value > 99 ? '99+' : String(value);
+                if (value > 0) {
+                    globalNotifBadge.textContent = text;
+                    globalNotifBadge.classList.remove('hidden');
+                } else {
+                    globalNotifBadge.textContent = '0';
+                    globalNotifBadge.classList.add('hidden');
+                }
+
+                notificationButtons.forEach(function(btn) {
+                    var b = btn.querySelector('.user-notif-badge');
+                    if (!b) return;
+                    if (value > 0) {
+                        b.textContent = text;
+                        b.classList.remove('hidden');
+                    } else {
+                        b.textContent = '0';
+                        b.classList.add('hidden');
+                    }
+                });
+            }
+
+            function renderNotifications(items) {
+                var list = Array.isArray(items) ? items : [];
+                if (list.length === 0) {
+                    notifListEl.innerHTML = '';
+                    notifEmptyEl.style.display = 'block';
+                    return;
+                }
+
+                notifEmptyEl.style.display = 'none';
+                var html = list.map(function(item) {
+                    var isUnread = !item.lida_em;
+                    var title = escapeHtml(item.titulo || 'Notificacao');
+                    var msg = escapeHtml(item.mensagem || '');
+                    var link = String(item.link || '').trim();
+                    var dateText = escapeHtml(formatDateIso(item.created_at || ''));
+                    var type = escapeHtml(String(item.tipo || 'info').toUpperCase());
+                    var openLink = '';
+                    if (link !== '') {
+                        openLink = ' <a href="' + escapeHtml(link) + '" style="font-weight:700; color:#0f172a; text-decoration:none;">Abrir</a>';
+                    }
+                    return ''
+                        + '<li class="user-notif-item ' + (isUnread ? 'unread' : '') + '">'
+                        + '<div class="user-notif-title">' + title + '</div>'
+                        + '<div class="user-notif-msg">' + msg + openLink + '</div>'
+                        + '<div class="user-notif-meta"><span>' + type + '</span><span>' + dateText + '</span></div>'
+                        + '</li>';
+                }).join('');
+                notifListEl.innerHTML = html;
+            }
+
+            function showToast(text) {
+                var toast = document.createElement('div');
+                toast.className = 'user-notif-toast';
+                toast.textContent = text;
+                notifToastWrap.appendChild(toast);
+                window.setTimeout(function() {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 4500);
+            }
+
+            function notificationsApiUrl(markRead) {
+                var url = window.location.pathname + '?__user_notifications_api=1';
+                if (markRead) {
+                    url += '&mark_read=1';
+                }
+                return url;
+            }
+
+            function applyNotificationPayload(payload) {
+                if (!payload || payload.ok !== true) return;
+                var unread = parseInt(payload.unread_count || 0, 10);
+                if (Number.isNaN(unread) || unread < 0) unread = 0;
+                if (firstFetchDone && unread > lastUnreadCount) {
+                    showToast('Nova notificacao recebida.');
+                }
+                lastUnreadCount = unread;
+                firstFetchDone = true;
+                setUnreadBadge(unread);
+                renderNotifications(payload.items || []);
+            }
+
+            function fetchNotifications(markRead) {
+                return fetch(notificationsApiUrl(markRead), { credentials: 'same-origin', cache: 'no-store' })
+                    .then(function(resp) { return resp.json(); })
+                    .then(function(payload) {
+                        applyNotificationPayload(payload);
+                        return payload;
+                    })
+                    .catch(function() {
+                        return null;
+                    });
+            }
+
+            function positionNotifPanel(anchor) {
+                var target = anchor || notifFab;
+                var rect = target.getBoundingClientRect();
+                var width = Math.min(360, window.innerWidth - 16);
+                var left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
+                notifPanel.style.width = width + 'px';
+                notifPanel.style.top = (rect.bottom + 8) + 'px';
+                notifPanel.style.left = left + 'px';
+            }
+
+            function openNotifPanel(anchor) {
+                closeModal();
+                positionNotifPanel(anchor || notifFab);
+                notifPanel.classList.add('open');
+                notifPanel.setAttribute('aria-hidden', 'false');
+                fetchNotifications(true);
+            }
+
+            function closeNotifPanel() {
+                notifPanel.classList.remove('open');
+                notifPanel.setAttribute('aria-hidden', 'true');
+            }
+
+            function toggleNotifPanel(anchor) {
+                if (notifPanel.classList.contains('open')) {
+                    closeNotifPanel();
+                    return;
+                }
+                openNotifPanel(anchor || notifFab);
+            }
+
             fab.addEventListener('click', openModal);
+            notifFab.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleNotifPanel(notifFab);
+            });
+            notifReadAllBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                fetchNotifications(true);
+            });
             closeBtn.addEventListener('click', closeModal);
             overlay.addEventListener('click', function(e) {
                 if (e.target === overlay) closeModal();
+            });
+            document.addEventListener('click', function(e) {
+                if (notifPanel.classList.contains('open') && !notifPanel.contains(e.target) && !e.target.closest('.user-bell-btn') && e.target !== notifFab && !notifFab.contains(e.target)) {
+                    closeNotifPanel();
+                }
+            });
+            window.addEventListener('resize', function() {
+                if (notifPanel.classList.contains('open')) {
+                    positionNotifPanel(notificationButtons[0] || notifFab);
+                }
             });
 
             function bindUserInfoAndFab() {
                 var userInfos = Array.prototype.slice.call(document.querySelectorAll('.user-info'));
                 if (userInfos.length > 0) {
                     fab.classList.remove('show');
+                    notifFab.classList.remove('show');
                 } else {
                     fab.classList.add('show');
+                    notifFab.classList.add('show');
                 }
 
+                notificationButtons = [];
                 userInfos.forEach(function(el) {
                     if (el.dataset.userMenuBound === '1') {
+                        var existent = el.querySelector('.user-bell-btn');
+                        if (existent) {
+                            notificationButtons.push(existent);
+                        }
                         return;
                     }
                     el.dataset.userMenuBound = '1';
@@ -511,9 +1016,29 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
                         ic.className = 'fa-regular fa-user';
                         el.insertBefore(ic, el.firstChild);
                     }
+
+                    var bellBtn = document.createElement('button');
+                    bellBtn.type = 'button';
+                    bellBtn.className = 'user-bell-btn';
+                    bellBtn.title = 'Notificacoes';
+                    bellBtn.innerHTML = '<i class="fa-regular fa-bell"></i><span class="user-notif-badge hidden">0</span>';
+                    bellBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        toggleNotifPanel(bellBtn);
+                    });
+                    el.appendChild(bellBtn);
+                    notificationButtons.push(bellBtn);
                     el.addEventListener('click', openModal);
                 });
+                setUnreadBadge(lastUnreadCount);
             }
+
+            applyNotificationPayload({
+                ok: true,
+                unread_count: initialPayload.unread_count || 0,
+                items: initialPayload.items || []
+            });
 
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', bindUserInfoAndFab);
@@ -528,6 +1053,10 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
                 });
                 obs.observe(document.body, { childList: true, subtree: true });
             }
+
+            window.setInterval(function() {
+                fetchNotifications(false);
+            }, 25000);
         })();
         </script>
         <?php

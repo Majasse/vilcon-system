@@ -71,41 +71,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $senha = (string)($_POST['senha'] ?? '');
     $usernameInput = $username;
 
-    garantirColunaUsername($pdo);
-
-    $sql = "SELECT * FROM usuarios
-            WHERE username = :username
-            AND senha = :senha
-            AND status = 'Ativo'";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([
-        'username' => $username,
-        'senha' => $senha,
-    ]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($user) {
-        $_SESSION['usuario_id'] = $user['id'];
-        $_SESSION['usuario_nome'] = $user['nome'];
-        $_SESSION['usuario_perfil'] = $user['perfil'];
-
+    try {
         try {
-            garantirColunaUltimoLogin($pdo);
-            $up = $pdo->prepare('UPDATE usuarios SET ultimo_login = NOW() WHERE id = :id');
-            $up->execute(['id' => (int)$user['id']]);
+            garantirColunaUsername($pdo);
         } catch (Throwable $e) {
-            // Nao bloquear login por causa de coluna/auditoria.
+            error_log('Falha em garantirColunaUsername no login: ' . $e->getMessage());
         }
 
-        try {
-            registrarAcaoSistema($pdo, 'LOGIN: utilizador autenticado', 'auth', (int)$user['id']);
-        } catch (Throwable $e) {
-            // Nao bloquear login por causa de auditoria.
+        $sql = "SELECT * FROM usuarios
+                WHERE username = :username
+                AND senha = :senha
+                AND status = 'Ativo'";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([
+            'username' => $username,
+            'senha' => $senha,
+        ]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($user) {
+            $_SESSION['usuario_id'] = $user['id'];
+            $_SESSION['usuario_nome'] = $user['nome'];
+            $_SESSION['usuario_perfil'] = $user['perfil'];
+
+            try {
+                garantirColunaUltimoLogin($pdo);
+                $up = $pdo->prepare('UPDATE usuarios SET ultimo_login = NOW() WHERE id = :id');
+                $up->execute(['id' => (int)$user['id']]);
+            } catch (Throwable $e) {
+                // Nao bloquear login por causa de coluna/auditoria.
+            }
+
+            try {
+                registrarAcaoSistema($pdo, 'LOGIN: utilizador autenticado', 'auth', (int)$user['id']);
+            } catch (Throwable $e) {
+                // Nao bloquear login por causa de auditoria.
+            }
+
+            header('Location: index.php');
+            exit();
         }
 
-        header('Location: index.php');
-        exit();
-    } else {
         try {
             $usuarioFalhouId = null;
             if ($username !== '') {
@@ -121,6 +127,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Nao bloquear fluxo em falha de auditoria.
         }
         $erro = 'Username ou palavra-passe incorretos!';
+    } catch (Throwable $e) {
+        error_log('Erro fatal no fluxo de login: ' . $e->getMessage());
+        $erro = 'Nao foi possivel concluir o login agora. Tente novamente em alguns segundos.';
     }
 }
 ?>
@@ -142,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         .login-screen {
             background:
-                linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)),
+                linear-gradient(rgba(0,0,0,0.32), rgba(0,0,0,0.32)),
                 url('/vilcon-systemon/public/assets/img/vilcon-truck.jpg');
             background-size: cover;
             background-position: center;
@@ -169,6 +178,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             font-size: 18px;
             line-height: 1.5;
             opacity: 0.9;
+        }
+        .hero-badge {
+            display: inline-block;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .3px;
+            text-transform: uppercase;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.35);
+            background: rgba(255,255,255,.14);
+            margin-bottom: 14px;
+        }
+        .feature-tags {
+            margin-top: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .feature-tag {
+            font-size: 12px;
+            font-weight: 700;
+            padding: 7px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.3);
+            background: rgba(255,255,255,.12);
         }
 
         .login-box {
@@ -261,25 +296,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             font-size: 14px;
         }
     </style>
-    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
 </head>
 <body>
-
-<div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
-    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
-        <span></span><span></span><span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span><span></span><span></span>
-    </div>
-</div>
 
 <div class="login-screen">
 
     <div class="welcome-side">
-        <h1>Bem-vindo ao Sistema Integrado da Vilcon!</h1>
+        <div class="hero-badge">Plataforma Corporativa Segura</div>
+        <h1>Bem-vindo ao Sistema Integrado Vilcon</h1>
         <p>
-            Gestao completa de frota, oficina e logistica
-            com controlo total e rastreabilidade.
+            Gestao completa de frota, oficina e logistica com rastreabilidade em tempo real.
         </p>
+        <div class="feature-tags">
+            <span class="feature-tag">Frota</span>
+            <span class="feature-tag">Oficina</span>
+            <span class="feature-tag">Logistica</span>
+            <span class="feature-tag">Monitoramento</span>
+        </div>
     </div>
 
     <div class="login-box">
@@ -293,7 +326,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <div class="error-msg"><?= $erro ?></div>
         <?php endif; ?>
 
-        <form method="POST">
+        <form method="POST" data-loader-skip="1">
             <div class="input-group">
                 <label>Username</label>
                 <input type="text" name="username" placeholder="Ex: VMichael" required value="<?= htmlspecialchars((string)($usernameInput ?? '')) ?>">
@@ -333,7 +366,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             });
         })();
     </script>
-    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
 </body>
 </html>
 

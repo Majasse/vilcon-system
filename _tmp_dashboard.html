@@ -1,0 +1,1298 @@
+﻿<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | Vilcon System</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/vilcon-bias-theme.css">
+    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
+
+    <style>
+        :root {
+            --bg-dark: #f3f4f6;
+            --sidebar-bg: #ffffff;
+            --accent-orange: #e67e22;
+            --text-main: #111827;
+            --text-dim: #6b7280;
+            --card-bg: #ffffff;
+            --sidebar-hover: #f3f4f6;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .top-bar {
+            height: 70px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 40px;
+            background: var(--sidebar-bg);
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .user-info { font-size: 14px; color: var(--text-dim); }
+        .user-info strong { color: var(--accent-orange); }
+
+        .dashboard-container { padding: 40px; }
+    </style>
+</head>
+<body>
+        <style>
+            .user-profile-fab {
+                position: fixed;
+                top: 16px;
+                right: 18px;
+                z-index: 2000;
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #111827;
+                width: 38px;
+                height: 38px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.15);
+                display: none;
+            }
+            .user-profile-fab.show { display: inline-flex; }
+            .user-profile-fab i { font-size: 15px; }
+            .user-info.user-menu-ready {
+                cursor: pointer;
+                border: 1px solid #e5e7eb;
+                border-radius: 999px;
+                padding: 7px 11px;
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                background: #ffffff;
+            }
+            .user-bell-btn,
+            .user-notif-fab {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #0f172a;
+                width: 32px;
+                height: 32px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                position: relative;
+                box-shadow: 0 3px 10px rgba(15, 23, 42, 0.12);
+            }
+            .user-bell-btn i,
+            .user-notif-fab i { font-size: 13px; }
+            .user-notif-fab {
+                position: fixed;
+                top: 16px;
+                right: 62px;
+                z-index: 2000;
+                display: none;
+            }
+            .user-notif-fab.show { display: inline-flex; }
+            .user-notif-badge {
+                position: absolute;
+                top: -5px;
+                right: -5px;
+                min-width: 18px;
+                height: 18px;
+                padding: 0 5px;
+                border-radius: 999px;
+                background: #dc2626;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 700;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border: 2px solid #ffffff;
+            }
+            .user-notif-badge.hidden { display: none; }
+            .user-notif-panel {
+                position: fixed;
+                width: min(360px, calc(100vw - 16px));
+                max-height: 450px;
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                background: #ffffff;
+                box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+                z-index: 2200;
+                display: none;
+                overflow: hidden;
+            }
+            .user-notif-panel.open { display: block; }
+            .user-notif-head {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 12px;
+                border-bottom: 1px solid #e5e7eb;
+                background: #f8fafc;
+            }
+            .user-notif-head h5 {
+                margin: 0;
+                font-size: 12px;
+                text-transform: uppercase;
+                color: #0f172a;
+            }
+            .user-notif-read {
+                border: 1px solid #d1d5db;
+                background: #ffffff;
+                color: #334155;
+                border-radius: 8px;
+                font-size: 10px;
+                font-weight: 700;
+                padding: 5px 7px;
+                cursor: pointer;
+            }
+            .user-notif-list {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                overflow-y: auto;
+                max-height: 390px;
+            }
+            .user-notif-empty {
+                padding: 14px 12px;
+                font-size: 12px;
+                color: #64748b;
+            }
+            .user-notif-item {
+                padding: 10px 12px;
+                border-bottom: 1px solid #eef2f7;
+                display: grid;
+                gap: 4px;
+            }
+            .user-notif-item.unread { background: #f8fbff; }
+            .user-notif-title {
+                font-size: 12px;
+                font-weight: 800;
+                color: #0f172a;
+            }
+            .user-notif-msg {
+                font-size: 12px;
+                color: #334155;
+                line-height: 1.35;
+            }
+            .user-notif-meta {
+                font-size: 10px;
+                color: #64748b;
+                display: flex;
+                justify-content: space-between;
+            }
+            .user-notif-toast-wrap {
+                position: fixed;
+                right: 12px;
+                bottom: 12px;
+                z-index: 2300;
+                display: grid;
+                gap: 8px;
+            }
+            .user-notif-toast {
+                background: #111827;
+                color: #ffffff;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 12px;
+                box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+            }
+            .user-profile-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                z-index: 2100;
+                display: none;
+                overflow-y: auto;
+            }
+            .user-profile-overlay.open {
+                display: block;
+            }
+            .user-profile-modal {
+                position: fixed;
+                top: 10px;
+                left: 50%;
+                transform: translateX(-50%);
+                max-width: 760px;
+                width: min(760px, 100%);
+                margin: 0;
+                max-height: calc(100vh - 20px);
+                overflow-y: auto;
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.24);
+            }
+            .user-profile-head {
+                padding: 12px 14px;
+                background: #111827;
+                color: #ffffff;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .user-profile-head h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .2px; }
+            .user-profile-close {
+                border: 1px solid #fca5a5;
+                background: #fee2e2;
+                color: #b91c1c;
+                border-radius: 7px;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 6px 10px;
+                cursor: pointer;
+            }
+            .user-profile-body { padding: 14px; display: grid; grid-template-columns: 230px 1fr; gap: 14px; }
+            .user-profile-card {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 12px;
+                background: #f8fafc;
+            }
+            .user-avatar {
+                width: 96px;
+                height: 96px;
+                border-radius: 999px;
+                overflow: hidden;
+                background: #111827;
+                color: #ffffff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: 800;
+                font-size: 28px;
+                margin-bottom: 10px;
+            }
+            .user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+            .user-profile-card .line { font-size: 12px; color: #334155; margin-bottom: 4px; }
+            .user-profile-card .line strong { color: #0f172a; }
+            .user-forms { display: grid; gap: 10px; }
+            .user-form {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 12px;
+                background: #ffffff;
+            }
+            .user-form h5 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: #111827; }
+            .user-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+            .user-form label { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; display: block; margin-bottom: 4px; }
+            .user-form input,
+            .user-form select {
+                width: 100%;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                background: #ffffff;
+            }
+            .user-form .btn {
+                margin-top: 8px;
+                border: none;
+                background: #111827;
+                color: #ffffff;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+            }
+            .user-flash {
+                margin-bottom: 8px;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                border: 1px solid transparent;
+            }
+            .user-flash.ok { background: #ecfdf3; border-color: #bbf7d0; color: #166534; }
+            .user-flash.error { background: #fee2e2; border-color: #fecaca; color: #991b1b; }
+            @media (max-width: 900px) {
+                .user-profile-fab { top: 10px; right: 10px; }
+                .user-notif-fab { top: 10px; right: 54px; }
+                .user-profile-modal {
+                    top: 6px;
+                    left: 6px;
+                    right: 6px;
+                    transform: none;
+                    width: auto;
+                    max-height: calc(100vh - 12px);
+                }
+                .user-profile-body { grid-template-columns: 1fr; }
+                .user-form .row { grid-template-columns: 1fr; }
+            }
+        </style>
+
+        <button type="button" class="user-profile-fab" id="globalUserFab" title="Perfil">
+            <i class="fa-regular fa-user"></i>
+        </button>
+
+        <button type="button" class="user-notif-fab" id="globalUserNotifFab" title="Notificacoes">
+            <i class="fa-regular fa-bell"></i>
+            <span class="user-notif-badge hidden" id="globalNotifBadge">0</span>
+        </button>
+
+        <div class="user-notif-panel" id="userNotifPanel" aria-hidden="true">
+            <div class="user-notif-head">
+                <h5>Notificacoes</h5>
+                <button type="button" class="user-notif-read" id="userNotifReadAll">Marcar lidas</button>
+            </div>
+            <ul class="user-notif-list" id="userNotifList"></ul>
+            <div class="user-notif-empty" id="userNotifEmpty">Sem notificacoes para mostrar.</div>
+        </div>
+
+        <div class="user-notif-toast-wrap" id="userNotifToastWrap"></div>
+
+        <div class="user-profile-overlay" id="userProfileOverlay" aria-hidden="true">
+            <div class="user-profile-modal" role="dialog" aria-modal="true" aria-label="Perfil do utilizador">
+                <div class="user-profile-head">
+                    <h4>Perfil do Utilizador</h4>
+                    <button type="button" class="user-profile-close" id="userProfileClose">Fechar</button>
+                </div>
+                <div class="user-profile-body">
+                    <div class="user-profile-card">
+                        <div class="user-avatar">
+                                                            RR                                                    </div>
+                        <div class="line"><strong>Nome:</strong> Ronaldo</div>
+                        <div class="line"><strong>E-mail:</strong> admin@vilcon.com</div>
+                        <div class="line"><strong>Perfil:</strong> Administrador</div>
+                        <div class="line"><strong>Status:</strong> Ativo</div>
+                        <div class="line"><strong>Idioma:</strong> pt</div>
+                    </div>
+
+                    <div class="user-forms">
+                        
+                        <form class="user-form" method="post" enctype="multipart/form-data">
+                            <input type="hidden" name="__user_profile_form" value="1">
+                            <input type="hidden" name="perfil_acao" value="atualizar_info">
+                            <h5>Informacoes e Foto</h5>
+                            <div class="row">
+                                <div>
+                                    <label>Nome</label>
+                                    <input type="text" name="nome" value="Ronaldo" required>
+                                </div>
+                                <div>
+                                    <label>E-mail</label>
+                                    <input type="email" name="email" value="admin@vilcon.com" required>
+                                </div>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <label>Foto de Perfil (JPG/PNG/WEBP)</label>
+                                <input type="file" name="foto_perfil" accept=".jpg,.jpeg,.png,.webp">
+                            </div>
+                            <button type="submit" class="btn">Guardar Informacoes</button>
+                        </form>
+
+                        <form class="user-form" method="post">
+                            <input type="hidden" name="__user_profile_form" value="1">
+                            <input type="hidden" name="perfil_acao" value="mudar_senha">
+                            <h5>Mudar Senha</h5>
+                            <div class="row">
+                                <div>
+                                    <label>Senha Atual</label>
+                                    <input type="password" name="senha_atual" required>
+                                </div>
+                                <div>
+                                    <label>Nova Senha</label>
+                                    <input type="password" name="senha_nova" required>
+                                </div>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <label>Confirmar Nova Senha</label>
+                                <input type="password" name="senha_confirmar" required>
+                            </div>
+                            <button type="submit" class="btn">Alterar Senha</button>
+                        </form>
+
+                        <form class="user-form" method="post">
+                            <input type="hidden" name="__user_profile_form" value="1">
+                            <input type="hidden" name="perfil_acao" value="atualizar_preferencias">
+                            <h5>Preferencias</h5>
+                            <div>
+                                <label>Idioma</label>
+                                <select name="idioma">
+                                    <option value="pt" selected>Portugues</option>
+                                    <option value="en" >English</option>
+                                    <option value="es" >Espanol</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn">Guardar Preferencias</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        (function() {
+            var overlay = document.getElementById('userProfileOverlay');
+            var fab = document.getElementById('globalUserFab');
+            var notifFab = document.getElementById('globalUserNotifFab');
+            var globalNotifBadge = document.getElementById('globalNotifBadge');
+            var notifPanel = document.getElementById('userNotifPanel');
+            var notifListEl = document.getElementById('userNotifList');
+            var notifEmptyEl = document.getElementById('userNotifEmpty');
+            var notifReadAllBtn = document.getElementById('userNotifReadAll');
+            var notifToastWrap = document.getElementById('userNotifToastWrap');
+            var closeBtn = document.getElementById('userProfileClose');
+            var notificationButtons = [];
+            var lastUnreadCount = 0;
+            var firstFetchDone = false;
+            var initialPayload = {"unread_count":0,"items":[]};
+            if (!overlay || !fab || !closeBtn || !notifFab || !notifPanel || !notifListEl || !notifEmptyEl || !notifReadAllBtn || !notifToastWrap || !globalNotifBadge) return;
+
+            function openModal() {
+                closeNotifPanel();
+                overlay.classList.add('open');
+                overlay.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeModal() {
+                overlay.classList.remove('open');
+                overlay.setAttribute('aria-hidden', 'true');
+            }
+
+            function escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            function formatDateIso(value) {
+                if (!value) return '';
+                var d = new Date(value.replace(' ', 'T'));
+                if (Number.isNaN(d.getTime())) return value;
+                var day = String(d.getDate()).padStart(2, '0');
+                var month = String(d.getMonth() + 1).padStart(2, '0');
+                var year = d.getFullYear();
+                var hh = String(d.getHours()).padStart(2, '0');
+                var mm = String(d.getMinutes()).padStart(2, '0');
+                return day + '/' + month + '/' + year + ' ' + hh + ':' + mm;
+            }
+
+            function setUnreadBadge(count) {
+                var value = parseInt(count || 0, 10);
+                if (Number.isNaN(value) || value < 0) value = 0;
+                var text = value > 99 ? '99+' : String(value);
+                if (value > 0) {
+                    globalNotifBadge.textContent = text;
+                    globalNotifBadge.classList.remove('hidden');
+                } else {
+                    globalNotifBadge.textContent = '0';
+                    globalNotifBadge.classList.add('hidden');
+                }
+
+                notificationButtons.forEach(function(btn) {
+                    var b = btn.querySelector('.user-notif-badge');
+                    if (!b) return;
+                    if (value > 0) {
+                        b.textContent = text;
+                        b.classList.remove('hidden');
+                    } else {
+                        b.textContent = '0';
+                        b.classList.add('hidden');
+                    }
+                });
+            }
+
+            function renderNotifications(items) {
+                var list = Array.isArray(items) ? items : [];
+                if (list.length === 0) {
+                    notifListEl.innerHTML = '';
+                    notifEmptyEl.style.display = 'block';
+                    return;
+                }
+
+                notifEmptyEl.style.display = 'none';
+                var html = list.map(function(item) {
+                    var isUnread = !item.lida_em;
+                    var title = escapeHtml(item.titulo || 'Notificacao');
+                    var msg = escapeHtml(item.mensagem || '');
+                    var link = String(item.link || '').trim();
+                    var dateText = escapeHtml(formatDateIso(item.created_at || ''));
+                    var type = escapeHtml(String(item.tipo || 'info').toUpperCase());
+                    var openLink = '';
+                    if (link !== '') {
+                        openLink = ' <a href="' + escapeHtml(link) + '" style="font-weight:700; color:#0f172a; text-decoration:none;">Abrir</a>';
+                    }
+                    return ''
+                        + '<li class="user-notif-item ' + (isUnread ? 'unread' : '') + '">'
+                        + '<div class="user-notif-title">' + title + '</div>'
+                        + '<div class="user-notif-msg">' + msg + openLink + '</div>'
+                        + '<div class="user-notif-meta"><span>' + type + '</span><span>' + dateText + '</span></div>'
+                        + '</li>';
+                }).join('');
+                notifListEl.innerHTML = html;
+            }
+
+            function showToast(text) {
+                var toast = document.createElement('div');
+                toast.className = 'user-notif-toast';
+                toast.textContent = text;
+                notifToastWrap.appendChild(toast);
+                window.setTimeout(function() {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 4500);
+            }
+
+            function notificationsApiUrl(markRead) {
+                var url = window.location.pathname + '?__user_notifications_api=1';
+                if (markRead) {
+                    url += '&mark_read=1';
+                }
+                return url;
+            }
+
+            function applyNotificationPayload(payload) {
+                if (!payload || payload.ok !== true) return;
+                var unread = parseInt(payload.unread_count || 0, 10);
+                if (Number.isNaN(unread) || unread < 0) unread = 0;
+                if (firstFetchDone && unread > lastUnreadCount) {
+                    showToast('Nova notificacao recebida.');
+                }
+                lastUnreadCount = unread;
+                firstFetchDone = true;
+                setUnreadBadge(unread);
+                renderNotifications(payload.items || []);
+            }
+
+            function fetchNotifications(markRead) {
+                return fetch(notificationsApiUrl(markRead), { credentials: 'same-origin', cache: 'no-store' })
+                    .then(function(resp) { return resp.json(); })
+                    .then(function(payload) {
+                        applyNotificationPayload(payload);
+                        return payload;
+                    })
+                    .catch(function() {
+                        return null;
+                    });
+            }
+
+            function positionNotifPanel(anchor) {
+                var target = anchor || notifFab;
+                var rect = target.getBoundingClientRect();
+                var width = Math.min(360, window.innerWidth - 16);
+                var left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
+                notifPanel.style.width = width + 'px';
+                notifPanel.style.top = (rect.bottom + 8) + 'px';
+                notifPanel.style.left = left + 'px';
+            }
+
+            function openNotifPanel(anchor) {
+                closeModal();
+                positionNotifPanel(anchor || notifFab);
+                notifPanel.classList.add('open');
+                notifPanel.setAttribute('aria-hidden', 'false');
+                fetchNotifications(true);
+            }
+
+            function closeNotifPanel() {
+                notifPanel.classList.remove('open');
+                notifPanel.setAttribute('aria-hidden', 'true');
+            }
+
+            function toggleNotifPanel(anchor) {
+                if (notifPanel.classList.contains('open')) {
+                    closeNotifPanel();
+                    return;
+                }
+                openNotifPanel(anchor || notifFab);
+            }
+
+            fab.addEventListener('click', openModal);
+            notifFab.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleNotifPanel(notifFab);
+            });
+            notifReadAllBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                fetchNotifications(true);
+            });
+            closeBtn.addEventListener('click', closeModal);
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) closeModal();
+            });
+            document.addEventListener('click', function(e) {
+                if (notifPanel.classList.contains('open') && !notifPanel.contains(e.target) && !e.target.closest('.user-bell-btn') && e.target !== notifFab && !notifFab.contains(e.target)) {
+                    closeNotifPanel();
+                }
+            });
+            window.addEventListener('resize', function() {
+                if (notifPanel.classList.contains('open')) {
+                    positionNotifPanel(notificationButtons[0] || notifFab);
+                }
+            });
+
+            function bindUserInfoAndFab() {
+                var userInfos = Array.prototype.slice.call(document.querySelectorAll('.user-info'));
+                if (userInfos.length > 0) {
+                    fab.classList.remove('show');
+                    notifFab.classList.remove('show');
+                } else {
+                    fab.classList.add('show');
+                    notifFab.classList.add('show');
+                }
+
+                notificationButtons = [];
+                userInfos.forEach(function(el) {
+                    if (el.dataset.userMenuBound === '1') {
+                        var existent = el.querySelector('.user-bell-btn');
+                        if (existent) {
+                            notificationButtons.push(existent);
+                        }
+                        return;
+                    }
+                    el.dataset.userMenuBound = '1';
+                    el.classList.add('user-menu-ready');
+                    if (!el.querySelector('i')) {
+                        var ic = document.createElement('i');
+                        ic.className = 'fa-regular fa-user';
+                        el.insertBefore(ic, el.firstChild);
+                    }
+
+                    var bellBtn = document.createElement('button');
+                    bellBtn.type = 'button';
+                    bellBtn.className = 'user-bell-btn';
+                    bellBtn.title = 'Notificacoes';
+                    bellBtn.innerHTML = '<i class="fa-regular fa-bell"></i><span class="user-notif-badge hidden">0</span>';
+                    bellBtn.addEventListener('click', function(ev) {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        toggleNotifPanel(bellBtn);
+                    });
+                    el.appendChild(bellBtn);
+                    notificationButtons.push(bellBtn);
+                    el.addEventListener('click', openModal);
+                });
+                setUnreadBadge(lastUnreadCount);
+            }
+
+            applyNotificationPayload({
+                ok: true,
+                unread_count: initialPayload.unread_count || 0,
+                items: initialPayload.items || []
+            });
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', bindUserInfoAndFab);
+            } else {
+                bindUserInfoAndFab();
+            }
+            window.addEventListener('load', bindUserInfoAndFab);
+
+            if (window.MutationObserver) {
+                var obs = new MutationObserver(function() {
+                    bindUserInfoAndFab();
+                });
+                obs.observe(document.body, { childList: true, subtree: true });
+            }
+
+            window.setInterval(function() {
+                fetchNotifications(false);
+            }, 25000);
+        })();
+        </script>
+        <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+</div>
+
+
+﻿
+<div class="sidebar">
+
+    <!-- HEADER -->
+    <div class="sidebar-header">
+        <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon Logo" style="width:200px;">
+        <h2>Sistema Integrado</h2>
+    </div>
+
+    <!-- MENU -->
+    <div class="nav-menu">
+
+        <!-- DASHBOARD ROOT -->
+        <div class="menu-section">
+                            <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=hse&view=checklist&mode=list"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-clipboard-check"></i> HSE
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/dashboard/index.php"
+                   class="nav-link sub active">
+                    <i class="fa-solid fa-chart-pie"></i> Dashboard & BI
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/documental/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-folder-tree"></i> Gestão Documental
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/oficina/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-screwdriver-wrench"></i> Oficina
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/transporte/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-truck-ramp-box"></i> Transporte
+                </a>
+                <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=gestao_frota"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-truck"></i> Gestão de Frota
+                </a>
+                <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=aluguer&view=viaturas_maquinas&mode=list"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-warehouse"></i> Aluguer de Equipamentos
+                </a>
+                <a href="/vilcon-systemon/public/app/modules/transporte/index.php?tab=frentista"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-gas-pump"></i> Frentista
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/rh/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-users-gear"></i> RH
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/seguranca/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-shield-halved"></i> Seguranca
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/logistica/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-boxes-packing"></i> Logística
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/aprovacoes/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-file-circle-check"></i> Aprovações
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/relatorios/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-chart-line"></i> Relatórios & BI
+                </a>
+            
+                            <a href="/vilcon-systemon/public/app/modules/utilizadores/index.php"
+                   class="nav-link sub ">
+                    <i class="fa-solid fa-user-shield"></i> Utilizadores
+                </a>
+            
+        </div>
+    </div>
+
+   <a href="/vilcon-systemon/public/logout.php" class="btn-sair">
+    <i class="fas fa-power-off"></i> SAIR
+</a>
+
+
+</div>
+<div class="app-action-feedback-overlay" id="appActionFeedbackOverlay" aria-hidden="true">
+    <div class="app-action-feedback-card">
+        <div class="app-action-feedback-icon" id="appActionFeedbackIcon"></div>
+        <h4 class="app-action-feedback-title" id="appActionFeedbackTitle">Sucesso</h4>
+        <p class="app-action-feedback-text" id="appActionFeedbackText"></p>
+        <div class="app-action-feedback-actions" id="appActionFeedbackActions">
+            <button type="button" class="app-action-feedback-btn" id="appActionFeedbackClose">Fechar</button>
+        </div>
+    </div>
+</div>
+<style>
+/* ===== SIDEBAR BASE ===== */
+.sidebar {
+    width: 280px;
+    background: #1a1a1a;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #2c2c2c;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+}
+
+/* ===== HEADER ===== */
+.sidebar-header {
+    padding: 30px 20px;
+    text-align: center;
+    border-bottom: 1px solid #2c2c2c;
+}
+
+.sidebar-header h2 {
+    font-size: 11px;
+    color: #f39c12;
+    letter-spacing: 2px;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-top: 10px;
+}
+
+/* ===== MENU ===== */
+.nav-menu {
+    flex: 1;
+    padding-top: 15px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.nav-menu::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+/* ===== DASHBOARD ROOT ===== */
+.menu-section {
+    margin-bottom: 10px;
+}
+
+.menu-root {
+    padding: 14px 25px;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: #111;
+    border-left: 4px solid #f39c12;
+}
+
+.menu-root i {
+    color: #f39c12;
+    font-size: 16px;
+}
+
+/* ===== SUB LINKS ===== */
+.nav-link {
+    padding: 12px 25px;
+    color: #b3b3b3;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    border-left: 4px solid transparent;
+    transition: all 0.25s ease;
+}
+
+/* indentação estilo árvore */
+.nav-link.sub {
+    padding-left: 45px;
+    font-size: 13px;
+}
+
+.nav-link i {
+    margin-right: 15px;
+    color: #f39c12;
+    width: 20px;
+    text-align: center;
+    font-size: 15px;
+}
+
+.nav-link:hover {
+    background: #252525;
+    color: #ffffff;
+    padding-left: 55px;
+}
+
+.nav-link.active {
+    background: rgba(243, 156, 18, 0.12);
+    color: #ffffff;
+    border-left-color: #f39c12;
+}
+
+/* ===== FOOTER ===== */
+.sidebar-footer {
+    border-top: 1px solid #2c2c2c;
+    padding: 15px;
+}
+
+.btn-sair {
+    background: #c0392b;
+    color: white;
+    padding: 12px;
+    border-radius: 6px;
+    text-decoration: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    font-weight: bold;
+    transition: 0.3s;
+}
+
+.btn-sair:hover {
+    background: #e74c3c;
+    transform: scale(1.02);
+}
+
+/* ===== GLOBAL ACTION FEEDBACK ===== */
+.app-action-feedback-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.48);
+    z-index: 2500;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+.app-action-feedback-overlay.open { display: flex; }
+.app-action-feedback-card {
+    width: min(420px, 95vw);
+    border-radius: 14px;
+    border: 1px solid #dbe2ea;
+    background: #fff;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.28);
+    padding: 20px 18px;
+    text-align: center;
+}
+.app-action-feedback-icon {
+    width: 126px;
+    height: 126px;
+    margin: 0 auto 14px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 58px;
+    font-weight: 800;
+    color: #fff;
+    transform: scale(0.82);
+    opacity: 0;
+    animation: appFeedbackPop .36s ease forwards;
+}
+.app-action-feedback-icon.success {
+    background: #22c55e;
+    box-shadow: 0 0 0 10px rgba(34, 197, 94, 0.12);
+}
+.app-action-feedback-icon.error {
+    background: #ef4444;
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0.12);
+}
+.app-action-feedback-title {
+    margin: 0 0 6px 0;
+    font-size: 19px;
+    font-weight: 800;
+    color: #0f172a;
+}
+.app-action-feedback-text {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}
+.app-action-feedback-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: center;
+}
+.app-action-feedback-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    background: #0f172a;
+    cursor: pointer;
+}
+@keyframes appFeedbackPop {
+    from { transform: scale(0.82); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+</style>
+<script>
+;(function() {
+    var overlay = document.getElementById('appActionFeedbackOverlay');
+    var icon = document.getElementById('appActionFeedbackIcon');
+    var title = document.getElementById('appActionFeedbackTitle');
+    var text = document.getElementById('appActionFeedbackText');
+    var actions = document.getElementById('appActionFeedbackActions');
+    var closeBtn = document.getElementById('appActionFeedbackClose');
+    if (!overlay || !icon || !title || !text || !actions || !closeBtn) return;
+
+    function closeOverlay() {
+        overlay.classList.remove('open');
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function showFeedback(opts) {
+        opts = opts || {};
+        var type = String(opts.type || 'success').toLowerCase() === 'error' ? 'error' : 'success';
+        var ttl = String(opts.title || (type === 'success' ? 'Operacao concluida' : 'Falha na operacao'));
+        var msg = String(opts.message || '');
+        var autoCloseMs = Number(opts.autoCloseMs || 0);
+        var redirectUrl = String(opts.redirectUrl || '');
+
+        icon.className = 'app-action-feedback-icon ' + type;
+        icon.innerHTML = type === 'success' ? '<i class="fa-solid fa-check"></i>' : '<i class="fa-solid fa-xmark"></i>';
+        title.textContent = ttl;
+        text.textContent = msg;
+        actions.style.display = autoCloseMs > 0 ? 'none' : 'flex';
+
+        overlay.classList.add('open');
+        overlay.setAttribute('aria-hidden', 'false');
+
+        if (autoCloseMs > 0) {
+            window.setTimeout(function() {
+                closeOverlay();
+                if (redirectUrl) window.location.href = redirectUrl;
+            }, autoCloseMs);
+        }
+    }
+
+    closeBtn.addEventListener('click', closeOverlay);
+    overlay.addEventListener('click', function(ev) {
+        if (ev.target === overlay) closeOverlay();
+    });
+
+    window.vilconActionFeedback = { show: showFeedback, close: closeOverlay };
+
+    var initial = null;
+    if (initial && typeof initial === 'object') {
+        showFeedback({
+            type: initial.type || 'success',
+            title: initial.title || '',
+            message: initial.message || '',
+            autoCloseMs: initial.auto_close_ms || 0,
+            redirectUrl: initial.redirect || ''
+        });
+    }
+})();
+</script>
+
+<div class="main-content">
+    <div class="top-bar">
+        <h2>Dashboard Estrategico</h2>
+        <div class="user-info">
+            <i class="fa-regular fa-user"></i>
+            <strong>Ronaldo</strong>
+        </div>
+    </div>
+
+    <div class="dashboard-container">
+        <style>
+            body { background: #f4f7f6; color: #111827; }
+            .main-content { background: #f4f7f6; }
+            .top-bar { background: #ffffff; border-bottom: 1px solid #e5e7eb; }
+            .user-info { color: #6b7280; }
+            .user-info strong { color: #111827; }
+            .kpi-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; }
+            .card {
+                background:#ffffff;
+                border:1px solid #e5e7eb;
+                border-radius:12px;
+                padding:16px;
+                box-shadow:0 6px 16px rgba(17,24,39,0.08);
+            }
+            .kpi-title { font-size:11px; text-transform:uppercase; color:#6b7280; letter-spacing:.5px; }
+            .kpi-value { font-size:22px; font-weight:800; margin-top:6px; }
+            .kpi-sub { font-size:11px; color:#6b7280; margin-top:4px; }
+            .section { margin-top:18px; display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+            .chart { display:flex; align-items:flex-end; gap:10px; height:140px; }
+            .bar { width:18%; background:#f59e0b; border-radius:6px 6px 0 0; position:relative; }
+            .bar small { position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:10px; color:#6b7280; }
+            .legend { display:flex; gap:10px; margin-top:8px; font-size:11px; color:#6b7280; flex-wrap:wrap; }
+            .legend span { display:flex; align-items:center; gap:6px; }
+            .dot { width:8px; height:8px; border-radius:999px; display:inline-block; }
+            .list { display:flex; flex-direction:column; gap:10px; }
+            .list-item { display:flex; justify-content:space-between; font-size:12px; color:#374151; }
+            .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+            .pill.warn { background:rgba(245, 158, 11, 0.18); color:#b45309; }
+            .pill.crit { background:rgba(239, 68, 68, 0.18); color:#b91c1c; }
+            .pill.ok { background:rgba(16, 185, 129, 0.18); color:#047857; }
+            .table-mini { width:100%; border-collapse:collapse; font-size:12px; }
+            .table-mini th, .table-mini td { padding:10px 8px; border-bottom:1px solid #e5e7eb; text-align:left; }
+            .table-mini th { font-size:10px; text-transform:uppercase; color:#6b7280; letter-spacing:.4px; }
+            .muted { color:#6b7280; font-size:12px; }
+            @media (max-width: 1100px) {
+                .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+                .section { grid-template-columns: 1fr; }
+            }
+        </style>
+
+        <div class="kpi-grid">
+            <div class="card">
+                <div class="kpi-title">Pedidos de Reparacao Abertos</div>
+                <div class="kpi-value">21</div>
+                <div class="kpi-sub">26 no total</div>
+            </div>
+            <div class="card">
+                <div class="kpi-title">Alertas Criticos</div>
+                <div class="kpi-value">0</div>
+                <div class="kpi-sub">0 em atencao</div>
+            </div>
+            <div class="card">
+                <div class="kpi-title">Ativos Registados</div>
+                <div class="kpi-value">49</div>
+                <div class="kpi-sub">Ativos em operacao</div>
+            </div>
+            <div class="card">
+                <div class="kpi-title">Atividade (7 dias)</div>
+                <div class="kpi-value">2396</div>
+                <div class="kpi-sub">Registos do sistema</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="card">
+                <div class="kpi-title">Pedidos de Reparacao por Status</div>
+                <div class="chart" aria-label="Pedidos por status">
+                                                                    <div class="bar" style="height:40%; background:#f59e0b;">
+                            <small>2</small>
+                        </div>
+                                                                    <div class="bar" style="height:20%; background:#60a5fa;">
+                            <small>1</small>
+                        </div>
+                                                                    <div class="bar" style="height:100%; background:#34d399;">
+                            <small>5</small>
+                        </div>
+                                                                    <div class="bar" style="height:100%; background:#a78bfa;">
+                            <small>5</small>
+                        </div>
+                                    </div>
+                <div class="legend">
+                                            <span><i class="dot" style="background:#f59e0b"></i>Pendentes</span>
+                                            <span><i class="dot" style="background:#60a5fa"></i>Em andamento</span>
+                                            <span><i class="dot" style="background:#34d399"></i>Aceitos</span>
+                                            <span><i class="dot" style="background:#a78bfa"></i>Resolvidos</span>
+                                    </div>
+            </div>
+
+            <div class="card">
+                <div class="kpi-title">Atividade do Sistema (7 dias)</div>
+                <div class="chart" aria-label="Atividade do sistema">
+                                                                    <div class="bar" style="height:2%; background:#111827;">
+                            <small>19</small>
+                        </div>
+                                                                    <div class="bar" style="height:11%; background:#111827;">
+                            <small>93</small>
+                        </div>
+                                                                    <div class="bar" style="height:8%; background:#111827;">
+                            <small>68</small>
+                        </div>
+                                                                    <div class="bar" style="height:0%; background:#111827;">
+                            <small>0</small>
+                        </div>
+                                                                    <div class="bar" style="height:93%; background:#111827;">
+                            <small>815</small>
+                        </div>
+                                                                    <div class="bar" style="height:60%; background:#111827;">
+                            <small>528</small>
+                        </div>
+                                                                    <div class="bar" style="height:100%; background:#111827;">
+                            <small>873</small>
+                        </div>
+                                    </div>
+                <div class="legend">
+                                            <span><i class="dot" style="background:#111827;"></i>19/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>20/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>21/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>22/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>23/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>24/02</span>
+                                            <span><i class="dot" style="background:#111827;"></i>25/02</span>
+                                    </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="card">
+                <div class="kpi-title">Alertas de Seguranca Proximos</div>
+                                    <p class="muted">Sem alertas registados para mostrar.</p>
+                            </div>
+
+            <div class="card">
+                <div class="kpi-title">Pedidos Recentes de Reparacao</div>
+                                    <table class="table-mini">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Ativo</th>
+                                <th>Tipo</th>
+                                <th>Prioridade</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                                                            <tr>
+                                    <td>26</td>
+                                    <td>AAC-234-SF</td>
+                                    <td>pickup truck</td>
+                                    <td>Normal</td>
+                                    <td>Pendente</td>
+                                </tr>
+                                                            <tr>
+                                    <td>25</td>
+                                    <td>AAC-234-SF</td>
+                                    <td>Pickup truck</td>
+                                    <td>Normal</td>
+                                    <td>Pendente</td>
+                                </tr>
+                                                            <tr>
+                                    <td>24</td>
+                                    <td>AGD - 220</td>
+                                    <td>sino truck</td>
+                                    <td>Normal</td>
+                                    <td>Aceito</td>
+                                </tr>
+                                                            <tr>
+                                    <td>23</td>
+                                    <td>AFC - 009</td>
+                                    <td>sino truck</td>
+                                    <td>Normal</td>
+                                    <td>Aceito</td>
+                                </tr>
+                                                            <tr>
+                                    <td>22</td>
+                                    <td>AMZ - 234</td>
+                                    <td>sino truck</td>
+                                    <td>Normal</td>
+                                    <td>Aceito</td>
+                                </tr>
+                                                            <tr>
+                                    <td>21</td>
+                                    <td>AAC-780</td>
+                                    <td>Toyota truck</td>
+                                    <td>Normal</td>
+                                    <td>Aceito</td>
+                                </tr>
+                                                    </tbody>
+                    </table>
+                            </div>
+        </div>
+    </div>
+</div>
+
+﻿<script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
+</body>
+</html>
+

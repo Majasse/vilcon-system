@@ -77,15 +77,17 @@ try {
                 throw new RuntimeException('A nova senha deve ter pelo menos 6 caracteres.');
             }
 
+            $stExiste = $pdo->prepare('SELECT id FROM usuarios WHERE id = :id LIMIT 1');
+            $stExiste->execute([':id' => $alvoId]);
+            if (!$stExiste->fetch(PDO::FETCH_ASSOC)) {
+                throw new RuntimeException('Utilizador nao encontrado para alterar senha.');
+            }
+
             $up = $pdo->prepare('UPDATE usuarios SET senha = :senha WHERE id = :id');
             $up->execute([
                 ':senha' => $novaSenha,
                 ':id' => $alvoId,
             ]);
-
-            if ($up->rowCount() === 0) {
-                throw new RuntimeException('Utilizador nao encontrado para alterar senha.');
-            }
 
             $msg = 'Senha atualizada com sucesso.';
         }

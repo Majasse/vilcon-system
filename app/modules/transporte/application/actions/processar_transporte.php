@@ -3,13 +3,13 @@ session_start();
 
 require_once __DIR__ . '/../app/config/db.php';
 
-/* ProteÃ§Ã£o de sessÃ£o */
+/* Proteção de sessão */
 if (!isset($_SESSION['usuario_id'])) {
     header("Location: login.php");
     exit;
 }
 
-/* VariÃ¡veis de controlo */
+/* Variáveis de controlo */
 $tab  = $_GET['tab']  ?? 'transporte';
 $view = $_GET['view'] ?? 'entrada';
 $mode = $_GET['mode'] ?? 'list';
@@ -196,12 +196,12 @@ define('BASE_URL', '/vilcon-systemon/public');
     <div class="sub-tab-container">
         <?php
         $subtabs = [
-            'entrada' => 'Ordem de ServiÃ§o',
-            'pedido_reparacao' => 'Pedido de ReparaÃ§Ã£o',
+            'entrada' => 'Ordem de Serviço',
+            'pedido_reparacao' => 'Pedido de Reparação',
             'checklist' => 'Checklist',
-            'plano_manutencao' => 'Plano ManutenÃ§Ã£o',
+            'plano_manutencao' => 'Plano Manutenção',
             'avarias' => 'Registo Avarias',
-            'relatorio_atividades' => 'RelatÃ³rio Atividades'
+            'relatorio_atividades' => 'Relatório Atividades'
         ];
 
         foreach ($subtabs as $key => $label):

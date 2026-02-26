@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
@@ -8,7 +8,7 @@ if (!isset($_SESSION['usuario_id'])) {
 }
 
 /* =========================
-   CONTROLES DO MÓDULO OFICINA
+   CONTROLES DO M?DULO OFICINA
 ========================= */
 $tab = $_GET['tab'] ?? 'oficina';
 $view = $_GET['view'] ?? 'ordens_servico';
@@ -20,6 +20,9 @@ if (!in_array($mode, ['home', 'list', 'form', 'detalhe'], true)) {
     $mode = 'home';
 }
 if ($view === 'relatorios') {
+    $mode = 'list';
+}
+if ($view === 'checklist' && $mode === 'form') {
     $mode = 'list';
 }
 $aplicar_lista = (isset($_GET['aplicar']) && (string)$_GET['aplicar'] === '1') || in_array($view, ['relatorios', 'pedidos_reparacao'], true);
@@ -35,6 +38,9 @@ $pedido_reparacao_detalhe = null;
 $materiais_pedido_detalhe = [];
 $requisicoes_pedido_detalhe = [];
 $detalhe_lista = 'ambos';
+$checklists_hse = [];
+$checklist_hse_detalhe = null;
+$checklist_hse_itens = [];
 $relatorio_resumo = [];
 $relatorio_historico = [];
 $relatorio_tendencia_mensal = [];
@@ -56,6 +62,7 @@ $erro_requisicoes = null;
 $erro_manutencao = null;
 $erro_avarias = null;
 $erro_relatorios = null;
+$erro_checklist = null;
 
 $msg_os = null;
 $msg_pedidos = null;
@@ -63,10 +70,57 @@ $msg_requisicoes = null;
 $msg_manutencao = null;
 $msg_avarias = null;
 $msg_presencas = null;
+$msg_checklist = null;
 
 $erro_presencas = null;
 $filtro_pedidos_datas = ['inicio' => '', 'fim' => ''];
 $filtro_os_datas = ['inicio' => '', 'fim' => ''];
+$pedido_status_visao = trim((string)($_GET['status_visao'] ?? 'todos'));
+$pedido_status_visoes_validas = ['todos', 'em_andamento', 'concluidos', 'espera_resposta', 'pendentes'];
+if (!in_array($pedido_status_visao, $pedido_status_visoes_validas, true)) {
+    $pedido_status_visao = 'todos';
+}
+$pedidos_reparacao_resumo = [
+    'todos' => 0,
+    'em_andamento' => 0,
+    'concluidos' => 0,
+    'espera_resposta' => 0,
+    'pendentes' => 0,
+];
+$manut_status_visao = trim((string)($_GET['manut_status_visao'] ?? 'todos'));
+$manut_status_visoes_validas = ['todos', 'em_andamento', 'concluidos', 'pendentes'];
+if (!in_array($manut_status_visao, $manut_status_visoes_validas, true)) {
+    $manut_status_visao = 'todos';
+}
+$manutencoes_resumo = [
+    'todos' => 0,
+    'em_andamento' => 0,
+    'concluidos' => 0,
+    'pendentes' => 0,
+];
+$os_status_visao = trim((string)($_GET['os_status_visao'] ?? 'todos'));
+$os_status_visoes_validas = ['todos', 'abertas', 'em_andamento', 'concluidas', 'aguardando_pecas'];
+if (!in_array($os_status_visao, $os_status_visoes_validas, true)) {
+    $os_status_visao = 'todos';
+}
+$ordens_servico_resumo = [
+    'todos' => 0,
+    'abertas' => 0,
+    'em_andamento' => 0,
+    'concluidas' => 0,
+    'aguardando_pecas' => 0,
+];
+$req_status_visao = trim((string)($_GET['req_status_visao'] ?? 'todos'));
+$req_status_visoes_validas = ['todos', 'pendentes', 'aprovadas', 'negadas'];
+if (!in_array($req_status_visao, $req_status_visoes_validas, true)) {
+    $req_status_visao = 'todos';
+}
+$requisicoes_resumo = [
+    'todos' => 0,
+    'pendentes' => 0,
+    'aprovadas' => 0,
+    'negadas' => 0,
+];
 $hojeOficina = new DateTimeImmutable('today');
 $diaSemanaOficina = (int)$hojeOficina->format('N');
 $inicioSemanaOficina = $hojeOficina->modify('-' . ($diaSemanaOficina - 1) . ' days')->format('Y-m-d');
@@ -101,6 +155,24 @@ function statusPedidoLabel($statusNormalizado) {
     return 'Pendente';
 }
 
+function normalizarStatusManutencao($valor) {
+    $v = strtolower(trim((string)$valor));
+    if ($v === '' || $v === 'pendente' || $v === 'aberto') return 'pendente';
+    if ($v === 'em andamento' || $v === 'em progresso' || $v === 'andamento') return 'em_andamento';
+    if ($v === 'concluida' || $v === 'concluido' || $v === 'resolvido' || $v === 'fechado') return 'concluida';
+    return 'pendente';
+}
+
+function normalizarStatusOrdemServico($valor) {
+    $v = strtolower(trim((string)$valor));
+    if ($v === '' || $v === 'aberto') return 'aberto';
+    if ($v === 'aceito') return 'aceito';
+    if ($v === 'em andamento' || $v === 'em progresso' || $v === 'andamento') return 'em_andamento';
+    if ($v === 'aguardando pecas' || $v === 'aguardando pe?as') return 'aguardando_pecas';
+    if ($v === 'fechado' || $v === 'concluido' || $v === 'concluida' || $v === 'resolvido') return 'concluida';
+    return 'aberto';
+}
+
 function normalizarStatusRequisicaoOficina(string $valor): string {
     $v = strtolower(trim($valor));
     if ($v === '' || $v === 'pendente') return 'pendente';
@@ -118,6 +190,139 @@ function labelStatusRequisicaoOficina(string $status): string {
     return 'Pendente';
 }
 
+function normalizarPrioridadeOperacional(string $valor): string {
+    $v = strtolower(trim($valor));
+    if ($v === 'critica' || $v === 'urgente') return 'Critica';
+    if ($v === 'alta') return 'Alta';
+    if ($v === 'media' || $v === 'normal') return 'Media';
+    if ($v === 'baixa') return 'Baixa';
+    return 'Media';
+}
+
+function validarViaturaReferencia(PDO $pdo, string $ref): ?array {
+    $ref = trim($ref);
+    if ($ref === '' || strpos($ref, ':') === false) {
+        return null;
+    }
+
+    [$tipo, $idRaw] = explode(':', $ref, 2);
+    $id = (int)$idRaw;
+    if ($id <= 0) {
+        return null;
+    }
+
+    if ($tipo === 'frota') {
+        $st = $pdo->prepare("
+            SELECT id,
+                   COALESCE(NULLIF(TRIM(descricao), ''), 'Viatura') AS nome,
+                   COALESCE(NULLIF(TRIM(matricula), ''), CONCAT('SEM-', id)) AS matricula,
+                   COALESCE(NULLIF(TRIM(tipo_ativo), ''), 'Viatura') AS categoria
+            FROM transporte_frota_ativos
+            WHERE id = :id
+              AND COALESCE(ativo, 1) = 1
+              AND LOWER(COALESCE(status_operacional, 'ativo')) NOT IN ('inativo','baixado','abate','vendido')
+            LIMIT 1
+        ");
+        $st->execute(['id' => $id]);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (!$row) return null;
+        return [
+            'matricula' => (string)$row['matricula'],
+            'nome' => (string)$row['nome'],
+            'categoria' => (string)$row['categoria'],
+        ];
+    }
+
+    if ($tipo === 'activos') {
+        $st = $pdo->prepare("
+            SELECT id,
+                   COALESCE(NULLIF(TRIM(equipamento), ''), 'Equipamento') AS nome,
+                   COALESCE(NULLIF(TRIM(matricula), ''), CONCAT('ACT-', id)) AS matricula,
+                   'Equipamento' AS categoria
+            FROM activos
+            WHERE id = :id
+              AND LOWER(COALESCE(estado, 'ativo')) NOT IN ('vendido','inativo')
+            LIMIT 1
+        ");
+        $st->execute(['id' => $id]);
+        $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        if (!$row) return null;
+        return [
+            'matricula' => (string)$row['matricula'],
+            'nome' => (string)$row['nome'],
+            'categoria' => (string)$row['categoria'],
+        ];
+    }
+
+    return null;
+}
+
+function validarUtilizadorAtivoPorReferencia(PDO $pdo, string $ref): ?array {
+    $ref = trim($ref);
+    if ($ref === '' || strpos($ref, ':') === false) {
+        return null;
+    }
+    [$tipo, $idRaw] = explode(':', $ref, 2);
+    if ($tipo !== 'user') return null;
+    $id = (int)$idRaw;
+    if ($id <= 0) return null;
+
+    $st = $pdo->prepare("
+        SELECT id, nome, COALESCE(NULLIF(TRIM(perfil), ''), 'Sem departamento') AS departamento
+        FROM usuarios
+        WHERE id = :id
+          AND LOWER(COALESCE(status, '')) IN ('ativo','1')
+        LIMIT 1
+    ");
+    $st->execute(['id' => $id]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$row) return null;
+
+    return [
+        'nome' => (string)$row['nome'],
+        'departamento' => (string)$row['departamento'],
+    ];
+}
+
+function garantirTabelaLocalizacoes(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS localizacoes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(180) NOT NULL,
+            provincia VARCHAR(120) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'Ativo',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_localizacao_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function validarLocalizacaoReferencia(PDO $pdo, string $ref): ?array {
+    $ref = trim($ref);
+    if ($ref === '' || strpos($ref, ':') === false) return null;
+    [$tipo, $idRaw] = explode(':', $ref, 2);
+    if ($tipo !== 'loc') return null;
+    $id = (int)$idRaw;
+    if ($id <= 0) return null;
+
+    garantirTabelaLocalizacoes($pdo);
+    $st = $pdo->prepare("
+        SELECT id, nome, COALESCE(NULLIF(TRIM(provincia), ''), '') AS provincia
+        FROM localizacoes
+        WHERE id = :id
+          AND LOWER(COALESCE(status, '')) IN ('ativo','1')
+        LIMIT 1
+    ");
+    $st->execute(['id' => $id]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$row) return null;
+
+    return [
+        'nome' => (string)$row['nome'],
+        'provincia' => (string)$row['provincia'],
+    ];
+}
+
 function encontrarPrimeiraColuna(array $colunas, array $candidatas) {
     foreach ($candidatas as $nome) {
         if (isset($colunas[$nome])) {
@@ -128,6 +333,8 @@ function encontrarPrimeiraColuna(array $colunas, array $candidatas) {
 }
 function garantirEstruturasOficina(PDO $pdo): void {
     try {
+        garantirTabelaLocalizacoes($pdo);
+
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS oficina_pedidos_reparacao (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -376,30 +583,6 @@ function statusOsPorPedido(string $statusPedido): string {
     return 'Aberto';
 }
 
-function itemDisponivelNoArmazem(PDO $pdo, string $item): ?array {
-    $termo = trim((string)$item);
-    if ($termo === '') return null;
-    try {
-        $stmt = $pdo->prepare("
-            SELECT codigo, nome, unidade, stock_atual
-            FROM logistica_pecas
-            WHERE stock_atual > 0
-              AND (
-                LOWER(TRIM(nome)) = LOWER(TRIM(:item))
-                OR LOWER(TRIM(COALESCE(codigo, ''))) = LOWER(TRIM(:item))
-              )
-            ORDER BY stock_atual DESC
-            LIMIT 1
-        ");
-        $stmt->execute(['item' => $termo]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-        return $row ?: null;
-    } catch (Throwable $e) {
-        // Se a tabela de stock nao existir neste ambiente, nao bloqueia o fluxo.
-        return null;
-    }
-}
-
 function sincronizarPedidosReparacaoExistentes(PDO $pdo): void {
     $stmt = $pdo->query("
         SELECT
@@ -491,14 +674,28 @@ try {
 if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_os_manual') {
     try {
         $matricula = trim((string)($_POST['matricula'] ?? ''));
+        $viaturaRef = trim((string)($_POST['viatura_id'] ?? ''));
         $equipamento = trim((string)($_POST['equipamento'] ?? ''));
         $descricao = trim((string)($_POST['descricao'] ?? ''));
-        $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
+        $prioridade = normalizarPrioridadeOperacional((string)($_POST['prioridade'] ?? 'Media'));
+        $justificativaPrioridade = trim((string)($_POST['justificativa_prioridade'] ?? ''));
         $dataEntrada = trim((string)($_POST['data_entrada'] ?? ''));
         $custoTotal = (float)($_POST['custo_total'] ?? 0);
 
-        if ($matricula === '' || $equipamento === '' || $descricao === '' || $dataEntrada === '') {
+        if ($matricula === '' || $descricao === '' || $dataEntrada === '') {
             throw new RuntimeException('Preencha os campos obrigatorios para abrir a OS.');
+        }
+        if ($prioridade === 'Critica' && $justificativaPrioridade === '') {
+            throw new RuntimeException('Informe a justificativa para prioridade Critica.');
+        }
+
+        $viaturaValida = validarViaturaReferencia($pdo, $viaturaRef);
+        if (!$viaturaValida) {
+            throw new RuntimeException('Selecione uma viatura valida da lista.');
+        }
+        $matricula = (string)$viaturaValida['matricula'];
+        if ($equipamento === '') {
+            $equipamento = (string)$viaturaValida['nome'];
         }
 
         criarOrdemServicoAutomatica($pdo, [
@@ -508,7 +705,7 @@ if ($view === 'ordens_servico' && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_PO
             'tipo_equipamento' => $equipamento,
             'descricao_servico' => $descricao,
             'data_abertura' => str_replace('T', ' ', $dataEntrada) . ':00',
-            'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+            'prioridade' => $prioridade,
             'status_os' => 'Aberto',
             'custo_total' => $custoTotal,
         ]);
@@ -539,18 +736,46 @@ if ($view === 'pedidos_reparacao') {
         try {
             if ($acao === 'criar_pedido') {
                 $ativo_matricula = trim((string)($_POST['ativo_matricula'] ?? ''));
+                $viaturaRef = trim((string)($_POST['viatura_id'] ?? ''));
                 $tipo_equipamento = trim((string)($_POST['tipo_equipamento'] ?? ''));
                 $descricao_avaria = trim((string)($_POST['descricao_avaria'] ?? ''));
                 $localizacao = trim((string)($_POST['localizacao'] ?? ''));
+                $localizacaoRef = trim((string)($_POST['localizacao_id'] ?? ''));
                 $solicitante = trim((string)($_POST['solicitante'] ?? ''));
+                $solicitanteRef = trim((string)($_POST['solicitante_id'] ?? ''));
                 $data_pedido = trim((string)($_POST['data_pedido'] ?? ''));
-                $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
+                $prioridade = normalizarPrioridadeOperacional((string)($_POST['prioridade'] ?? 'Media'));
+                $justificativaPrioridade = trim((string)($_POST['justificativa_prioridade'] ?? ''));
                 $status = trim((string)($_POST['status'] ?? 'Pendente'));
                 $custo_estimado = (float)($_POST['custo_estimado'] ?? 0);
 
-                if ($ativo_matricula === '' || $tipo_equipamento === '' || $descricao_avaria === '' || $data_pedido === '') {
+                if ($ativo_matricula === '' || $descricao_avaria === '' || $data_pedido === '') {
                     throw new RuntimeException('Preencha os campos obrigatorios do pedido de reparacao.');
                 }
+                if ($prioridade === 'Critica' && $justificativaPrioridade === '') {
+                    throw new RuntimeException('Informe a justificativa para prioridade Critica.');
+                }
+
+                $viaturaValida = validarViaturaReferencia($pdo, $viaturaRef);
+                if (!$viaturaValida) {
+                    throw new RuntimeException('Selecione uma viatura valida da lista.');
+                }
+                $ativo_matricula = (string)$viaturaValida['matricula'];
+                if ($tipo_equipamento === '') {
+                    $tipo_equipamento = (string)$viaturaValida['nome'];
+                }
+
+                $solicitanteValido = validarUtilizadorAtivoPorReferencia($pdo, $solicitanteRef);
+                if (!$solicitanteValido) {
+                    throw new RuntimeException('Selecione um solicitante valido da lista.');
+                }
+                $solicitante = (string)$solicitanteValido['nome'];
+
+                $localizacaoValida = validarLocalizacaoReferencia($pdo, $localizacaoRef);
+                if (!$localizacaoValida) {
+                    throw new RuntimeException('Selecione uma localizacao valida da lista.');
+                }
+                $localizacao = (string)$localizacaoValida['nome'];
 
                 $pdo->beginTransaction();
                 $stmt = $pdo->prepare("
@@ -566,7 +791,7 @@ if ($view === 'pedidos_reparacao') {
                     'localizacao' => $localizacao !== '' ? $localizacao : null,
                     'solicitante' => $solicitante !== '' ? $solicitante : null,
                     'data_pedido' => $data_pedido,
-                    'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                    'prioridade' => $prioridade,
                     'status' => $status !== '' ? $status : 'Pendente',
                     'custo_estimado' => $custo_estimado,
                 ]);
@@ -579,7 +804,7 @@ if ($view === 'pedidos_reparacao') {
                     'tipo_equipamento' => $tipo_equipamento,
                     'descricao_servico' => $descricao_avaria,
                     'data_abertura' => $data_pedido . ' 08:00:00',
-                    'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                    'prioridade' => $prioridade,
                     'status_os' => 'Aberto',
                     'custo_total' => $custo_estimado,
                 ]);
@@ -741,17 +966,6 @@ if ($view === 'pedidos_reparacao') {
                     if (count($materiais) === 0) {
                         throw new RuntimeException('Adicione pelo menos um material necessario antes de enviar para Logistica.');
                     }
-                    $bloqueados = [];
-                    foreach ($materiais as $m) {
-                        $itemMaterial = (string)($m['item'] ?? '');
-                        $disp = itemDisponivelNoArmazem($pdo, $itemMaterial);
-                        if ($disp) {
-                            $bloqueados[] = $itemMaterial . ' (stock: ' . number_format((float)($disp['stock_atual'] ?? 0), 2, ',', '.') . ' ' . (string)($disp['unidade'] ?? 'un') . ')';
-                        }
-                    }
-                    if (!empty($bloqueados)) {
-                        throw new RuntimeException('Nao foi enviado para Logistica: material ja existe no armazem. Itens: ' . implode('; ', $bloqueados));
-                    }
 
                     $diagTexto = trim((string)($pedidoRow['descricao_avaria'] ?? ''));
                     $diagTecnicoStmt = $pdo->prepare("SELECT descricao_tecnica FROM oficina_pedidos_reparacao WHERE id = :id");
@@ -888,6 +1102,45 @@ if ($view === 'pedidos_reparacao') {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $pedidos_reparacao = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $pedidos_reparacao_resumo['todos'] = count($pedidos_reparacao);
+        foreach ($pedidos_reparacao as $pedidoResumo) {
+            $statusNormalizadoResumo = normalizarStatusPedido((string)($pedidoResumo['status'] ?? ''));
+            if ($statusNormalizadoResumo === 'aceito' || $statusNormalizadoResumo === 'em_andamento') {
+                $pedidos_reparacao_resumo['em_andamento']++;
+            }
+            if ($statusNormalizadoResumo === 'resolvido') {
+                $pedidos_reparacao_resumo['concluidos']++;
+            }
+            if ($statusNormalizadoResumo === 'logistica_externa') {
+                $pedidos_reparacao_resumo['espera_resposta']++;
+            }
+            if ($statusNormalizadoResumo === 'pendente') {
+                $pedidos_reparacao_resumo['pendentes']++;
+            }
+        }
+
+        if ($pedido_status_visao !== 'todos') {
+            $pedidos_reparacao = array_values(array_filter(
+                $pedidos_reparacao,
+                static function (array $pedido) use ($pedido_status_visao): bool {
+                    $statusNormalizado = normalizarStatusPedido((string)($pedido['status'] ?? ''));
+                    if ($pedido_status_visao === 'em_andamento') {
+                        return $statusNormalizado === 'aceito' || $statusNormalizado === 'em_andamento';
+                    }
+                    if ($pedido_status_visao === 'concluidos') {
+                        return $statusNormalizado === 'resolvido';
+                    }
+                    if ($pedido_status_visao === 'espera_resposta') {
+                        return $statusNormalizado === 'logistica_externa';
+                    }
+                    if ($pedido_status_visao === 'pendentes') {
+                        return $statusNormalizado === 'pendente';
+                    }
+                    return true;
+                }
+            ));
+        }
     } catch (PDOException $e) {
         $erro_pedidos = "Nao foi possivel carregar pedidos de reparacao.";
     }
@@ -955,14 +1208,6 @@ if ($view === 'requisicoes') {
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_requisicao)) {
                 throw new RuntimeException('Data de requisicao invalida.');
             }
-            $itemArmazem = itemDisponivelNoArmazem($pdo, $item);
-            if ($itemArmazem) {
-                throw new RuntimeException(
-                    'Pedido bloqueado: este item ja existe no armazem com stock disponivel (' .
-                    number_format((float)($itemArmazem['stock_atual'] ?? 0), 2, ',', '.') . ' ' .
-                    (string)($itemArmazem['unidade'] ?? 'un') . ').'
-                );
-            }
 
             $stmt = $pdo->prepare("
                 INSERT INTO logistica_requisicoes
@@ -1010,6 +1255,39 @@ if ($view === 'requisicoes') {
             'fim_semana' => $fimSemanaOficina,
         ]);
         $requisicoes_oficina = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $requisicoes_resumo['todos'] = count($requisicoes_oficina);
+        foreach ($requisicoes_oficina as $reqResumo) {
+            $statusReqResumo = normalizarStatusRequisicaoOficina((string)($reqResumo['status'] ?? 'Pendente'));
+            if ($statusReqResumo === 'pendente') {
+                $requisicoes_resumo['pendentes']++;
+            }
+            if ($statusReqResumo === 'aprovada') {
+                $requisicoes_resumo['aprovadas']++;
+            }
+            if ($statusReqResumo === 'negada' || $statusReqResumo === 'cancelada') {
+                $requisicoes_resumo['negadas']++;
+            }
+        }
+
+        if ($req_status_visao !== 'todos') {
+            $requisicoes_oficina = array_values(array_filter(
+                $requisicoes_oficina,
+                static function (array $req) use ($req_status_visao): bool {
+                    $statusReq = normalizarStatusRequisicaoOficina((string)($req['status'] ?? 'Pendente'));
+                    if ($req_status_visao === 'pendentes') {
+                        return $statusReq === 'pendente';
+                    }
+                    if ($req_status_visao === 'aprovadas') {
+                        return $statusReq === 'aprovada';
+                    }
+                    if ($req_status_visao === 'negadas') {
+                        return $statusReq === 'negada' || $statusReq === 'cancelada';
+                    }
+                    return true;
+                }
+            ));
+        }
     } catch (Throwable $e) {
         $erro_requisicoes = 'Nao foi possivel carregar as requisicoes da oficina.';
     }
@@ -1019,18 +1297,39 @@ if ($view === 'manutencao') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_manutencao') {
         try {
             $ativo_matricula = trim((string)($_POST['ativo_matricula'] ?? ''));
+            $viaturaRef = trim((string)($_POST['viatura_id'] ?? ''));
             $tipo_equipamento = trim((string)($_POST['tipo_equipamento'] ?? ''));
             $tipo_manutencao = trim((string)($_POST['tipo_manutencao'] ?? ''));
             $descricao_servico = trim((string)($_POST['descricao_servico'] ?? ''));
             $solicitante = trim((string)($_POST['solicitante'] ?? ''));
+            $solicitanteRef = trim((string)($_POST['solicitante_id'] ?? ''));
             $data_manutencao = trim((string)($_POST['data_manutencao'] ?? ''));
-            $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
+            $prioridade = normalizarPrioridadeOperacional((string)($_POST['prioridade'] ?? 'Media'));
+            $justificativaPrioridade = trim((string)($_POST['justificativa_prioridade'] ?? ''));
             $status = trim((string)($_POST['status'] ?? 'Pendente'));
             $custo_total = (float)($_POST['custo_total'] ?? 0);
 
-            if ($ativo_matricula === '' || $tipo_equipamento === '' || $tipo_manutencao === '' || $data_manutencao === '') {
+            if ($ativo_matricula === '' || $tipo_manutencao === '' || $data_manutencao === '') {
                 throw new RuntimeException('Preencha os campos obrigatorios da manutencao.');
             }
+            if ($prioridade === 'Critica' && $justificativaPrioridade === '') {
+                throw new RuntimeException('Informe a justificativa para prioridade Critica.');
+            }
+
+            $viaturaValida = validarViaturaReferencia($pdo, $viaturaRef);
+            if (!$viaturaValida) {
+                throw new RuntimeException('Selecione uma viatura valida da lista.');
+            }
+            $ativo_matricula = (string)$viaturaValida['matricula'];
+            if ($tipo_equipamento === '') {
+                $tipo_equipamento = (string)$viaturaValida['nome'];
+            }
+
+            $solicitanteValido = validarUtilizadorAtivoPorReferencia($pdo, $solicitanteRef);
+            if (!$solicitanteValido) {
+                throw new RuntimeException('Selecione um solicitante valido da lista.');
+            }
+            $solicitante = (string)$solicitanteValido['nome'];
 
             $pdo->beginTransaction();
             $stmt = $pdo->prepare("
@@ -1046,7 +1345,7 @@ if ($view === 'manutencao') {
                 'descricao_servico' => $descricao_servico !== '' ? $descricao_servico : null,
                 'solicitante' => $solicitante !== '' ? $solicitante : null,
                 'data_manutencao' => $data_manutencao,
-                'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                'prioridade' => $prioridade,
                 'status' => $status !== '' ? $status : 'Pendente',
                 'custo_total' => $custo_total,
             ]);
@@ -1060,7 +1359,7 @@ if ($view === 'manutencao') {
                 'tipo_equipamento' => $tipo_equipamento,
                 'descricao_servico' => $textoServico,
                 'data_abertura' => $data_manutencao . ' 08:00:00',
-                'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                'prioridade' => $prioridade,
                 'status_os' => 'Aberto',
                 'custo_total' => $custo_total,
             ]);
@@ -1109,8 +1408,94 @@ if ($view === 'manutencao') {
             'fim_semana' => $fimSemanaOficina,
         ]);
         $manutencoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $manutencoes_resumo['todos'] = count($manutencoes);
+        foreach ($manutencoes as $manutResumo) {
+            $statusNormalizadoManut = normalizarStatusManutencao((string)($manutResumo['status'] ?? 'Pendente'));
+            if ($statusNormalizadoManut === 'em_andamento') {
+                $manutencoes_resumo['em_andamento']++;
+            }
+            if ($statusNormalizadoManut === 'concluida') {
+                $manutencoes_resumo['concluidos']++;
+            }
+            if ($statusNormalizadoManut === 'pendente') {
+                $manutencoes_resumo['pendentes']++;
+            }
+        }
+
+        if ($manut_status_visao !== 'todos') {
+            $manutencoes = array_values(array_filter(
+                $manutencoes,
+                static function (array $manut) use ($manut_status_visao): bool {
+                    $statusNormalizado = normalizarStatusManutencao((string)($manut['status'] ?? 'Pendente'));
+                    if ($manut_status_visao === 'em_andamento') {
+                        return $statusNormalizado === 'em_andamento';
+                    }
+                    if ($manut_status_visao === 'concluidos') {
+                        return $statusNormalizado === 'concluida';
+                    }
+                    if ($manut_status_visao === 'pendentes') {
+                        return $statusNormalizado === 'pendente';
+                    }
+                    return true;
+                }
+            ));
+        }
     } catch (PDOException $e) {
         $erro_manutencao = "Nao foi possivel carregar manutencoes.";
+    }
+}
+
+if ($view === 'checklist') {
+    try {
+        $stmtChecklist = $pdo->query("
+            SELECT r.id, r.codigo, r.template_id, r.data_inspecao, r.viatura_id, r.tipo_equipamento, r.projeto, r.condutor, r.inspector, r.status_geral, r.observacoes, r.criado_em,
+                   t.nome AS template_nome, t.codigo AS template_codigo
+            FROM transporte_checklist_registos r
+            LEFT JOIN transporte_checklist_templates t ON t.id = r.template_id
+            ORDER BY r.data_inspecao DESC, r.id DESC
+        ");
+        $checklists_hse = $stmtChecklist ? ($stmtChecklist->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+        if ($mode === 'detalhe') {
+            $checklistId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+            if ($checklistId <= 0) {
+                $erro_checklist = 'Checklist invalida para detalhe.';
+            } else {
+                $stmtDetalheChk = $pdo->prepare("
+                    SELECT r.id, r.codigo, r.template_id, r.data_inspecao, r.viatura_id, r.tipo_equipamento, r.projeto, r.condutor, r.inspector, r.status_geral, r.observacoes, r.criado_em,
+                           t.nome AS template_nome, t.codigo AS template_codigo
+                    FROM transporte_checklist_registos r
+                    LEFT JOIN transporte_checklist_templates t ON t.id = r.template_id
+                    WHERE r.id = :id
+                    LIMIT 1
+                ");
+                $stmtDetalheChk->execute([':id' => $checklistId]);
+                $checklist_hse_detalhe = $stmtDetalheChk->fetch(PDO::FETCH_ASSOC) ?: null;
+                if (!$checklist_hse_detalhe) {
+                    $erro_checklist = 'Checklist nao encontrada.';
+                    $mode = 'list';
+                } else {
+                    $stmtItensChk = $pdo->prepare("
+                        SELECT i.ordem, i.descricao, COALESCE(rp.resultado, '') AS resultado, COALESCE(rp.observacao, '') AS observacao
+                        FROM transporte_checklist_itens i
+                        LEFT JOIN transporte_checklist_respostas rp
+                            ON rp.item_id = i.id
+                           AND rp.registo_id = :registo_id
+                        WHERE i.template_id = :template_id
+                          AND i.ativo = 1
+                        ORDER BY i.ordem ASC, i.id ASC
+                    ");
+                    $stmtItensChk->execute([
+                        ':registo_id' => $checklistId,
+                        ':template_id' => (int) ($checklist_hse_detalhe['template_id'] ?? 0),
+                    ]);
+                    $checklist_hse_itens = $stmtItensChk->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        $erro_checklist = 'Nao foi possivel carregar as checklists do HSE.';
     }
 }
 
@@ -1118,14 +1503,28 @@ if ($view === 'avarias') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_avaria') {
         try {
             $ativo_matricula = trim((string)($_POST['ativo_matricula'] ?? ''));
+            $viaturaRef = trim((string)($_POST['viatura_id'] ?? ''));
             $tipo_equipamento = trim((string)($_POST['tipo_equipamento'] ?? ''));
             $descricao = trim((string)($_POST['descricao'] ?? ''));
             $data_evento = trim((string)($_POST['data_evento'] ?? ''));
-            $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
+            $prioridade = normalizarPrioridadeOperacional((string)($_POST['prioridade'] ?? 'Media'));
+            $justificativaPrioridade = trim((string)($_POST['justificativa_prioridade'] ?? ''));
             $criar_os = (string)($_POST['criar_os'] ?? '1') === '1';
 
-            if ($ativo_matricula === '' || $tipo_equipamento === '' || $descricao === '' || $data_evento === '') {
+            if ($ativo_matricula === '' || $descricao === '' || $data_evento === '') {
                 throw new RuntimeException('Preencha os campos obrigatorios da avaria.');
+            }
+            if ($prioridade === 'Critica' && $justificativaPrioridade === '') {
+                throw new RuntimeException('Informe a justificativa para prioridade Critica.');
+            }
+
+            $viaturaValida = validarViaturaReferencia($pdo, $viaturaRef);
+            if (!$viaturaValida) {
+                throw new RuntimeException('Selecione uma viatura valida da lista.');
+            }
+            $ativo_matricula = (string)$viaturaValida['matricula'];
+            if ($tipo_equipamento === '') {
+                $tipo_equipamento = (string)$viaturaValida['nome'];
             }
 
             $pdo->beginTransaction();
@@ -1151,7 +1550,7 @@ if ($view === 'avarias') {
                     'tipo_equipamento' => $tipo_equipamento,
                     'descricao_servico' => $descricao,
                     'data_abertura' => $data_evento . ' 08:00:00',
-                    'prioridade' => $prioridade !== '' ? $prioridade : 'Normal',
+                    'prioridade' => $prioridade,
                     'status_os' => 'Aberto',
                 ]);
                 $codigoOs = (string)$novaOs['codigo'];
@@ -1233,6 +1632,45 @@ if ($view === 'ordens_servico') {
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $ordens_servico = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $ordens_servico_resumo['todos'] = count($ordens_servico);
+        foreach ($ordens_servico as $osResumo) {
+            $statusOsResumo = normalizarStatusOrdemServico((string)($osResumo['status_os'] ?? 'Aberto'));
+            if ($statusOsResumo === 'aberto') {
+                $ordens_servico_resumo['abertas']++;
+            }
+            if ($statusOsResumo === 'aceito' || $statusOsResumo === 'em_andamento') {
+                $ordens_servico_resumo['em_andamento']++;
+            }
+            if ($statusOsResumo === 'concluida') {
+                $ordens_servico_resumo['concluidas']++;
+            }
+            if ($statusOsResumo === 'aguardando_pecas') {
+                $ordens_servico_resumo['aguardando_pecas']++;
+            }
+        }
+
+        if ($os_status_visao !== 'todos') {
+            $ordens_servico = array_values(array_filter(
+                $ordens_servico,
+                static function (array $os) use ($os_status_visao): bool {
+                    $statusOs = normalizarStatusOrdemServico((string)($os['status_os'] ?? 'Aberto'));
+                    if ($os_status_visao === 'abertas') {
+                        return $statusOs === 'aberto';
+                    }
+                    if ($os_status_visao === 'em_andamento') {
+                        return $statusOs === 'aceito' || $statusOs === 'em_andamento';
+                    }
+                    if ($os_status_visao === 'concluidas') {
+                        return $statusOs === 'concluida';
+                    }
+                    if ($os_status_visao === 'aguardando_pecas') {
+                        return $statusOs === 'aguardando_pecas';
+                    }
+                    return true;
+                }
+            ));
+        }
     } catch (PDOException $e) {
         $erro_os = "Nao foi possivel carregar ordens de servico.";
     }
@@ -1278,8 +1716,94 @@ if ($view === 'presencas') {
         }
     }
 
-    if (isset($_GET['doc']) && in_array((string) $_GET['doc'], ['presenca_pdf', 'presenca_excel', 'presenca_word'], true)) {
+    if (isset($_GET['doc']) && in_array((string) $_GET['doc'], ['presenca_pdf', 'presenca_excel', 'presenca_word', 'checklist_pdf', 'checklist_excel'], true)) {
         $docTipoPres = (string) ($_GET['doc'] ?? 'presenca_pdf');
+        if (in_array($docTipoPres, ['checklist_pdf', 'checklist_excel'], true)) {
+            $checklistIdDoc = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+            if ($checklistIdDoc <= 0) {
+                http_response_code(400);
+                echo 'Checklist invalida.';
+                exit;
+            }
+
+            $stmtChkDoc = $pdo->prepare("
+                SELECT r.id, r.codigo, r.template_id, r.data_inspecao, r.viatura_id, r.tipo_equipamento, r.projeto, r.condutor, r.inspector, r.status_geral, r.observacoes,
+                       t.nome AS template_nome, t.codigo AS template_codigo
+                FROM transporte_checklist_registos r
+                LEFT JOIN transporte_checklist_templates t ON t.id = r.template_id
+                WHERE r.id = :id
+                LIMIT 1
+            ");
+            $stmtChkDoc->execute([':id' => $checklistIdDoc]);
+            $chkDoc = $stmtChkDoc->fetch(PDO::FETCH_ASSOC) ?: null;
+            if (!$chkDoc) {
+                http_response_code(404);
+                echo 'Checklist nao encontrada.';
+                exit;
+            }
+
+            $stmtItensDoc = $pdo->prepare("
+                SELECT i.ordem, i.descricao, COALESCE(rp.resultado, '') AS resultado, COALESCE(rp.observacao, '') AS observacao
+                FROM transporte_checklist_itens i
+                LEFT JOIN transporte_checklist_respostas rp
+                    ON rp.item_id = i.id
+                   AND rp.registo_id = :registo_id
+                WHERE i.template_id = :template_id
+                  AND i.ativo = 1
+                ORDER BY i.ordem ASC, i.id ASC
+            ");
+            $stmtItensDoc->execute([
+                ':registo_id' => $checklistIdDoc,
+                ':template_id' => (int)($chkDoc['template_id'] ?? 0),
+            ]);
+            $itensDoc = $stmtItensDoc->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            if ($docTipoPres === 'checklist_excel') {
+                header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+                header('Content-Disposition: attachment; filename="checklist_hse_' . $checklistIdDoc . '.xls"');
+            } else {
+                header('Content-Type: text/html; charset=UTF-8');
+            }
+
+            echo '<!doctype html><html><head><meta charset="utf-8"><title>Checklist HSE</title>
+            <style>
+                body{font-family:Arial,sans-serif;color:#111}
+                .head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}
+                .head-left{display:flex;align-items:center;gap:10px}
+                .head-left img{height:34px}
+                .head-right{display:flex;align-items:center;gap:10px}
+                .head-right img{height:36px}
+                .title{font-size:18px;font-weight:800}
+                .meta{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;margin-bottom:10px}
+                .meta div{border:1px solid #e2e8f0;border-radius:8px;padding:7px;font-size:12px}
+                table{width:100%;border-collapse:collapse}
+                th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
+                th{background:#111;color:#f4b400}
+            </style></head><body>';
+            echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Checklist HSE - Oficina</div></div><div class="head-right"><div>ID: ' . (int)$chkDoc['id'] . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
+            echo '<div class="meta">';
+            echo '<div><strong>Codigo</strong><br>' . htmlspecialchars((string)($chkDoc['codigo'] ?? '-')) . '</div>';
+            echo '<div><strong>Template</strong><br>' . htmlspecialchars((string)($chkDoc['template_nome'] ?? '-')) . '</div>';
+            echo '<div><strong>Viatura</strong><br>' . htmlspecialchars((string)($chkDoc['viatura_id'] ?? '-')) . '</div>';
+            echo '<div><strong>Status</strong><br>' . htmlspecialchars((string)($chkDoc['status_geral'] ?? '-')) . '</div>';
+            echo '</div>';
+            echo '<table><thead><tr><th>#</th><th>Item</th><th>Resultado</th><th>Observacao</th></tr></thead><tbody>';
+            if (empty($itensDoc)) {
+                echo '<tr><td colspan="4">Sem itens para esta checklist.</td></tr>';
+            } else {
+                foreach ($itensDoc as $idx => $itemDoc) {
+                    echo '<tr>';
+                    echo '<td>' . (int)($idx + 1) . '</td>';
+                    echo '<td>' . htmlspecialchars((string)($itemDoc['descricao'] ?? '-')) . '</td>';
+                    echo '<td>' . htmlspecialchars((string)($itemDoc['resultado'] ?? '-')) . '</td>';
+                    echo '<td>' . htmlspecialchars((string)($itemDoc['observacao'] ?? '-')) . '</td>';
+                    echo '</tr>';
+                }
+            }
+            echo '</tbody></table>' . ($docTipoPres === 'checklist_pdf' ? '<script>window.print();</script>' : '') . '</body></html>';
+            exit;
+        }
+
         $dataDoc = trim((string) ($_GET['data_presenca'] ?? ''));
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataDoc)) {
             http_response_code(400);
@@ -1312,13 +1836,17 @@ if ($view === 'presencas') {
         <style>
             body{font-family:Arial,sans-serif;color:#111}
             .head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}
+            .head-left{display:flex;align-items:center;gap:10px}
+            .head-left img{height:34px}
+            .head-right{display:flex;align-items:center;gap:10px}
+            .head-right img{height:36px}
             .title{font-size:18px;font-weight:800}
             table{width:100%;border-collapse:collapse}
             th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
             th{background:#111;color:#f4b400}
             tr:nth-child(even) td{background:#fff8e1}
         </style></head><body>';
-        echo '<div class="head"><div class="title">Lista de Presencas - Oficina</div><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div></div>';
+        echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Oficina</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
         echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
         if (empty($rowsDoc)) {
             echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
@@ -1909,9 +2437,10 @@ function formatarMoedaMZN($valor): string {
 
 function badgeClassePrioridade($valor) {
     $v = strtolower(trim((string)$valor));
-    if ($v === 'urgente') return 'warn';
+    if ($v === 'critica' || $v === 'cr?tica' || $v === 'urgente') return 'warn';
     if ($v === 'alta') return 'warn';
-    if ($v === 'normal') return 'ok';
+    if ($v === 'media' || $v === 'm?dia' || $v === 'normal') return 'ok';
+    if ($v === 'baixa') return 'info';
     return 'info';
 }
 
@@ -1934,10 +2463,43 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
 <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
 <div class="main-content">
+    <div class="top-bar">
+        <h2>Oficina</h2>
+        <div class="user-info">
+            <i class="fa-regular fa-user"></i>
+            <strong><?= htmlspecialchars($_SESSION['usuario_nome'] ?? 'Utilizador') ?></strong>
+        </div>
+    </div>
+
     <?php include 'includes/tabs.php'; ?>
 
     <div class="container">
         <style>
+            .top-bar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 14px 40px;
+                background: #ffffff;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .top-bar h2 {
+                margin: 0;
+                font-size: 24px;
+                line-height: 1.1;
+                color: #111827;
+            }
+            .top-bar .user-info {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 14px;
+                color: #6b7280;
+            }
+            .top-bar .user-info strong {
+                color: #111827;
+            }
             .export-tools { display:flex; gap:8px; }
             .btn-export {
                 border:1px solid #d1d5db;
@@ -2052,6 +2614,19 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
             .white-card.white-card-pedidos .pedidos-table-wrap.no-box .table th,
             .white-card.white-card-pedidos .pedidos-table-wrap.no-box .table td {
                 padding: 12px 10px;
+            }
+            .white-card.white-card-avarias {
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                padding: 0;
+            }
+            .white-card.white-card-avarias .avarias-shell {
+                background: transparent;
+                border: none;
+                border-radius: 0;
+                box-shadow: none;
+                padding: 0;
             }
             .avarias-shell {
                 background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
@@ -2169,16 +2744,136 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
             .pedido-acoes {
                 display: flex;
                 gap: 6px;
-                flex-wrap: wrap;
+                flex-wrap: nowrap;
+                align-items: center;
             }
             .btn-acao {
                 border: none;
                 color: #fff;
-                padding: 6px 10px;
-                border-radius: 7px;
-                font-size: 11px;
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                border-radius: 9px;
+                font-size: 12px;
                 font-weight: 700;
                 cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                text-decoration: none;
+                box-shadow: 0 5px 14px rgba(15, 23, 42, 0.18);
+                transition: transform .15s ease, box-shadow .2s ease, opacity .2s ease;
+            }
+            .btn-acao:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.24);
+                opacity: .96;
+            }
+            .btn-acao:focus-visible {
+                outline: 2px solid #93c5fd;
+                outline-offset: 1px;
+            }
+            .btn-acao.dark { background: #111827; }
+            .btn-acao.blue { background: #1f6feb; }
+            .btn-acao.purple { background: #8b5cf6; }
+            .pedidos-overview {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(150px, 1fr));
+                gap: 10px;
+                margin: 8px 0 10px;
+            }
+            .pedido-kpi-card {
+                position: relative;
+                border: 1px solid #e2e8f0;
+                border-radius: 14px;
+                padding: 12px;
+                text-decoration: none;
+                color: #0f172a;
+                background: linear-gradient(160deg, #ffffff 0%, #f8fafc 100%);
+                box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+                transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease;
+                overflow: hidden;
+            }
+            .pedido-kpi-card::after {
+                content: '';
+                position: absolute;
+                inset: auto 0 0 0;
+                height: 3px;
+                background: var(--kpi-color, #64748b);
+                opacity: .25;
+            }
+            .pedido-kpi-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 12px 26px rgba(15, 23, 42, 0.11);
+            }
+            .pedido-kpi-card.active {
+                border-color: var(--kpi-color, #0f172a);
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+                background: linear-gradient(155deg, #ffffff 0%, var(--kpi-bg, #f1f5f9) 100%);
+            }
+            .pedido-kpi-card.active::after { opacity: 1; height: 4px; }
+            .pedido-kpi-card.slate { --kpi-color: #475569; --kpi-bg: #e2e8f0; }
+            .pedido-kpi-card.blue { --kpi-color: #2563eb; --kpi-bg: #dbeafe; }
+            .pedido-kpi-card.green { --kpi-color: #16a34a; --kpi-bg: #dcfce7; }
+            .pedido-kpi-card.amber { --kpi-color: #d97706; --kpi-bg: #fef3c7; }
+            .pedido-kpi-card.orange { --kpi-color: #ea580c; --kpi-bg: #ffedd5; }
+            .pedido-kpi-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 6px;
+            }
+            .pedido-kpi-title {
+                font-size: 11px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .24px;
+                color: #334155;
+            }
+            .pedido-kpi-icon {
+                width: 24px;
+                height: 24px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+                color: #ffffff;
+                background: var(--kpi-color, #64748b);
+            }
+            .pedido-kpi-number {
+                font-size: 30px;
+                font-weight: 800;
+                line-height: 1;
+                color: #0f172a;
+            }
+            .pedido-kpi-foot {
+                margin-top: 6px;
+                font-size: 11px;
+                color: #64748b;
+            }
+            .pedidos-overview-meta {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+                margin: 0 0 10px 0;
+            }
+            .pedidos-overview-note {
+                font-size: 12px;
+                color: #475569;
+                margin: 0;
+            }
+            .pedidos-overview-filter {
+                font-size: 11px;
+                font-weight: 700;
+                color: #1e293b;
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 999px;
+                padding: 5px 10px;
             }
             .kpi-grid {
                 display: grid;
@@ -2453,6 +3148,7 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
             }
             @media (max-width: 980px) {
                 .kpi-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+                .pedidos-overview { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
                 .relatorio-filtros { grid-template-columns: 1fr 1fr; }
                 .relatorio-grid-2 { grid-template-columns: 1fr; }
                 .screen-title-row { flex-direction: column; align-items: flex-start; }
@@ -2594,11 +3290,18 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 .relatorio-filtros { grid-template-columns: 1fr 1fr; }
             }
         </style>
-        <?php $classe_card_oficina = ($view === 'pedidos_reparacao' && $mode === 'list') ? ' white-card-pedidos' : ''; ?>
+        <?php
+            $classe_card_oficina = '';
+            if ($view === 'pedidos_reparacao' && $mode === 'list') {
+                $classe_card_oficina = ' white-card-pedidos';
+            } elseif ($view === 'avarias' && $mode === 'list') {
+                $classe_card_oficina = ' white-card-avarias';
+            }
+        ?>
         <div class="white-card<?= $classe_card_oficina ?>">
             <?php if ($view !== 'relatorios' && $view !== 'presencas'): ?>
                 <div class="module-entry">
-                    <?php if (!in_array($view, ['pedidos_reparacao', 'manutencao'], true)): ?>
+                    <?php if (!in_array($view, ['pedidos_reparacao', 'manutencao', 'checklist'], true)): ?>
                         <a href="?tab=<?= urlencode((string)$tab) ?>&view=<?= urlencode((string)$view) ?>&mode=form" class="module-entry-btn form"><i class="fas fa-plus"></i> Adicionar</a>
                     <?php endif; ?>
                 </div>
@@ -2610,7 +3313,7 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 </div>
             <?php else: ?>
                 <div class="module-modal" id="oficina-main-modal">
-                    <?php if ($view !== 'relatorios' && $view !== 'pedidos_reparacao' && $view !== 'ordens_servico' && $view !== 'requisicoes' && $view !== 'manutencao' && $view !== 'avarias' && $view !== 'presencas'): ?>
+                    <?php if ($view !== 'relatorios' && $view !== 'pedidos_reparacao' && $view !== 'ordens_servico' && $view !== 'requisicoes' && $view !== 'manutencao' && $view !== 'avarias' && $view !== 'presencas' && $view !== 'checklist'): ?>
                         <div class="module-modal-header">
                             <h4>Oficina - <?= htmlspecialchars((string)$view) ?></h4>
                             <div class="module-modal-actions">
@@ -2628,7 +3331,8 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             $view !== 'requisicoes' &&
                             $view !== 'manutencao' &&
                             $view !== 'avarias' &&
-                            $view !== 'presencas'
+                            $view !== 'presencas' &&
+                            $view !== 'checklist'
                         ): ?>
                         <div class="list-tools" style="margin-bottom:10px;">
                             <div class="search-group">
@@ -2657,6 +3361,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                     <option>Aberto</option>
                                     <option>Em andamento</option>
                                     <option>Fechado</option>
+                                <?php elseif ($view == 'checklist'): ?>
+                                    <option value="">Filtrar por status</option>
+                                    <option>Conforme</option>
+                                    <option>Nao Conforme</option>
                                 <?php else: ?>
                                     <option value="">Sem filtro de status</option>
                                 <?php endif; ?>
@@ -2698,9 +3406,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         <div class="form-group">
                             <label>prioridade</label>
                             <select name="prioridade">
-                                <option>Normal</option>
+                                <option>Baixa</option>
+                                <option>Media</option>
                                 <option>Alta</option>
-                                <option>Urgente</option>
+                                <option>Critica</option>
                             </select>
                         </div>
 
@@ -2726,10 +3435,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                 <?php elseif ($view == 'pedidos_reparacao'): ?>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
                         <div>
-                            <h3>Pedido de Reparação</h3>
+                            <h3>Pedido de Repara??o</h3>
                             <p style="font-size:12px; color:#6b7280; margin-top:4px;">Registe o pedido com prioridade, local e sintomas para acelerar o atendimento.</p>
                         </div>
-                        <div class="pill warn">Nova solicitação</div>
+                        <div class="pill warn">Nova solicita??o</div>
                     </div>
 
                     <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=form">
@@ -2764,9 +3473,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         <div class="form-group">
                             <label>prioridade</label>
                             <select name="prioridade">
-                                <option>Normal</option>
+                                <option>Baixa</option>
+                                <option>Media</option>
                                 <option>Alta</option>
-                                <option>Urgente</option>
+                                <option>Critica</option>
                             </select>
                         </div>
 
@@ -2837,9 +3547,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         <div class="form-group">
                             <label>prioridade</label>
                             <select name="prioridade">
-                                <option>Normal</option>
+                                <option>Baixa</option>
+                                <option>Media</option>
                                 <option>Alta</option>
-                                <option>Urgente</option>
+                                <option>Critica</option>
                             </select>
                         </div>
 
@@ -2893,9 +3604,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         <div class="form-group">
                             <label>prioridade</label>
                             <select name="prioridade">
-                                <option>Normal</option>
+                                <option>Baixa</option>
+                                <option>Media</option>
                                 <option>Alta</option>
-                                <option>Urgente</option>
+                                <option>Critica</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -2949,9 +3661,10 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         <div class="form-group">
                             <label>Prioridade</label>
                             <select name="prioridade">
-                                <option>Normal</option>
+                                <option>Baixa</option>
+                                <option>Media</option>
                                 <option>Alta</option>
-                                <option>Urgente</option>
+                                <option>Critica</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -3048,7 +3761,6 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                             <textarea name="descricao_tecnica" rows="4" style="width:100%; border:1px solid #d1d5db; border-radius:8px; padding:8px;" placeholder="Descreva o diagnostico tecnico realizado pelos mecanicos..."><?= htmlspecialchars((string)($pedido_reparacao_detalhe['descricao_tecnica'] ?? '')) ?></textarea>
                             <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
                                 <button type="submit" class="btn-modern success">Salvar diagnostico</button>
-                                <button type="button" class="btn-modern dark" id="open-material-modal">+Materiais Necessarios</button>
                             </div>
                         </form>
                     </div>
@@ -3113,22 +3825,15 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         </div>
                         </div>
                     </div>
-                    <div class="section-card" style="margin-bottom:12px;">
-                        <h4 style="margin-top:0;">Enviar para Logistica</h4>
-                        <p style="font-size:12px; color:#6b7280;">A Logistica recebe a relacao de pecas para tratar cotacoes.</p>
-                        <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= $pedidoIdDetalheUi ?>&detalhe_lista=<?= urlencode((string)$detalhe_lista) ?>" style="display:flex; justify-content:center;">
-                            <input type="hidden" name="acao" value="enviar_logistica_detalhe">
-                            <input type="hidden" name="pedido_id" value="<?= $pedidoIdDetalheUi ?>">
-                            <button type="submit" class="btn-modern purple">Mandar para Logistica</button>
-                        </form>
-                    </div>
                     <script>
                     (function() {
                         var modal = document.getElementById('material-modal');
                         var openBtn = document.getElementById('open-material-modal');
                         var closeBtn = document.getElementById('close-material-modal');
-                        if (!modal || !openBtn || !closeBtn) return;
-                        openBtn.addEventListener('click', function() { modal.classList.add('open'); });
+                        if (!modal || !closeBtn) return;
+                        if (openBtn) {
+                            openBtn.addEventListener('click', function() { modal.classList.add('open'); });
+                        }
                         closeBtn.addEventListener('click', function() { modal.classList.remove('open'); });
                         modal.addEventListener('click', function(e) {
                             if (e.target === modal) modal.classList.remove('open');
@@ -3141,6 +3846,56 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     </script>
 
                 <?php endif; ?>
+            <?php elseif ($mode == 'detalhe' && $view == 'checklist'): ?>
+                <?php if ($erro_checklist): ?>
+                    <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_checklist) ?></p>
+                <?php endif; ?>
+                <?php if ($checklist_hse_detalhe): ?>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0;">Checklist HSE #<?= (int)($checklist_hse_detalhe['id'] ?? 0) ?></h3>
+                        <div style="display:flex; gap:8px;">
+                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=list" class="btn-modern ghost" style="text-decoration:none;">Voltar</a>
+                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=detalhe&id=<?= (int)($checklist_hse_detalhe['id'] ?? 0) ?>&doc=checklist_pdf" target="_blank" class="btn-modern danger" style="text-decoration:none;">PDF</a>
+                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=detalhe&id=<?= (int)($checklist_hse_detalhe['id'] ?? 0) ?>&doc=checklist_excel" target="_blank" class="btn-modern success" style="text-decoration:none;">Excel</a>
+                        </div>
+                    </div>
+                    <div class="pedido-summary-card" style="margin-bottom:12px;">
+                        <div class="pedido-summary-meta">
+                            <div class="pedido-summary-chip"><strong>Codigo</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['codigo'] ?? '-')) ?></div>
+                            <div class="pedido-summary-chip"><strong>Template</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['template_nome'] ?? '-')) ?></div>
+                            <div class="pedido-summary-chip"><strong>Data</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['data_inspecao'] ?? '-')) ?></div>
+                            <div class="pedido-summary-chip"><strong>Status</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['status_geral'] ?? '-')) ?></div>
+                            <div class="pedido-summary-chip"><strong>Viatura/Maquina</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['viatura_id'] ?? '-')) ?></div>
+                            <div class="pedido-summary-chip"><strong>Inspector</strong><?= htmlspecialchars((string)($checklist_hse_detalhe['inspector'] ?? '-')) ?></div>
+                        </div>
+                    </div>
+                    <div class="pedidos-table-wrap">
+                        <table class="table" id="oficina-checklist-detalhe-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Item</th>
+                                    <th>Resultado</th>
+                                    <th>Observacao</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (count($checklist_hse_itens) === 0): ?>
+                                    <tr><td colspan="4" style="text-align:center;color:#6b7280;padding:12px;">Sem itens para esta checklist.</td></tr>
+                                <?php else: ?>
+                                    <?php foreach ($checklist_hse_itens as $idxChk => $itemChk): ?>
+                                        <tr>
+                                            <td><?= (int)($idxChk + 1) ?></td>
+                                            <td><?= htmlspecialchars((string)($itemChk['descricao'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars((string)($itemChk['resultado'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars((string)($itemChk['observacao'] ?? '-')) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             <?php elseif ($mode == 'list'): ?>
                 <?php if ($view == 'pedidos_reparacao'): ?>
                     <?php if ($erro_pedidos): ?>
@@ -3149,20 +3904,57 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_pedidos): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_pedidos) ?></p>
                     <?php endif; ?>
+                    <?php
+                        $visoesPedidos = [
+                            'todos' => ['titulo' => 'Todos', 'contagem' => (int)($pedidos_reparacao_resumo['todos'] ?? 0), 'icone' => 'fa-layer-group', 'classe' => 'slate', 'descricao' => 'Visao geral'],
+                            'em_andamento' => ['titulo' => 'Em andamento', 'contagem' => (int)($pedidos_reparacao_resumo['em_andamento'] ?? 0), 'icone' => 'fa-gears', 'classe' => 'blue', 'descricao' => 'Aceites e em execucao'],
+                            'concluidos' => ['titulo' => 'Concluidos', 'contagem' => (int)($pedidos_reparacao_resumo['concluidos'] ?? 0), 'icone' => 'fa-circle-check', 'classe' => 'green', 'descricao' => 'Reparacoes finalizadas'],
+                            'espera_resposta' => ['titulo' => 'Espera resposta', 'contagem' => (int)($pedidos_reparacao_resumo['espera_resposta'] ?? 0), 'icone' => 'fa-clock-rotate-left', 'classe' => 'amber', 'descricao' => 'Aguardando retorno'],
+                            'pendentes' => ['titulo' => 'Pendentes', 'contagem' => (int)($pedidos_reparacao_resumo['pendentes'] ?? 0), 'icone' => 'fa-hourglass-half', 'classe' => 'orange', 'descricao' => 'Ainda sem tratamento'],
+                        ];
+                        $baseParamsPedidos = [
+                            'tab' => (string)$tab,
+                            'view' => 'pedidos_reparacao',
+                            'mode' => 'list',
+                            'pf_data_inicio' => (string)($filtro_pedidos_datas['inicio'] ?? ''),
+                            'pf_data_fim' => (string)($filtro_pedidos_datas['fim'] ?? ''),
+                        ];
+                    ?>
+                    <div class="pedidos-overview">
+                        <?php foreach ($visoesPedidos as $chaveVisao => $metaVisao): ?>
+                            <?php
+                                $paramsVisao = $baseParamsPedidos;
+                                $paramsVisao['status_visao'] = $chaveVisao;
+                                $ativoVisao = $pedido_status_visao === $chaveVisao;
+                            ?>
+                            <a href="?<?= htmlspecialchars(http_build_query($paramsVisao), ENT_QUOTES, 'UTF-8') ?>" class="pedido-kpi-card <?= htmlspecialchars((string)($metaVisao['classe'] ?? 'slate')) ?> <?= $ativoVisao ? 'active' : '' ?>">
+                                <div class="pedido-kpi-top">
+                                    <span class="pedido-kpi-title"><?= htmlspecialchars((string)$metaVisao['titulo']) ?></span>
+                                    <span class="pedido-kpi-icon"><i class="fa-solid <?= htmlspecialchars((string)($metaVisao['icone'] ?? 'fa-circle')) ?>"></i></span>
+                                </div>
+                                <div class="pedido-kpi-number"><?= (int)$metaVisao['contagem'] ?></div>
+                                <div class="pedido-kpi-foot"><?= htmlspecialchars((string)($metaVisao['descricao'] ?? '')) ?></div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="pedidos-overview-meta">
+                        <p class="pedidos-overview-note">A mostrar <strong><?= count($pedidos_reparacao) ?></strong> de <strong><?= (int)($pedidos_reparacao_resumo['todos'] ?? 0) ?></strong> pedido(s).</p>
+                        <span class="pedidos-overview-filter">Filtro ativo: <?= htmlspecialchars((string)($visoesPedidos[$pedido_status_visao]['titulo'] ?? 'Todos')) ?></span>
+                    </div>
                     <div class="pedidos-table-wrap no-box">
                     <table class="table">
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>Matrícula</th>
+                                <th>Matr?cula</th>
                                 <th>Tipo de Equipamento</th>
-                                <th>Descrição da Avaria</th>
-                                <th>Localização</th>
+                                <th>Descri??o da Avaria</th>
+                                <th>Localiza??o</th>
                                 <th>Solicitante</th>
                                 <th>Data do Pedido</th>
                                 <th>Prioridade</th>
                                 <th>Status</th>
-                                <th>Ações</th>
+                                <th>A??es</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -3191,14 +3983,20 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                         <td><span class="pill <?= badgeClassePrioridade($prioridade) ?>"><?= htmlspecialchars((string)$prioridade) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus($statusLabel) ?>"><?= htmlspecialchars((string)$statusLabel) ?></span></td>
                                         <td>
-                                            <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                                                <a class="btn-acao" style="background:#111827; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>">Ver detalhes</a>
-                                                <a class="btn-acao" style="background:#1f6feb; text-decoration:none;" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>&open_material=1">Adicionar material</a>
+                                            <div class="pedido-acoes">
+                                                <a class="btn-acao dark" title="Ver detalhes" aria-label="Ver detalhes" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>">
+                                                    <i class="fa-solid fa-eye"></i>
+                                                </a>
+                                                <a class="btn-acao blue" title="Adicionar material" aria-label="Adicionar material" href="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=detalhe&id=<?= (int)campo($p, ['id']) ?>&open_material=1">
+                                                    <i class="fa-solid fa-plus"></i>
+                                                </a>
                                                 <form method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=pedidos_reparacao&mode=list" style="margin:0;">
                                                     <input type="hidden" name="acao" value="enviar_logistica_detalhe">
                                                     <input type="hidden" name="pedido_id" value="<?= (int)campo($p, ['id']) ?>">
                                                     <input type="hidden" name="return_mode" value="list">
-                                                    <button type="submit" class="btn-acao" style="background:#8b5cf6;">Mandar Logistica</button>
+                                                    <button type="submit" class="btn-acao purple" title="Mandar para Logistica" aria-label="Mandar para Logistica">
+                                                        <i class="fa-solid fa-paper-plane"></i>
+                                                    </button>
                                                 </form>
                                             </div>
                                         </td>
@@ -3215,7 +4013,41 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_requisicoes): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_requisicoes) ?></p>
                     <?php endif; ?>
-                    <div class="pedidos-table-wrap">
+                    <?php
+                        $visoesRequisicoes = [
+                            'todos' => ['titulo' => 'Todos', 'contagem' => (int)($requisicoes_resumo['todos'] ?? 0), 'icone' => 'fa-layer-group', 'classe' => 'slate', 'descricao' => 'Visao geral'],
+                            'pendentes' => ['titulo' => 'Pendentes', 'contagem' => (int)($requisicoes_resumo['pendentes'] ?? 0), 'icone' => 'fa-hourglass-half', 'classe' => 'orange', 'descricao' => 'Em analise da logistica'],
+                            'aprovadas' => ['titulo' => 'Aprovadas', 'contagem' => (int)($requisicoes_resumo['aprovadas'] ?? 0), 'icone' => 'fa-circle-check', 'classe' => 'green', 'descricao' => 'Autorizadas'],
+                            'negadas' => ['titulo' => 'Negadas/Canceladas', 'contagem' => (int)($requisicoes_resumo['negadas'] ?? 0), 'icone' => 'fa-circle-xmark', 'classe' => 'amber', 'descricao' => 'Nao autorizadas'],
+                        ];
+                        $baseParamsReq = [
+                            'tab' => (string)$tab,
+                            'view' => 'requisicoes',
+                            'mode' => 'list',
+                        ];
+                    ?>
+                    <div class="pedidos-overview">
+                        <?php foreach ($visoesRequisicoes as $chaveVisaoReq => $metaVisaoReq): ?>
+                            <?php
+                                $paramsVisaoReq = $baseParamsReq;
+                                $paramsVisaoReq['req_status_visao'] = $chaveVisaoReq;
+                                $ativoVisaoReq = $req_status_visao === $chaveVisaoReq;
+                            ?>
+                            <a href="?<?= htmlspecialchars(http_build_query($paramsVisaoReq), ENT_QUOTES, 'UTF-8') ?>" class="pedido-kpi-card <?= htmlspecialchars((string)($metaVisaoReq['classe'] ?? 'slate')) ?> <?= $ativoVisaoReq ? 'active' : '' ?>">
+                                <div class="pedido-kpi-top">
+                                    <span class="pedido-kpi-title"><?= htmlspecialchars((string)$metaVisaoReq['titulo']) ?></span>
+                                    <span class="pedido-kpi-icon"><i class="fa-solid <?= htmlspecialchars((string)($metaVisaoReq['icone'] ?? 'fa-circle')) ?>"></i></span>
+                                </div>
+                                <div class="pedido-kpi-number"><?= (int)$metaVisaoReq['contagem'] ?></div>
+                                <div class="pedido-kpi-foot"><?= htmlspecialchars((string)($metaVisaoReq['descricao'] ?? '')) ?></div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="pedidos-overview-meta">
+                        <p class="pedidos-overview-note">A mostrar <strong><?= count($requisicoes_oficina) ?></strong> de <strong><?= (int)($requisicoes_resumo['todos'] ?? 0) ?></strong> requisicao(oes).</p>
+                        <span class="pedidos-overview-filter">Filtro ativo: <?= htmlspecialchars((string)($visoesRequisicoes[$req_status_visao]['titulo'] ?? 'Todos')) ?></span>
+                    </div>
+                    <div class="pedidos-table-wrap no-box">
                     <table class="table">
                         <thead>
                             <tr>
@@ -3277,6 +4109,43 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_os): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_os) ?></p>
                     <?php endif; ?>
+                    <?php
+                        $visoesOs = [
+                            'todos' => ['titulo' => 'Todos', 'contagem' => (int)($ordens_servico_resumo['todos'] ?? 0), 'icone' => 'fa-layer-group', 'classe' => 'slate', 'descricao' => 'Visao geral'],
+                            'abertas' => ['titulo' => 'Abertas', 'contagem' => (int)($ordens_servico_resumo['abertas'] ?? 0), 'icone' => 'fa-folder-open', 'classe' => 'orange', 'descricao' => 'Recem-criadas'],
+                            'em_andamento' => ['titulo' => 'Em andamento', 'contagem' => (int)($ordens_servico_resumo['em_andamento'] ?? 0), 'icone' => 'fa-gears', 'classe' => 'blue', 'descricao' => 'Em execucao'],
+                            'concluidas' => ['titulo' => 'Concluidas', 'contagem' => (int)($ordens_servico_resumo['concluidas'] ?? 0), 'icone' => 'fa-circle-check', 'classe' => 'green', 'descricao' => 'Finalizadas'],
+                            'aguardando_pecas' => ['titulo' => 'Aguardando pecas', 'contagem' => (int)($ordens_servico_resumo['aguardando_pecas'] ?? 0), 'icone' => 'fa-box-open', 'classe' => 'amber', 'descricao' => 'Dependem de pecas'],
+                        ];
+                        $baseParamsOs = [
+                            'tab' => (string)$tab,
+                            'view' => 'ordens_servico',
+                            'mode' => 'list',
+                            'os_data_inicio' => (string)($filtro_os_datas['inicio'] ?? ''),
+                            'os_data_fim' => (string)($filtro_os_datas['fim'] ?? ''),
+                        ];
+                    ?>
+                    <div class="pedidos-overview">
+                        <?php foreach ($visoesOs as $chaveVisaoOs => $metaVisaoOs): ?>
+                            <?php
+                                $paramsVisaoOs = $baseParamsOs;
+                                $paramsVisaoOs['os_status_visao'] = $chaveVisaoOs;
+                                $ativoVisaoOs = $os_status_visao === $chaveVisaoOs;
+                            ?>
+                            <a href="?<?= htmlspecialchars(http_build_query($paramsVisaoOs), ENT_QUOTES, 'UTF-8') ?>" class="pedido-kpi-card <?= htmlspecialchars((string)($metaVisaoOs['classe'] ?? 'slate')) ?> <?= $ativoVisaoOs ? 'active' : '' ?>">
+                                <div class="pedido-kpi-top">
+                                    <span class="pedido-kpi-title"><?= htmlspecialchars((string)$metaVisaoOs['titulo']) ?></span>
+                                    <span class="pedido-kpi-icon"><i class="fa-solid <?= htmlspecialchars((string)($metaVisaoOs['icone'] ?? 'fa-circle')) ?>"></i></span>
+                                </div>
+                                <div class="pedido-kpi-number"><?= (int)$metaVisaoOs['contagem'] ?></div>
+                                <div class="pedido-kpi-foot"><?= htmlspecialchars((string)($metaVisaoOs['descricao'] ?? '')) ?></div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="pedidos-overview-meta">
+                        <p class="pedidos-overview-note">A mostrar <strong><?= count($ordens_servico) ?></strong> de <strong><?= (int)($ordens_servico_resumo['todos'] ?? 0) ?></strong> OS.</p>
+                        <span class="pedidos-overview-filter">Filtro ativo: <?= htmlspecialchars((string)($visoesOs[$os_status_visao]['titulo'] ?? 'Todos')) ?></span>
+                    </div>
                     <div class="pedidos-table-wrap">
                     <table class="table">
                         <thead>
@@ -3322,6 +4191,40 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                     <?php if ($msg_manutencao): ?>
                         <p style="color:#16a34a; font-size:12px;"><?= htmlspecialchars($msg_manutencao) ?></p>
                     <?php endif; ?>
+                    <?php
+                        $visoesManutencao = [
+                            'todos' => ['titulo' => 'Todos', 'contagem' => (int)($manutencoes_resumo['todos'] ?? 0), 'icone' => 'fa-layer-group', 'classe' => 'slate', 'descricao' => 'Visao geral'],
+                            'em_andamento' => ['titulo' => 'Em andamento', 'contagem' => (int)($manutencoes_resumo['em_andamento'] ?? 0), 'icone' => 'fa-gears', 'classe' => 'blue', 'descricao' => 'Atividades em curso'],
+                            'concluidos' => ['titulo' => 'Concluidos', 'contagem' => (int)($manutencoes_resumo['concluidos'] ?? 0), 'icone' => 'fa-circle-check', 'classe' => 'green', 'descricao' => 'Servicos finalizados'],
+                            'pendentes' => ['titulo' => 'Pendentes', 'contagem' => (int)($manutencoes_resumo['pendentes'] ?? 0), 'icone' => 'fa-hourglass-half', 'classe' => 'orange', 'descricao' => 'Aguardando inicio'],
+                        ];
+                        $baseParamsManutencao = [
+                            'tab' => (string)$tab,
+                            'view' => 'manutencao',
+                            'mode' => 'list',
+                        ];
+                    ?>
+                    <div class="pedidos-overview">
+                        <?php foreach ($visoesManutencao as $chaveVisaoManut => $metaVisaoManut): ?>
+                            <?php
+                                $paramsVisaoManut = $baseParamsManutencao;
+                                $paramsVisaoManut['manut_status_visao'] = $chaveVisaoManut;
+                                $ativoVisaoManut = $manut_status_visao === $chaveVisaoManut;
+                            ?>
+                            <a href="?<?= htmlspecialchars(http_build_query($paramsVisaoManut), ENT_QUOTES, 'UTF-8') ?>" class="pedido-kpi-card <?= htmlspecialchars((string)($metaVisaoManut['classe'] ?? 'slate')) ?> <?= $ativoVisaoManut ? 'active' : '' ?>">
+                                <div class="pedido-kpi-top">
+                                    <span class="pedido-kpi-title"><?= htmlspecialchars((string)$metaVisaoManut['titulo']) ?></span>
+                                    <span class="pedido-kpi-icon"><i class="fa-solid <?= htmlspecialchars((string)($metaVisaoManut['icone'] ?? 'fa-circle')) ?>"></i></span>
+                                </div>
+                                <div class="pedido-kpi-number"><?= (int)$metaVisaoManut['contagem'] ?></div>
+                                <div class="pedido-kpi-foot"><?= htmlspecialchars((string)($metaVisaoManut['descricao'] ?? '')) ?></div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="pedidos-overview-meta">
+                        <p class="pedidos-overview-note">A mostrar <strong><?= count($manutencoes) ?></strong> de <strong><?= (int)($manutencoes_resumo['todos'] ?? 0) ?></strong> manutencao(oes).</p>
+                        <span class="pedidos-overview-filter">Filtro ativo: <?= htmlspecialchars((string)($visoesManutencao[$manut_status_visao]['titulo'] ?? 'Todos')) ?></span>
+                    </div>
                     <div class="pedidos-table-wrap">
                     <table class="table">
                         <thead>
@@ -3354,6 +4257,54 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                         <td><?= htmlspecialchars(formatarMoedaMZN((float)campo($m, ['custo_total'], 0))) ?></td>
                                         <td><span class="pill <?= badgeClassePrioridade(campo($m, ['prioridade'], 'Normal')) ?>"><?= htmlspecialchars((string)campo($m, ['prioridade'], 'Normal')) ?></span></td>
                                         <td><span class="pill <?= badgeClasseStatus(campo($m, ['status'], 'Pendente')) ?>"><?= htmlspecialchars((string)campo($m, ['status'], 'Pendente')) ?></span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                <?php elseif ($view == 'checklist'): ?>
+                    <?php if ($erro_checklist): ?>
+                        <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_checklist) ?></p>
+                    <?php endif; ?>
+                    <div class="pedidos-overview-meta">
+                        <p class="pedidos-overview-note">A mostrar <strong><?= count($checklists_hse) ?></strong> checklist(s) registada(s) no HSE.</p>
+                        <span class="pedidos-overview-filter">Fonte: HSE / Transporte</span>
+                    </div>
+                    <div class="pedidos-table-wrap no-box">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Codigo</th>
+                                <th>Data</th>
+                                <th>Template</th>
+                                <th>Viatura/Maquina</th>
+                                <th>Projeto</th>
+                                <th>Inspector</th>
+                                <th>Status</th>
+                                <th>Acoes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($checklists_hse) === 0): ?>
+                                <tr><td colspan="9" style="text-align:center;color:#6b7280;padding:12px;">Sem checklists registadas para mostrar.</td></tr>
+                            <?php else: ?>
+                                <?php foreach ($checklists_hse as $chk): ?>
+                                    <tr>
+                                        <td><?= (int)($chk['id'] ?? 0) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['codigo'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['data_inspecao'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['template_nome'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['viatura_id'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['projeto'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string)($chk['inspector'] ?? '-')) ?></td>
+                                        <td><span class="pill <?= badgeClasseStatus((string)($chk['status_geral'] ?? 'Conforme')) ?>"><?= htmlspecialchars((string)($chk['status_geral'] ?? '-')) ?></span></td>
+                                        <td>
+                                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=detalhe&id=<?= (int)($chk['id'] ?? 0) ?>" title="Ver Checklist" style="margin-right:8px; color:#1f2937;"><i class="fas fa-eye"></i></a>
+                                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=detalhe&id=<?= (int)($chk['id'] ?? 0) ?>&doc=checklist_pdf" target="_blank" title="Baixar PDF" style="margin-right:8px; color:#b91c1c;"><i class="fas fa-file-pdf"></i></a>
+                                            <a href="?tab=<?= urlencode((string)$tab) ?>&view=checklist&mode=detalhe&id=<?= (int)($chk['id'] ?? 0) ?>&doc=checklist_excel" target="_blank" title="Baixar Excel" style="color:#166534;"><i class="fas fa-file-excel"></i></a>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
@@ -4551,6 +5502,7 @@ function exportarPdfOficina(tabela, titulo) {
     var janela = window.open('', '_blank');
     if (!janela) return;
     var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
+    var certUrl = window.location.origin + '/vilcon-systemon/public/assets/img/innocertificate.png';
     var dataAtual = new Date().toLocaleString('pt-PT');
     var tabelaHtml = tabelaPdfSemAcoesOficina(tabela);
     var html = `
@@ -4570,6 +5522,7 @@ function exportarPdfOficina(tabela, titulo) {
                 .pdf-brand h1 { margin: 0; font-size: 18px; color: #111111; letter-spacing: 0.4px; }
                 .pdf-meta { text-align: right; font-size: 11px; color: #333333; }
                 .pdf-meta strong { display: block; color: #111111; margin-bottom: 4px; }
+                .pdf-cert img { width: 54px; height: auto; object-fit: contain; margin-left: 10px; }
                 h2 { margin: 0 0 10px 0; color: #111111; font-size: 14px; text-transform: uppercase; }
                 table { width: 100%; border-collapse: collapse; }
                 thead th {
@@ -4594,9 +5547,12 @@ function exportarPdfOficina(tabela, titulo) {
                             <img src="${logoUrl}" alt="Vilcon">
                             <h1>VILCON</h1>
                         </div>
-                        <div class="pdf-meta">
-                            <strong>${titulo}</strong>
-                            <span>Emitido em: ${dataAtual}</span>
+                        <div style="display:flex; align-items:center;">
+                            <div class="pdf-meta">
+                                <strong>${titulo}</strong>
+                                <span>Emitido em: ${dataAtual}</span>
+                            </div>
+                            <div class="pdf-cert"><img src="${certUrl}" alt="INNO Certificate"></div>
                         </div>
                     </div>
                 </div>
@@ -4666,3 +5622,4 @@ inicializarBaixarRelatorioOficina();
 </script>
 
 <?php include 'includes/footer.php'; ?>
+

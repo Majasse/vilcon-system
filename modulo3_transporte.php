@@ -3,6 +3,8 @@ session_start();
 if (!headers_sent()) {
     header('Content-Type: text/html; charset=UTF-8');
 }
+require_once __DIR__ . '/public/app/includes/mojibake_fix.php';
+vilcon_bootstrap_mojibake_fix();
 require_once __DIR__ . '/app/config/db.php';
 require_once __DIR__ . '/app/core/permissions.php';
 
@@ -14,8 +16,30 @@ $tab = $_GET['tab'] ?? 'transporte';
 $view = $_GET['view'] ?? 'reservas'; 
 $mode = $_GET['mode'] ?? 'list'; 
 $registro_id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
-if($tab === 'hse' && !isset($_GET['view'])) {
-    $view = 'checklist';
+if($tab === 'aluguer_equipamentos') {
+    $tab = 'aluguer';
+}
+$defaultViewByTab = [
+    'transporte' => 'reservas',
+    'hse' => 'checklist',
+    'gestao_frota' => 'recebidos',
+    'aluguer' => 'estacionamento',
+    'frentista' => 'tarefas',
+];
+if(!isset($_GET['view']) && isset($defaultViewByTab[$tab])) {
+    $view = $defaultViewByTab[$tab];
+}
+if($tab === 'frentista' && (!isset($_GET['view']) || $view === 'lista')) {
+    $view = 'tarefas';
+}
+if ($tab === 'aluguer') {
+    $aluguerViews = ['estacionamento', 'viaturas_maquinas', 'timesheets', 'pagamentos', 'clientes', 'modulo'];
+    $viewGet = trim((string) ($_GET['view'] ?? ''));
+    if ($viewGet !== '' && in_array($viewGet, $aluguerViews, true)) {
+        $view = $viewGet;
+    } elseif (!in_array($view, $aluguerViews, true)) {
+        $view = 'estacionamento';
+    }
 }
 $erro_form = '';
 $os_form = null;
@@ -24,22 +48,7 @@ function ensureColumnExists(PDO $pdo, string $table, string $column, string $def
     $stmt = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE :column");
     $stmt->execute([':column' => $column]);
     if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
-        try {
-            $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
-        } catch (PDOException $e) {
-            $message = $e->getMessage();
-            $isMissingAfterColumn = str_contains($message, "Unknown column")
-                && str_contains($message, " in '") ;
-            if (!$isMissingAfterColumn || stripos($definition, ' AFTER ') === false) {
-                throw $e;
-            }
-
-            $safeDefinition = preg_replace('/\s+AFTER\s+`[^`]+`/i', '', $definition);
-            if (!is_string($safeDefinition) || trim($safeDefinition) === '') {
-                throw $e;
-            }
-            $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $safeDefinition");
-        }
+        $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
     }
 }
 
@@ -61,12 +70,152 @@ ensureColumnExists($pdo, 'transporte_guias', 'tipo_servico', "varchar(40) NULL A
 ensureColumnExists($pdo, 'transporte_guias', 'servico_inicio', "time NULL AFTER `tipo_servico`");
 ensureColumnExists($pdo, 'transporte_guias', 'servico_fim', "time NULL AFTER `servico_inicio`");
 ensureColumnExists($pdo, 'transporte_guias', 'quantidade_inicial_l', "decimal(10,2) NULL AFTER `km_chegada`");
+ensureColumnExists($pdo, 'transporte_guias', 'finalizado_por', "varchar(120) NULL AFTER `abastecido_em`");
+ensureColumnExists($pdo, 'transporte_guias', 'finalizado_em', "datetime NULL AFTER `finalizado_por`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'origem_mapa', "varchar(255) NULL AFTER `media_esperada`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'destino_mapa', "varchar(255) NULL AFTER `origem_mapa`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'distancia_mapa_km', "decimal(10,2) NULL AFTER `destino_mapa`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'tempo_mapa_min', "decimal(10,2) NULL AFTER `distancia_mapa_km`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'litros_recomendados', "decimal(10,2) NULL AFTER `distancia_mapa_km`");
 ensureColumnExists($pdo, 'transporte_combustivel', 'distancia_utilizada_km', "decimal(10,2) NULL AFTER `litros_recomendados`");
+
+function resumirFluxoOrdemServico(array $os): array {
+    $status = trim((string) ($os['status'] ?? ''));
+    $statusNorm = mb_strtolower($status, 'UTF-8');
+    $temRegistroGestor = !empty($os['combustivel_id'])
+        || (isset($os['quantidade_inicial_l']) && (float) $os['quantidade_inicial_l'] > 0)
+        || in_array($status, ['Aguardando Abastecimento', 'Concluida', 'Finalizada'], true);
+    $temConfirmacaoFrentista = !empty($os['abastecido_em']) || in_array($status, ['Concluida', 'Finalizada'], true);
+    $isFinalizada = ($status === 'Finalizada') || strpos($statusNorm, 'finaliz') !== false;
+
+    if ($isFinalizada) {
+        return [
+            'key' => 'finalizada',
+            'label' => 'Finalizada no Transporte',
+            'bg' => '#ecfdf3',
+            'bd' => '#86efac',
+            'fg' => '#166534',
+            'hint' => ''
+        ];
+    }
+    if ($temConfirmacaoFrentista) {
+        return [
+            'key' => 'abastecida_frentista',
+            'label' => 'Abastecido pelo Frentista',
+            'bg' => '#eff6ff',
+            'bd' => '#93c5fd',
+            'fg' => '#1d4ed8',
+            'hint' => 'Pronto para finalizacao no Transporte.'
+        ];
+    }
+    if ($temRegistroGestor) {
+        return [
+            'key' => 'preenchida_gestor_frota',
+            'label' => 'Preenchido pelo Gestor de Frotas',
+            'bg' => '#fff7ed',
+            'bd' => '#fdba74',
+            'fg' => '#9a3412',
+            'hint' => 'Aguardando abastecimento do Frentista.'
+        ];
+    }
+    return [
+        'key' => 'em_preenchimento_transporte',
+        'label' => 'Em preenchimento no Transporte',
+        'bg' => '#f3f4f6',
+        'bd' => '#d1d5db',
+        'fg' => '#374151',
+        'hint' => 'OS ainda em preparacao pelo Transporte.'
+    ];
+}
+
+function ensureTabelaNotificacoesUsuarios(PDO $pdo): void {
+    static $ready = false;
+    if ($ready) return;
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS usuarios_notificacoes (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL,
+            titulo VARCHAR(160) NOT NULL,
+            mensagem TEXT NOT NULL,
+            tipo VARCHAR(20) NOT NULL DEFAULT 'info',
+            link VARCHAR(255) NULL,
+            lida_em DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_notif_usuario (usuario_id),
+            INDEX idx_notif_usuario_lida (usuario_id, lida_em),
+            INDEX idx_notif_data (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $ready = true;
+}
+
+function enviarOrdemGuaritaAbastecimento(PDO $pdo, int $guiaId, string $estado, string $detalhe = ''): void {
+    if ($guiaId <= 0) return;
+    try {
+        ensureTabelaNotificacoesUsuarios($pdo);
+
+        $stGuia = $pdo->prepare("
+            SELECT id, viatura_id, matricula, condutor, projeto, quantidade_inicial_l
+            FROM transporte_guias
+            WHERE id = :id
+            LIMIT 1
+        ");
+        $stGuia->execute([':id' => $guiaId]);
+        $guia = $stGuia->fetch(PDO::FETCH_ASSOC) ?: [];
+        if (empty($guia)) return;
+
+        $titulo = 'Ordem de Abastecimento';
+        $tipo = 'info';
+        $estadoNorm = mb_strtolower(trim($estado), 'UTF-8');
+        if ($estadoNorm === 'autorizado') {
+            $titulo = 'Permissao de Abastecimento Autorizada';
+            $tipo = 'success';
+        } elseif ($estadoNorm === 'dispensado' || $estadoNorm === 'rejeitado') {
+            $titulo = 'Abastecimento Nao Autorizado';
+            $tipo = 'warning';
+        } elseif ($estadoNorm === 'concluido') {
+            $titulo = 'Abastecimento Concluido';
+            $tipo = 'info';
+        }
+
+        $viaturaRef = trim((string) ($guia['viatura_id'] ?? ''));
+        if ($viaturaRef === '') $viaturaRef = trim((string) ($guia['matricula'] ?? '-'));
+        $mensagem = 'OS #' . (int) $guiaId
+            . ' | Viatura/Maquina: ' . ($viaturaRef !== '' ? $viaturaRef : '-')
+            . ' | Motorista: ' . trim((string) ($guia['condutor'] ?? '-'))
+            . ' | Projeto: ' . trim((string) ($guia['projeto'] ?? '-'))
+            . ' | Quantidade prevista: ' . number_format((float) ($guia['quantidade_inicial_l'] ?? 0), 2, ',', '.') . ' L';
+        if (trim($detalhe) !== '') {
+            $mensagem .= ' | ' . trim($detalhe);
+        }
+
+        $stUsers = $pdo->query("
+            SELECT id
+            FROM usuarios
+            WHERE (LOWER(perfil) LIKE '%guarita%' OR LOWER(perfil) LIKE '%guard%' OR LOWER(perfil) LIKE '%seguranca%')
+              AND (status IS NULL OR LOWER(status) = 'ativo')
+        ");
+        $users = $stUsers ? ($stUsers->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+        if (empty($users)) return;
+
+        $link = '/vilcon-systemon/public/app/modules/transporte/index.php?tab=frentista&view=tarefas&mode=list';
+        $ins = $pdo->prepare("
+            INSERT INTO usuarios_notificacoes (usuario_id, titulo, mensagem, tipo, link, created_at)
+            VALUES (:uid, :titulo, :mensagem, :tipo, :link, NOW())
+        ");
+        foreach ($users as $uid) {
+            $ins->execute([
+                ':uid' => (int) $uid,
+                ':titulo' => $titulo,
+                ':mensagem' => $mensagem,
+                ':tipo' => $tipo,
+                ':link' => $link,
+            ]);
+        }
+    } catch (Throwable $e) {
+        // Nao interromper fluxo principal por falha de notificacao.
+    }
+}
 
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS transporte_pedidos_reparacao (
@@ -82,6 +231,27 @@ $pdo->exec("
         solicitante VARCHAR(120) NULL,
         pdf_anexo VARCHAR(255) NULL,
         status VARCHAR(40) NOT NULL DEFAULT 'Enviado para Oficina',
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_planos_manutencao (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo VARCHAR(30) NOT NULL,
+        viatura_id VARCHAR(120) NULL,
+        matricula VARCHAR(50) NULL,
+        tipo_equipamento VARCHAR(150) NOT NULL,
+        localizacao VARCHAR(255) NULL,
+        tipo_manutencao VARCHAR(80) NOT NULL,
+        data_manutencao DATE NOT NULL,
+        prioridade VARCHAR(20) NOT NULL DEFAULT 'Media',
+        responsavel VARCHAR(150) NULL,
+        solicitante VARCHAR(150) NULL,
+        descricao_trabalho TEXT NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'Enviado para Oficina',
+        oficina_manutencao_id INT NULL,
+        oficina_os_id INT NULL,
         criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
@@ -195,7 +365,6 @@ $pdo->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 ensureColumnExists($pdo, 'transporte_presencas', 'pessoal_id', "int NULL AFTER `data_presenca`");
-ensureColumnExists($pdo, 'transporte_presencas', 'estado', "VARCHAR(40) NOT NULL DEFAULT 'Presente'");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_entrada', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `estado`");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_saida', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `assinou_entrada`");
 ensureColumnExists($pdo, 'transporte_presencas', 'enviado_rh', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `registado_por`");
@@ -231,6 +400,49 @@ $pdo->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 ensureColumnExists($pdo, 'transporte_relatorios_atividades', 'ordem_servico_id', "int NULL AFTER `codigo`");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_projectos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        codigo VARCHAR(40) NOT NULL UNIQUE,
+        nome VARCHAR(180) NOT NULL,
+        cliente VARCHAR(180) NULL,
+        localizacao VARCHAR(180) NULL,
+        gestor VARCHAR(120) NULL,
+        combustivel_previsto_l DECIMAL(12,2) NOT NULL DEFAULT 0,
+        data_inicio DATE NULL,
+        data_fim DATE NULL,
+        status VARCHAR(40) NOT NULL DEFAULT 'Ativo',
+        descricao TEXT NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        atualizado_em DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS oficina_manutencoes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ativo_matricula VARCHAR(50) NOT NULL,
+        tipo_equipamento VARCHAR(150) NOT NULL,
+        tipo_manutencao VARCHAR(80) NOT NULL,
+        descricao_servico TEXT NULL,
+        solicitante VARCHAR(150) NULL,
+        data_manutencao DATE NOT NULL,
+        prioridade VARCHAR(20) NOT NULL DEFAULT 'Normal',
+        status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
+        custo_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+        origem_tipo VARCHAR(40) NULL,
+        origem_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'oficina_manutencoes', 'origem_tipo', "varchar(40) NULL");
+ensureColumnExists($pdo, 'oficina_manutencoes', 'origem_id', "int NULL");
+try {
+    $pdo->exec("ALTER TABLE oficina_manutencoes ADD INDEX idx_oficina_manut_origem (origem_tipo, origem_id)");
+} catch (Throwable $e) {
+    // indice pode ja existir
+}
 
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS transporte_checklist_templates (
@@ -568,9 +780,171 @@ function processarAnexosUpload(string $campo, string $subPasta, int $maxArquivos
 
 function mapPrioridadeTransporteParaOficina(string $prioridade): string {
     $p = strtolower(trim($prioridade));
-    if($p === 'alta' || $p === 'urgente') return 'Alta';
+    if($p === 'alta' || $p === 'urgente' || $p === 'critica') return 'Alta';
     if($p === 'baixa') return 'Baixa';
     return 'Normal';
+}
+
+function normalizarPrioridadeCorporativa(string $prioridade): string {
+    $p = strtolower(trim($prioridade));
+    if($p === 'critica' || $p === 'urgente') return 'Critica';
+    if($p === 'alta') return 'Alta';
+    if($p === 'baixa') return 'Baixa';
+    return 'Media';
+}
+
+function garantirTabelaLocalizacoesTransporte(PDO $pdo): void {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS localizacoes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(180) NOT NULL,
+            provincia VARCHAR(120) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'Ativo',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_localizacao_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function normalizarLocalizacaoTransporte(PDO $pdo, string $nome): string {
+    $nome = trim($nome);
+    if($nome === '') {
+        throw new RuntimeException('Selecione uma localizacao valida da lista.');
+    }
+    garantirTabelaLocalizacoesTransporte($pdo);
+    $ins = $pdo->prepare("
+        INSERT INTO localizacoes (nome, provincia, status)
+        VALUES (:nome, NULL, 'Ativo')
+        ON DUPLICATE KEY UPDATE status = 'Ativo'
+    ");
+    $ins->execute([':nome' => $nome]);
+    return $nome;
+}
+
+function validarUtilizadorAtivoPorNomeTransporte(PDO $pdo, string $nome): string {
+    $nome = trim($nome);
+    if($nome === '') {
+        throw new RuntimeException('Selecione um solicitante valido da lista.');
+    }
+    $st = $pdo->prepare("
+        SELECT nome
+        FROM usuarios
+        WHERE LOWER(COALESCE(status, '')) IN ('ativo','1')
+          AND LOWER(TRIM(nome)) = LOWER(TRIM(:nome))
+        LIMIT 1
+    ");
+    $st->execute([':nome' => $nome]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if(!$row) {
+        throw new RuntimeException('Selecione um solicitante valido da lista.');
+    }
+    return trim((string) $row['nome']);
+}
+
+function validarCondutorTransporte(PDO $pdo, string $nome): string {
+    $nome = trim($nome);
+    if($nome === '') {
+        throw new RuntimeException('Selecione um condutor valido da lista.');
+    }
+
+    $stPessoal = $pdo->prepare("
+        SELECT p.nome
+        FROM pessoal p
+        LEFT JOIN cargos c ON c.id = p.cargo_id
+        WHERE LOWER(COALESCE(p.estado, 'activo')) IN ('activo','ativo','1')
+          AND LOWER(TRIM(COALESCE(p.nome, ''))) = LOWER(TRIM(:nome))
+          AND (
+              LOWER(COALESCE(c.nome, '')) LIKE '%motorista%'
+              OR LOWER(COALESCE(c.nome, '')) LIKE '%condutor%'
+              OR LOWER(COALESCE(c.nome, '')) LIKE '%operador%'
+          )
+        LIMIT 1
+    ");
+    $stPessoal->execute([':nome' => $nome]);
+    $rowPessoal = $stPessoal->fetch(PDO::FETCH_ASSOC) ?: null;
+    if($rowPessoal) return trim((string) $rowPessoal['nome']);
+
+    $stPresenca = $pdo->prepare("
+        SELECT colaborador
+        FROM transporte_presencas
+        WHERE LOWER(TRIM(COALESCE(colaborador, ''))) = LOWER(TRIM(:nome))
+          AND (
+              LOWER(COALESCE(funcao, '')) LIKE '%motorista%'
+              OR LOWER(COALESCE(funcao, '')) LIKE '%condutor%'
+              OR LOWER(COALESCE(funcao, '')) LIKE '%operador%'
+          )
+        LIMIT 1
+    ");
+    $stPresenca->execute([':nome' => $nome]);
+    $rowPresenca = $stPresenca->fetch(PDO::FETCH_ASSOC) ?: null;
+    if($rowPresenca) return trim((string) $rowPresenca['colaborador']);
+
+    $st = $pdo->prepare("
+        SELECT nome
+        FROM usuarios
+        WHERE LOWER(COALESCE(status, '')) IN ('ativo','1')
+          AND LOWER(TRIM(nome)) = LOWER(TRIM(:nome))
+          AND (
+              LOWER(COALESCE(perfil, '')) LIKE '%motorista%'
+              OR LOWER(COALESCE(perfil, '')) LIKE '%condutor%'
+              OR LOWER(COALESCE(perfil, '')) LIKE '%operador%'
+          )
+        LIMIT 1
+    ");
+    $st->execute([':nome' => $nome]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if($row) return trim((string) $row['nome']);
+
+    $fallback = $pdo->prepare("
+        SELECT condutor
+        FROM transporte_guias
+        WHERE LOWER(TRIM(condutor)) = LOWER(TRIM(:nome))
+          AND TRIM(COALESCE(condutor, '')) <> ''
+        LIMIT 1
+    ");
+    $fallback->execute([':nome' => $nome]);
+    $cond = trim((string) ($fallback->fetchColumn() ?: ''));
+    if($cond !== '') return $cond;
+
+    throw new RuntimeException('Selecione um condutor valido da lista.');
+}
+
+function resolverAtivoTransporte(PDO $pdo, string $viaturaId, string $matricula): array {
+    $viaturaId = trim($viaturaId);
+    $matricula = strtoupper(trim($matricula));
+
+    $sql = "
+        SELECT
+            TRIM(COALESCE(NULLIF(codigo, ''), NULLIF(matricula, ''))) AS viatura_id,
+            TRIM(COALESCE(NULLIF(matricula, ''), NULLIF(codigo, ''))) AS matricula,
+            TRIM(COALESCE(NULLIF(descricao, ''), 'Viatura')) AS descricao,
+            TRIM(COALESCE(NULLIF(tipo_ativo, ''), 'Viatura')) AS tipo_ativo
+        FROM transporte_frota_ativos
+        WHERE COALESCE(ativo, 1) = 1
+          AND LOWER(COALESCE(status_operacional, 'ativo')) NOT IN ('inativo','baixado','abate','vendido')
+          AND (
+            (:viatura_id <> '' AND (
+                LOWER(TRIM(COALESCE(NULLIF(codigo, ''), NULLIF(matricula, '')))) = LOWER(TRIM(:viatura_id))
+                OR LOWER(TRIM(COALESCE(descricao, ''))) = LOWER(TRIM(:viatura_id))
+            ))
+            OR
+            (:matricula <> '' AND LOWER(TRIM(COALESCE(NULLIF(matricula, ''), NULLIF(codigo, '')))) = LOWER(TRIM(:matricula)))
+          )
+        LIMIT 1
+    ";
+    $st = $pdo->prepare($sql);
+    $st->execute([':viatura_id' => $viaturaId, ':matricula' => $matricula]);
+    $row = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+    if(!$row) {
+        throw new RuntimeException('Selecione uma viatura valida da lista.');
+    }
+
+    return [
+        'viatura_id' => trim((string) ($row['viatura_id'] ?? '')),
+        'matricula' => strtoupper(trim((string) ($row['matricula'] ?? ''))),
+        'descricao' => trim((string) ($row['descricao'] ?? 'Viatura')),
+        'tipo_ativo' => trim((string) ($row['tipo_ativo'] ?? 'Viatura')),
+    ];
 }
 
 function sincronizarPedidoReparacaoNaOficina(PDO $pdo, array $pedido): void {
@@ -657,6 +1031,113 @@ function sincronizarPedidoReparacaoNaOficina(PDO $pdo, array $pedido): void {
         ':data_evento' => $dataPedido,
         ':origem_id' => $oficinaPedidoId
     ]);
+}
+
+function mapTipoManutencaoParaOficina(string $tipo): string {
+    $t = strtolower(trim($tipo));
+    if($t === 'corretiva' || $t === 'correctiva') return 'Corretiva';
+    return 'Preventiva';
+}
+
+function sincronizarPlanoManutencaoNaOficina(PDO $pdo, array $plano): array {
+    $origemId = (int) ($plano['transporte_plano_id'] ?? 0);
+    $origemTipo = null;
+    $origemIdDb = null;
+    if($origemId > 0) {
+        $chk = $pdo->prepare("
+            SELECT id
+            FROM oficina_manutencoes
+            WHERE origem_tipo = 'TRANSPORTE_PLANO_MANUTENCAO' AND origem_id = :origem_id
+            LIMIT 1
+        ");
+        $chk->execute([':origem_id' => $origemId]);
+        $ofId = (int) ($chk->fetchColumn() ?: 0);
+        if($ofId > 0) {
+            return ['oficina_manutencao_id' => $ofId, 'oficina_os_id' => null, 'codigo_os' => null];
+        }
+        $origemTipo = 'TRANSPORTE_PLANO_MANUTENCAO';
+        $origemIdDb = $origemId;
+    }
+
+    $ativoMatricula = trim((string) ($plano['matricula'] ?? ''));
+    if($ativoMatricula === '') {
+        $ativoMatricula = trim((string) ($plano['viatura_id'] ?? ''));
+    }
+    if($ativoMatricula === '') {
+        $ativoMatricula = 'SEM_MATRICULA';
+    }
+
+    $tipoEquipamento = trim((string) ($plano['tipo_equipamento'] ?? ''));
+    if($tipoEquipamento === '') {
+        $tipoEquipamento = 'Viatura';
+    }
+
+    $tipoManutencao = mapTipoManutencaoParaOficina((string) ($plano['tipo_manutencao'] ?? ''));
+    $dataManutencao = trim((string) ($plano['data_manutencao'] ?? ''));
+    if($dataManutencao === '') {
+        $dataManutencao = date('Y-m-d');
+    }
+    $prioridade = mapPrioridadeTransporteParaOficina((string) ($plano['prioridade'] ?? 'Media'));
+    $descricao = trim((string) ($plano['descricao_trabalho'] ?? ''));
+    if($descricao === '') {
+        $descricao = 'Plano de manutencao ' . $tipoManutencao;
+    }
+
+    $insManut = $pdo->prepare("
+        INSERT INTO oficina_manutencoes
+        (ativo_matricula, tipo_equipamento, tipo_manutencao, descricao_servico, solicitante, data_manutencao, prioridade, status, custo_total, origem_tipo, origem_id)
+        VALUES
+        (:ativo_matricula, :tipo_equipamento, :tipo_manutencao, :descricao_servico, :solicitante, :data_manutencao, :prioridade, 'Pendente', 0, :origem_tipo, :origem_id)
+    ");
+    $insManut->execute([
+        ':ativo_matricula' => $ativoMatricula,
+        ':tipo_equipamento' => $tipoEquipamento,
+        ':tipo_manutencao' => $tipoManutencao,
+        ':descricao_servico' => $descricao,
+        ':solicitante' => trim((string) ($plano['solicitante'] ?? '')) !== '' ? trim((string) ($plano['solicitante'] ?? '')) : null,
+        ':data_manutencao' => $dataManutencao,
+        ':prioridade' => $prioridade,
+        ':origem_tipo' => $origemTipo,
+        ':origem_id' => $origemIdDb
+    ]);
+    $oficinaManutencaoId = (int) $pdo->lastInsertId();
+
+    $nextOsStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM oficina_ordens_servico");
+    $nextOsId = (int) $nextOsStmt->fetchColumn();
+    $codigoOs = 'OS-OF-' . date('Y') . '-' . str_pad((string) $nextOsId, 4, '0', STR_PAD_LEFT);
+
+    $insOs = $pdo->prepare("
+        INSERT INTO oficina_ordens_servico
+        (codigo_os, origem_tipo, origem_id, ativo_matricula, tipo_equipamento, descricao_servico, data_abertura, prioridade, status_os, custo_total)
+        VALUES
+        (:codigo_os, 'MANUTENCAO', :origem_id, :ativo_matricula, :tipo_equipamento, :descricao_servico, :data_abertura, :prioridade, 'Aberto', 0)
+    ");
+    $insOs->execute([
+        ':codigo_os' => $codigoOs,
+        ':origem_id' => $oficinaManutencaoId,
+        ':ativo_matricula' => $ativoMatricula,
+        ':tipo_equipamento' => $tipoEquipamento,
+        ':descricao_servico' => $descricao,
+        ':data_abertura' => $dataManutencao . ' 08:00:00',
+        ':prioridade' => $prioridade
+    ]);
+    $oficinaOsId = (int) $pdo->lastInsertId();
+
+    $insHist = $pdo->prepare("
+        INSERT INTO oficina_historico_avarias
+        (ativo_matricula, tipo_equipamento, tipo_registo, descricao, data_evento, origem_tipo, origem_id)
+        VALUES
+        (:ativo_matricula, :tipo_equipamento, 'MANUTENCAO', :descricao, :data_evento, 'MANUTENCAO', :origem_id)
+    ");
+    $insHist->execute([
+        ':ativo_matricula' => $ativoMatricula,
+        ':tipo_equipamento' => $tipoEquipamento,
+        ':descricao' => $descricao,
+        ':data_evento' => $dataManutencao,
+        ':origem_id' => $oficinaManutencaoId
+    ]);
+
+    return ['oficina_manutencao_id' => $oficinaManutencaoId, 'oficina_os_id' => $oficinaOsId, 'codigo_os' => $codigoOs];
 }
 
 function registarAuditoriaAlteracao(
@@ -834,254 +1315,17 @@ function detectarPeriodicidadeChecklist(string $nome): string {
 
 function itensPadraoChecklist(): array {
     return [
-        'Nivel de oleo do motor',
-        'Nivel de agua/radiador',
-        'Nivel de combustivel',
+        'NÃ­vel de Ã³leo do motor',
+        'NÃ­vel de ?gua/radiador',
+        'NÃ­vel de combustÃ­vel',
         'Estado de pneus/esteiras',
         'Sistema de travagem',
-        'Luzes e sinalizacao',
-        'Buzina e alarme de re',
+        'Luzes e sinalizaÃ§Ã£o',
+        'Buzina e alarme de rÃ©',
         'Extintor e kit de primeiros socorros',
-        'Vazamentos visiveis',
-        'Documentacao e limpeza geral'
+        'Vazamentos visÃ­veis',
+        'DocumentaÃ§Ã£o e limpeza geral'
     ];
-}
-
-function itensChecklistPorTemplate(string $codigo, string $nome = ''): array {
-    $codigoNorm = strtoupper(trim($codigo));
-    $nomeNorm = strtolower(trim($nome));
-    if ($codigoNorm === 'VIL.F.QAS.31' || strpos($nomeNorm, 'hand tools') !== false) {
-        return [
-            'There are tools in sufficient numbers to meet the needs of development of the work / Existem ferramentas em numero suficiente para atender as necessidades de desenvolvimento do trabalho',
-            'Appropriate tools are provided only to the development of the work / Ferramentas adequadas sao fornecidas apenas para o desenvolvimento do trabalho',
-            'The tooling does not allow damaged tools being delivered to workers / A ferramentaria nao permite que ferramentas danificadas sejam entregues aos trabalhadores',
-            'Workers have the habit and guidance to inform tooling about damage in tools / Os trabalhadores tem o habito e a orientacao de informar o ferramental sobre os danos ocorridos nas ferramentas',
-            'The existing safety standard does not allow use of inadequate or damaged tooling / A norma de seguranca vigente nao permite a utilizacao de ferramental inadequado ou danificado',
-            'Hammers, finials and other impact tools do not show signs of burrs or chipping / Martelos, remates e outras ferramentas de impacto nao apresentam sinais de rebarbas ou lascas',
-            'Hammers, finials and other impact tools do not show signs of burrs or defects / Martelos, remates e outras ferramentas de impacto nao apresentam sinais de rebarbas ou defeitos',
-            'Tools are transported and stored in appropriate boxes / As ferramentas sao transportadas e armazenadas em caixas apropriadas',
-            'Users of tools are properly advised about techniques for correct use / Os usuarios das ferramentas sao devidamente orientados sobre as tecnicas adequadas para o uso correto',
-            'The tooling provides monthly replacement and/or maintenance of damaged tools / A ferramentaria preve a substituicao mensal e/ou manutencao de ferramentas danificadas',
-            'Management does not allow use of inappropriate or damaged tools / A gerencia nao permite o uso de ferramentas inadequadas ou danificadas',
-            'Every tool used in electrical services is properly insulated / Todas as ferramentas utilizadas nos servicos de eletricidade sao devidamente isoladas',
-            'The company maintains regular training for proper use of tools / A empresa mantem cursos regulares de orientacao para o uso adequado das ferramentas',
-            'Power tools controlled by tooling are reviewed and inspected before and after use / Ferramentas eletricas controladas por ferramentaria sao revisadas e inspecionadas antes e depois do uso',
-            'Electrical extensions are reviewed so there are no exposed wires or ends without plugs / As extensoes eletricas sao revisadas para que nao haja fios descobertos ou pontas sem plugues'
-        ];
-    }
-    if ($codigoNorm === 'VIL.F.QAS.34' || strpos($nomeNorm, 'hammer drill') !== false || strpos($nomeNorm, 'perfuracao de percurso') !== false) {
-        return [
-            '1. O cabo eletrico em bom estado e seguro de usar? / Is the electrical cord in good condition and safe to use?',
-            '2. Bloqueio da broca em bom estado? / Drill lock in good condition?',
-            '3. O operador sempre usa EPI indicado para a atividade? / The operator always uses PPE indicated for the activity?',
-            '4. O operador e treinado para operar o equipamento? / Is the operator trained to operate the equipment?',
-            '5. O equipamento esta em boas condicoes, livre de pega quebrada e partes partidas? / Equipment is in good condition, free from broken handles and broken parts?',
-            '6. Broca deve estar em boas condicoes? / Drill must be in good condition?',
-            '7. Os cabos eletricos estao livres de costuras e fios expostos? / Are electrical cables free from seams and exposed wires?',
-            '8. O equipamento esta livre de vibracao e ruido incomum quando em operacao? / Is the equipment free from vibration and unusual noise when in operation?',
-            '9. Fire extinguisher n. / Extintor de incendio n.',
-            '10. Foi feita a pre-avaliacao de risco? / Has a pre-risk assessment been carried out?',
-            '11. A maquina tem um interruptor de controlo individual? / Does the machine have an individual control switch?',
-            '12. Nenhum material inflamavel por perto? / No flammable materials nearby?',
-            '13. Interruptores em ordem? / Switches in order?',
-            '14. Pistola em estado de conservacao e segura? / Pistol in good condition and safe?',
-            '15. A limpeza e mantida em torno do berbequim? / Is cleanliness maintained around the drill?',
-            '16. Oculos ou escudos faciais sao sempre usados? / Are goggles or face shields always worn when operating?',
-            '17. Pegas em boas condicoes? / Handles in good condition?'
-        ];
-    }
-    if ($codigoNorm === 'VIL.F.QAS.35' || strpos($nomeNorm, 'bulldozer') !== false) {
-        return [
-            '1 OPERATOR CERTIFICATION / CERTIFICACAO DE OPERADOR',
-            '1.1 Operator Certificate license valid / Licenca de Operador Valido',
-            '1.2 Operator Fit to Work / Operador apto para trabalhar',
-            '1.3 Operator Competent / Operador competente',
-            '1.4 Operating instruction manual available / Instrucoes de Operador na Maquina',
-            '2 ENGINE COMPARTMENT / COMPARTIMENTOS DO MOTOR',
-            '2.1 Correct engine oil level / Nivel de oleo do motor correto',
-            '2.2 Correct hydraulic oil level / Nivel de oleo hidraulico correto',
-            '2.3 Transmission oil level / Nivel de oleo da transmissao',
-            '2.4 Radiator in order and no signs of leaks / Radiador em bom estado e sem sinais de vazamento',
-            '2.5 No signs of fuel or oil leaks / Sem grandes vazamentos (combustivel, agua, oleo)',
-            '2.6 Brakes in good working conditions / Freios em boas condicoes de funcionamento',
-            '2.7 Hydraulic cylinders in good working condition / Cilindros hidraulicos em boas condicoes de funcionamento',
-            '2.8 V-belts in good condition and correct tension / Correias em V em bom estado e tensao correta',
-            '2.9 Lubrification system in working condition / Sistema de lubrificacao em ordem de funcionamento',
-            '3 LIGHTS / LUZES',
-            '3.1 All lights in good working condition (headlights, rotating lights, indicators) / Todas as luzes em ordem de funcionamento (farois, rotativos, indicadores)',
-            '3.2 Rotating light available and working / Pirilampo',
-            '3.4 Reverse Alarm working / Alarme de retaguarda',
-            '3.5 Cabin light working / Luzes da cabina',
-            '4 INSIDE CAB / INTERIOR',
-            '4.1 Controls, gauges, switch in working order / Controles, medidores, interruptores em ordem de funcionamento',
-            '4.2 Correct fire extinguisher (meter in green area, signed) / Extintor de incendio correto (medidor em area verde, assinado)',
-            '4.3 Seat belts installed and in good working condition / Cintos de seguranca instalados e corretos',
-            '4.5 Without serious damage to the cabin / Nenhum dano grave na cabine',
-            '4.6 Air conditioners in working order / Ar condicionados em ordem e em funcionamento',
-            '4.7 Clean cabin / Cabina limpa',
-            '4.8 Functional clean doors and windows / Portas e janelas funcionais e limpas',
-            '5 OPERATIONAL ACCESSORIES / ACESSORIOS OPERACIONAIS',
-            '5.1 Access stairs in good condition / Escadas de acesso em bom estado',
-            '5.2 Stairs, steps and railings in good condition / Escadas, degraus e trilhos em bom estado',
-            '5.3 Correct tracks tension / Faixas corretas',
-            '5.4 Undercarriage in good condition / Material rodante em bom estado',
-            '5.5 Blade in good condition / Lamina em bom estado',
-            '5.6 Blades cutting edges in good condition / Bordas de corte em bom estado',
-            '5.7 No damage to the machine / Nenhum dano na maquina',
-            '5.8 Wipers in good operation condition / Limpa brisas em boas condicoes'
-        ];
-    }
-    if ($codigoNorm === 'VIL.F.QAS.41' || strpos($nomeNorm, 'basculante') !== false || strpos($nomeNorm, 'tipper truck') !== false) {
-        return [
-            '1.1 Driver License Valid / Licenca de Operador Valido',
-            '1.2 Driver Fit to Work / Motorista apto para trabalhar',
-            '1.3 Driver Competent / Motorista competente',
-            '1.4 Operating Instruction Manual on machine / Manual de instrucoes de operador na maquina',
-            '2.1 Vehicle clean, body and paintwork undamaged / Veiculo limpo, corpo e pintura nao danificados',
-            '2.2 Windows and mirrors clean and in working order / Vidros e espelhos limpos e em boas condicoes',
-            '2.3 Tyres, rims, wheel nuts, spare tyre and jack in place / Pneus, borda, parafusos, suplente e macaco no lugar',
-            '2.4 Tow hitch and trailer electrical connection / Reboque e conexao eletrica do atrelado',
-            '2.5 Reflectors sides and rear, chevrons and reflective tape / Reflectores dos lados e atras, chevrons e fita reflectora',
-            '2.6 Tipping mechanism in perfect condition / Mecanismo de bascula em perfeitas condicoes',
-            '3.1 Engine clean / Motor limpo',
-            '3.2 Radiator in good condition / Radiador em boas condicoes',
-            '3.3 Battery terminals clean / Bateria com polos limpos',
-            '3.4 Fan and other drive belts tensioned correctly / Correias tensionadas correctamente',
-            '3.5 Tilt cab securing mechanism operating correctly / Mecanismo da cabine em perfeitas condicoes',
-            '4.1 Safety belt in good condition / Cinto de seguranca em boas condicoes',
-            '4.2 Safety lock-out device / Tranqueta de seguranca',
-            '4.3 Reverse warning alarm working / Alarme de retaguarda funcional',
-            '4.4 Hand rails / Corrimaos',
-            '4.5 Footing / Pisa pe',
-            '4.6 Safe machine access / Acesso a maquina em seguranca',
-            '4.7 Signage pinch-point / Sinal de ponto de aperto',
-            '4.8 Signage seat belt must be worn / Sinal de uso obrigatorio de cinto',
-            '5.1 Fuel tank in good condition / Tanque de combustivel em boas condicoes',
-            '5.2 Fuel cap available on tank / Tampa do combustivel disponivel',
-            '5.3 Windshield wiper water level / Nivel de agua do limpa para-brisa',
-            '5.4 Fuel level correct / Nivel do combustivel correcto',
-            '5.5 Engine oil level / Nivel do oleo do motor',
-            '5.6 Hydraulic fluid level / Nivel do fluido hidraulico',
-            '5.7 Radiator water level / Nivel de agua no radiador',
-            '5.8 Transmission oil level / Nivel do oleo de transmissao',
-            '5.9 No oil leaks / Sem fugas de oleo',
-            '5.10 No fuel leaks / Sem fugas de combustivel',
-            '5.11 No hydraulic fluid leaks / Sem fugas de fluido hidraulico',
-            '5.12 No transmission oil leak / Sem fuga do oleo de transmissao',
-            '6.1 Indicators front, rear and hazards / Indicadores frente, tras e perigo',
-            '6.2 Headlights main beam, indicators and park lights / Farois maximo, minimo e luzes de parqueamento',
-            '6.3 Tail lights brake and reverse lights / Luzes de travao e de retaguarda',
-            '6.4 Rotating light working properly / Pirilampo funcional'
-        ];
-    }
-    return itensPadraoChecklist();
-}
-
-function sincronizarItensTemplate(PDO $pdo, int $templateId, array $itensEsperados): void {
-    if ($templateId <= 0 || count($itensEsperados) === 0) return;
-    $selItens = $pdo->prepare("
-        SELECT id, ordem
-        FROM transporte_checklist_itens
-        WHERE template_id = :template_id
-        ORDER BY ordem ASC, id ASC
-    ");
-    $selItens->execute([':template_id' => $templateId]);
-    $atuais = $selItens->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    $porOrdem = [];
-    foreach ($atuais as $row) {
-        $ord = (int) ($row['ordem'] ?? 0);
-        if ($ord > 0 && !isset($porOrdem[$ord])) {
-            $porOrdem[$ord] = (int) ($row['id'] ?? 0);
-        }
-    }
-    $updItem = $pdo->prepare("
-        UPDATE transporte_checklist_itens
-        SET descricao = :descricao, ativo = 1
-        WHERE id = :id
-    ");
-    $insItem = $pdo->prepare("
-        INSERT INTO transporte_checklist_itens (template_id, ordem, descricao, ativo)
-        VALUES (:template_id, :ordem, :descricao, 1)
-    ");
-    $desativarExtras = $pdo->prepare("
-        UPDATE transporte_checklist_itens
-        SET ativo = 0
-        WHERE template_id = :template_id AND ordem > :max_ordem
-    ");
-    $ord = 1;
-    foreach ($itensEsperados as $descricao) {
-        if (isset($porOrdem[$ord]) && $porOrdem[$ord] > 0) {
-            $updItem->execute([
-                ':descricao' => $descricao,
-                ':id' => $porOrdem[$ord]
-            ]);
-        } else {
-            $insItem->execute([
-                ':template_id' => $templateId,
-                ':ordem' => $ord,
-                ':descricao' => $descricao
-            ]);
-        }
-        $ord++;
-    }
-    $desativarExtras->execute([
-        ':template_id' => $templateId,
-        ':max_ordem' => count($itensEsperados)
-    ]);
-}
-
-function sincronizarChecklistHandTools(PDO $pdo): void {
-    $stmt = $pdo->query("
-        SELECT id, codigo, nome
-        FROM transporte_checklist_templates
-        WHERE ativo = 1
-          AND (UPPER(codigo) = 'VIL.F.QAS.31' OR LOWER(nome) LIKE '%hand tools%')
-        ORDER BY id DESC
-    ");
-    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-    foreach ($templates as $tpl) {
-        $templateId = (int) ($tpl['id'] ?? 0);
-        if ($templateId <= 0) continue;
-        $codigo = (string) ($tpl['codigo'] ?? '');
-        $nome = (string) ($tpl['nome'] ?? '');
-        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
-    }
-}
-
-function sincronizarChecklistBasculante(PDO $pdo): void {
-    $stmt = $pdo->query("
-        SELECT id, codigo, nome
-        FROM transporte_checklist_templates
-        WHERE ativo = 1
-          AND (UPPER(codigo) = 'VIL.F.QAS.41' OR LOWER(nome) LIKE '%basculante%' OR LOWER(nome) LIKE '%tipper truck%')
-        ORDER BY id DESC
-    ");
-    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-    foreach ($templates as $tpl) {
-        $templateId = (int) ($tpl['id'] ?? 0);
-        if ($templateId <= 0) continue;
-        $codigo = (string) ($tpl['codigo'] ?? '');
-        $nome = (string) ($tpl['nome'] ?? '');
-        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
-    }
-}
-
-function sincronizarChecklistBulldozer(PDO $pdo): void {
-    $stmt = $pdo->query("
-        SELECT id, codigo, nome
-        FROM transporte_checklist_templates
-        WHERE ativo = 1
-          AND (UPPER(codigo) = 'VIL.F.QAS.35' OR LOWER(nome) LIKE '%bulldozer%')
-        ORDER BY id DESC
-    ");
-    $templates = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
-    foreach ($templates as $tpl) {
-        $templateId = (int) ($tpl['id'] ?? 0);
-        if ($templateId <= 0) continue;
-        $codigo = (string) ($tpl['codigo'] ?? '');
-        $nome = (string) ($tpl['nome'] ?? '');
-        sincronizarItensTemplate($pdo, $templateId, itensChecklistPorTemplate($codigo, $nome));
-    }
 }
 
 function bootstrapChecklistTemplates(PDO $pdo, string $dir): void {
@@ -1135,7 +1379,7 @@ function bootstrapChecklistTemplates(PDO $pdo, string $dir): void {
 
         $templateId = (int) $pdo->lastInsertId();
         $ord = 1;
-        foreach(itensChecklistPorTemplate($codigo, $nomeSemExt) as $it) {
+        foreach(itensPadraoChecklist() as $it) {
             $insertItem->execute([
                 ':template_id' => $templateId,
                 ':ordem' => $ord++,
@@ -1220,7 +1464,7 @@ function seedChecklistBasicoSeVazio(PDO $pdo): void {
         ]);
         $tplId = (int) $pdo->lastInsertId();
         $ord = 1;
-        foreach(itensChecklistPorTemplate($codigo, $nome) as $it) {
+        foreach(itensPadraoChecklist() as $it) {
             $insItem->execute([
                 ':template_id' => $tplId,
                 ':ordem' => $ord++,
@@ -1234,9 +1478,6 @@ $checklistDir = 'g:\\Outros computadores\\My Computer\\VILCON Documents\\9. TO\\
 bootstrapChecklistTemplates($pdo, $checklistDir);
 seedChecklistBasicoSeVazio($pdo);
 deduplicarChecklistTemplates($pdo);
-sincronizarChecklistHandTools($pdo);
-sincronizarChecklistBasculante($pdo);
-sincronizarChecklistBulldozer($pdo);
 seedStockItensBasicos($pdo);
 
 $googleMapsApiKey = getenv('GOOGLE_MAPS_API_KEY') ?: ($_SERVER['GOOGLE_MAPS_API_KEY'] ?? '');
@@ -1513,13 +1754,17 @@ if(isset($_GET['doc']) && in_array((string) ($_GET['doc'] ?? ''), ['presenca_pdf
     <style>
       body{font-family:Arial,sans-serif;color:#111}
       .head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}
+      .head-left{display:flex;align-items:center;gap:10px}
+      .head-left img{height:34px}
+      .head-right{display:flex;align-items:center;gap:10px}
+      .head-right img{height:36px}
       .title{font-size:18px;font-weight:800}
       table{width:100%;border-collapse:collapse}
       th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
       th{background:#111;color:#f4b400}
       tr:nth-child(even) td{background:#fff8e1}
     </style></head><body>';
-    echo '<div class="head"><div class="title">Lista de Presencas - Transporte</div><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div></div>';
+    echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Transporte</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
     echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
     if(empty($rowsDoc)) {
         echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
@@ -1538,17 +1783,90 @@ if(isset($_GET['doc']) && in_array((string) ($_GET['doc'] ?? ''), ['presenca_pdf
     exit();
 }
 
+if(!function_exists('pdfEscapeText')) {
+    function pdfEscapeText(string $text): string {
+        return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
+    }
+}
+
+if(!function_exists('buildSimplePdfFromText')) {
+    function buildSimplePdfFromText(string $text): string {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $text);
+        $rawLines = explode("\n", $normalized);
+        $lines = [];
+        foreach($rawLines as $line) {
+            $line = trim((string) $line);
+            if($line === '') {
+                $line = ' ';
+            }
+            $ansi = @iconv('UTF-8', 'Windows-1252//TRANSLIT//IGNORE', $line);
+            if($ansi === false || $ansi === '') {
+                $ansi = $line;
+            }
+            if(strlen($ansi) > 110) {
+                $chunks = str_split($ansi, 110);
+                foreach($chunks as $c) {
+                    $lines[] = $c;
+                }
+            } else {
+                $lines[] = $ansi;
+            }
+        }
+        if(empty($lines)) {
+            $lines = ['Documento sem conteudo'];
+        }
+
+        $ops = "BT\n/F1 11 Tf\n14 TL\n50 800 Td\n";
+        $first = true;
+        foreach($lines as $line) {
+            $escaped = pdfEscapeText($line);
+            if($first) {
+                $ops .= '(' . $escaped . ") Tj\n";
+                $first = false;
+            } else {
+                $ops .= "T*\n(" . $escaped . ") Tj\n";
+            }
+        }
+        $ops .= "ET\n";
+
+        $objects = [];
+        $objects[] = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+        $objects[] = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+        $objects[] = "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n";
+        $objects[] = "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n";
+        $objects[] = "5 0 obj\n<< /Length " . strlen($ops) . " >>\nstream\n" . $ops . "endstream\nendobj\n";
+
+        $pdf = "%PDF-1.4\n";
+        $offsets = [0];
+        foreach($objects as $obj) {
+            $offsets[] = strlen($pdf);
+            $pdf .= $obj;
+        }
+
+        $xrefPos = strlen($pdf);
+        $pdf .= "xref\n0 " . (count($objects) + 1) . "\n";
+        $pdf .= "0000000000 65535 f \n";
+        for($i = 1; $i <= count($objects); $i++) {
+            $pdf .= sprintf("%010d 00000 n \n", $offsets[$i]);
+        }
+
+        $pdf .= "trailer\n<< /Size " . (count($objects) + 1) . " /Root 1 0 R >>\n";
+        $pdf .= "startxref\n" . $xrefPos . "\n%%EOF";
+
+        return $pdf;
+    }
+}
 if(isset($_GET['doc']) && isset($_GET['id'])) {
     $tipoDoc = trim((string) ($_GET['doc'] ?? ''));
     $idDoc = (int) ($_GET['id'] ?? 0);
     $fmtDoc = trim((string) ($_GET['fmt'] ?? 'print')); // print|download
-    if($idDoc > 0 && in_array($tipoDoc, ['req','evt'], true)) {
+    if($idDoc > 0 && in_array($tipoDoc, ['req','evt','os'], true)) {
         $rowDoc = null;
         if($tipoDoc === 'req') {
             $st = $pdo->prepare("SELECT * FROM transporte_requisicoes WHERE id = :id LIMIT 1");
             $st->execute([':id' => $idDoc]);
             $rowDoc = $st->fetch(PDO::FETCH_ASSOC) ?: null;
-        } else {
+        } elseif($tipoDoc === 'evt') {
             $st = $pdo->prepare("
                 SELECT e.*, a.descricao AS ativo_descricao, a.matricula AS ativo_matricula
                 FROM transporte_frota_eventos e
@@ -1558,10 +1876,159 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
             ");
             $st->execute([':id' => $idDoc]);
             $rowDoc = $st->fetch(PDO::FETCH_ASSOC) ?: null;
+        } else {
+            $st = $pdo->prepare("
+                SELECT *
+                FROM transporte_guias
+                WHERE id = :id
+                LIMIT 1
+            ");
+            $st->execute([':id' => $idDoc]);
+            $rowDoc = $st->fetch(PDO::FETCH_ASSOC) ?: null;
         }
         if($rowDoc) {
+            if($tipoDoc === 'os') {
+                $dataOs = '-';
+                if(!empty($rowDoc['criado_em'])) {
+                    $dataOs = date('d/m/Y H:i', strtotime((string) $rowDoc['criado_em']));
+                } elseif(!empty($rowDoc['data_saida'])) {
+                    $dataOs = date('d/m/Y', strtotime((string) $rowDoc['data_saida']));
+                }
+                $codigoOs = !empty($rowDoc['codigo']) ? (string) $rowDoc['codigo'] : ('OS-' . str_pad((string) $idDoc, 4, '0', STR_PAD_LEFT));
+                header('Content-Type: text/html; charset=utf-8');
+                ?>
+                <!doctype html>
+                <html lang="pt">
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Ordem de Servi&ccedil;o - <?= htmlspecialchars($codigoOs) ?></title>
+                    <style>
+                        @page { margin: 18mm 12mm; }
+                        body { font-family: Arial, sans-serif; color: #111111; margin: 0; padding: 0; }
+                        .pdf-wrap { width: 100%; padding: 10px; box-sizing: border-box; }
+                        .pdf-header { border: 2px solid #111111; border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
+                        .pdf-strip { height: 10px; background: #f4b400; }
+                        .pdf-head-content { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: #ffffff; }
+                        .pdf-brand { display: flex; align-items: center; gap: 12px; }
+                        .pdf-brand img { width: 130px; height: auto; object-fit: contain; }
+                        .pdf-brand h1 { margin: 0; font-size: 18px; color: #111111; letter-spacing: 0.4px; }
+                        .pdf-meta { text-align: right; font-size: 11px; color: #333333; }
+                        .pdf-meta strong { display: block; color: #111111; margin-bottom: 4px; }
+                        .pdf-cert img { width: 54px; height: auto; object-fit: contain; margin-left: 10px; }
+                        h2 { margin: 0 0 10px 0; color: #111111; font-size: 14px; text-transform: uppercase; }
+                        table { width: 100%; border-collapse: collapse; }
+                        thead th { background: #111111; color: #f4b400; border: 1px solid #111111; padding: 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
+                        tbody td { border: 1px solid #d1d5db; padding: 8px; font-size: 11px; color: #111111; }
+                        tbody tr:nth-child(even) td { background: #fff8e1; }
+                        .obs { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; margin-top: 12px; font-size: 12px; background: #fff; }
+                    </style>
+                    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
+                </head>
+                <body>
+                <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
+                    <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
+                        <span></span><span></span><span></span><span></span><span></span><span></span>
+                        <span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                </div>
+                <div class="pdf-wrap">
+                    <div class="pdf-header">
+                        <div class="pdf-strip"></div>
+                        <div class="pdf-head-content">
+                            <div class="pdf-brand">
+                                <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon">
+                                <h1>VILCON</h1>
+                            </div>
+                            <div style="display:flex; align-items:center;">
+                                <div class="pdf-meta">
+                                    <strong>ORDEM DE SERVI&Ccedil;O - TRANSPORTE</strong>
+                                    <span>Emitido em: <?= htmlspecialchars(date('d/m/Y H:i')) ?></span>
+                                </div>
+                                <div class="pdf-cert"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h2>Resumo da Ordem</h2>
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>N&uacute;mero OS</th>
+                            <th>Data</th>
+                            <th>Status</th>
+                            <th>Projeto</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td><?= htmlspecialchars($codigoOs) ?></td>
+                            <td><?= htmlspecialchars($dataOs) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['status'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['projeto'] ?? '-')) ?></td>
+                        </tr>
+                        </tbody>
+                    </table>
+
+                    <h2 style="margin-top:12px;">Dados Operacionais</h2>
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Viatura / Equipamento</th>
+                            <th>Matr&iacute;cula</th>
+                            <th>Condutor</th>
+                            <th>Empresa / Cliente</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td><?= htmlspecialchars((string) ($rowDoc['viatura_id'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['matricula'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['condutor'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['empresa_cliente'] ?? '-')) ?></td>
+                        </tr>
+                        </tbody>
+                    </table>
+
+                    <h2 style="margin-top:12px;">Percurso</h2>
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>Origem</th>
+                            <th>Destino</th>
+                            <th>KM Inicial</th>
+                            <th>KM Final</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td><?= htmlspecialchars((string) ($rowDoc['local_saida'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['destino'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['km_saida'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rowDoc['km_chegada'] ?? '-')) ?></td>
+                        </tr>
+                        </tbody>
+                    </table>
+
+                    <div class="obs">
+                        <strong>Descri&ccedil;&atilde;o do Servi&ccedil;o:</strong><br>
+                        <?= nl2br(htmlspecialchars((string) ($rowDoc['atividade_prevista'] ?? '-'))) ?>
+                    </div>
+                </div>
+                <script>
+                    window.addEventListener('load', function() { window.print(); });
+                </script>
+                <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
+                </body>
+                </html>
+                <?php
+                exit();
+            }
             $texto = "Vilcon Operations - Documento\n";
-            $texto .= "Tipo: " . ($tipoDoc === 'req' ? 'RequisiÃ§Ã£o Externa' : 'Evento Operacional') . "\n";
+            $tipoNome = 'Ordem de ServiÃ§o';
+            if($tipoDoc === 'req') $tipoNome = 'RequisiÃ§Ã£o Externa';
+            if($tipoDoc === 'evt') $tipoNome = 'Evento Operacional';
+            $texto .= "Tipo: " . $tipoNome . "\n";
             $texto .= "CÃ³digo: " . (string) ($rowDoc['codigo'] ?? ('DOC-' . $idDoc)) . "\n";
             $texto .= "Data: " . (string) (($rowDoc['data_requisicao'] ?? $rowDoc['data_evento'] ?? $rowDoc['criado_em'] ?? '')) . "\n";
             if($tipoDoc === 'req') {
@@ -1569,22 +2036,34 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                 $texto .= "Fornecedor: " . (string) ($rowDoc['fornecedor_escolhido'] ?? '-') . "\n";
                 $texto .= "Custo Estimado: " . (string) ($rowDoc['valor_total_estimado'] ?? '0') . " " . (string) ($rowDoc['moeda'] ?? 'MZN') . "\n";
                 $texto .= "Justificativa: " . (string) ($rowDoc['justificativa'] ?? '-') . "\n";
-            } else {
+            } elseif($tipoDoc === 'evt') {
                 $texto .= "Ativo: " . (string) (($rowDoc['ativo_descricao'] ?? '-') . (!empty($rowDoc['ativo_matricula']) ? ' | ' . $rowDoc['ativo_matricula'] : '')) . "\n";
                 $texto .= "Tipo Evento: " . (string) ($rowDoc['tipo_evento'] ?? '-') . "\n";
                 $texto .= "DescriÃ§Ã£o: " . (string) ($rowDoc['descricao_falha'] ?? '-') . "\n";
                 $texto .= "AÃ§Ã£o Tomada: " . (string) ($rowDoc['acao_tomada'] ?? '-') . "\n";
                 $texto .= "Custo Estimado: " . (string) ($rowDoc['custo_estimado'] ?? '0') . "\n";
+            } else {
+                $texto .= "Viatura: " . (string) ($rowDoc['viatura_id'] ?? '-') . "\n";
+                $texto .= "MatrÃ­cula: " . (string) ($rowDoc['matricula'] ?? '-') . "\n";
+                $texto .= "Condutor: " . (string) ($rowDoc['condutor'] ?? '-') . "\n";
+                $texto .= "Projeto: " . (string) ($rowDoc['projeto'] ?? '-') . "\n";
+                $texto .= "Empresa/Cliente: " . (string) ($rowDoc['empresa_cliente'] ?? '-') . "\n";
+                $texto .= "Origem: " . (string) ($rowDoc['local_saida'] ?? '-') . "\n";
+                $texto .= "Destino: " . (string) ($rowDoc['destino'] ?? '-') . "\n";
+                $texto .= "Status: " . (string) ($rowDoc['status'] ?? '-') . "\n";
+                $texto .= "DescriÃ§Ã£o: " . (string) ($rowDoc['atividade_prevista'] ?? '-') . "\n";
             }
 
             if($fmtDoc === 'download') {
-                header('Content-Type: text/plain; charset=utf-8');
-                header('Content-Disposition: attachment; filename="doc_' . $tipoDoc . '_' . $idDoc . '.txt"');
-                echo $texto;
+                $pdf = buildSimplePdfFromText($texto);
+                header('Content-Type: application/pdf');
+                header('Content-Disposition: attachment; filename="doc_' . $tipoDoc . '_' . $idDoc . '.pdf"');
+                header('Content-Length: ' . strlen($pdf));
+                echo $pdf;
                 exit();
             }
             header('Content-Type: text/html; charset=utf-8');
-            echo '<!doctype html><html><head><meta charset="utf-8"><title>Documento</title></head><body style="font-family:Arial, sans-serif; padding:20px;"><pre style="white-space:pre-wrap;">' . htmlspecialchars($texto) . '</pre><script>window.print();</script></body></html>';
+            echo '<!doctype html><html><head><meta charset="utf-8"><title>Documento</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}.head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}.brand{display:flex;align-items:center;gap:10px}.brand img{height:34px}.cert img{height:36px}pre{white-space:pre-wrap;background:#fff;border:1px solid #d1d5db;padding:12px;border-radius:8px}</style></head><body><div class=\"head\"><div class=\"brand\"><img src=\"/vilcon-systemon/public/assets/img/logo-vilcon.png\" alt=\"Vilcon\"><strong>Documento</strong></div><div class=\"cert\"><img src=\"/vilcon-systemon/public/assets/img/innocertificate.png\" alt=\"INNO Certificate\"></div></div><pre>' . htmlspecialchars($texto) . '</pre><script>window.print();</script></body></html>';
             exit();
         }
     }
@@ -1908,49 +2387,292 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if(isset($_POST['salvar_os'])) {
-        $sql = "INSERT INTO transporte_guias 
-                (viatura_id, matricula, tipo_equipamento, consumo_l_100km, condutor, local_saida, destino, projeto, empresa_cliente, atividade_prevista, tipo_servico, servico_inicio, servico_fim, km_saida, km_chegada, quantidade_inicial_l, data_saida, hora_saida, hora_chegada, autorizado_por, status)
-                VALUES (:viatura_id, :matricula, :tipo_equipamento, :consumo_l_100km, :condutor, :local_saida, :destino, :projeto, :empresa_cliente, :atividade_prevista, :tipo_servico, :servico_inicio, :servico_fim, :km_saida, :km_chegada, :quantidade_inicial_l, :data_saida, :hora_saida, :hora_chegada, :autorizado_por, 'Em Rota')";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':viatura_id' => $_POST['viatura_id'] ?? '',
-            ':matricula' => $_POST['matricula'] ?? '',
-            ':tipo_equipamento' => $_POST['tipo_equipamento'] ?? '',
-            ':consumo_l_100km' => isset($_POST['consumo_l_100km']) && $_POST['consumo_l_100km'] !== ''
-                ? (float) $_POST['consumo_l_100km']
-                : consumoPadraoPorTipo($_POST['tipo_equipamento'] ?? null),
-            ':condutor' => $_POST['condutor'] ?? '',
-            ':local_saida' => $_POST['local_saida'] ?? '',
-            ':destino' => $_POST['destino'] ?? '',
-            ':projeto' => $_POST['projeto_os'] ?? '',
-            ':empresa_cliente' => $_POST['empresa_cliente'] ?? '',
-            ':atividade_prevista' => $_POST['atividade_prevista'] ?? '',
-            ':tipo_servico' => $_POST['tipo_servico'] ?? null,
-            ':servico_inicio' => !empty($_POST['servico_inicio']) ? $_POST['servico_inicio'] : null,
-            ':servico_fim' => !empty($_POST['servico_fim']) ? $_POST['servico_fim'] : null,
-            ':km_saida' => isset($_POST['km_saida']) && $_POST['km_saida'] !== '' ? (int) $_POST['km_saida'] : null,
-            ':km_chegada' => isset($_POST['km_chegada_os']) && $_POST['km_chegada_os'] !== '' ? (int) $_POST['km_chegada_os'] : null,
-            ':quantidade_inicial_l' => isset($_POST['quantidade_inicial_l']) && $_POST['quantidade_inicial_l'] !== '' ? (float) $_POST['quantidade_inicial_l'] : null,
-            ':data_saida' => !empty($_POST['data_saida']) ? str_replace('T', ' ', $_POST['data_saida']) . ':00' : date('Y-m-d H:i:s'),
-            ':hora_saida' => !empty($_POST['hora_saida']) ? $_POST['hora_saida'] : null,
-            ':hora_chegada' => !empty($_POST['hora_chegada']) ? $_POST['hora_chegada'] : null,
-            ':autorizado_por' => $_POST['autorizado_por'] ?? ''
+    if(isset($_POST['finalizar_os'])) {
+        $osIdFinalizar = isset($_POST['id']) ? (int) $_POST['id'] : 0;
+        if($osIdFinalizar <= 0) {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'error',
+                'title' => 'Finalizacao',
+                'message' => 'Ordem de Servico invalida para finalizar.',
+                'auto_close_ms' => 0,
+                'redirect' => '?tab=transporte&view=entrada&mode=list',
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=list");
+            exit();
+        }
+
+        $stOsFinal = $pdo->prepare("
+            SELECT id, status, abastecido_em
+            FROM transporte_guias
+            WHERE id = :id
+            LIMIT 1
+        ");
+        $stOsFinal->execute([':id' => $osIdFinalizar]);
+        $osFinal = $stOsFinal->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if(!$osFinal) {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'error',
+                'title' => 'Finalizacao',
+                'message' => 'Ordem de Servico nao encontrada.',
+                'auto_close_ms' => 0,
+                'redirect' => '?tab=transporte&view=entrada&mode=list',
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=list");
+            exit();
+        }
+
+        if((string) ($osFinal['status'] ?? '') === 'Finalizada') {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'info',
+                'title' => 'Ordem ja finalizada',
+                'message' => 'Esta ordem ja foi finalizada anteriormente.',
+                'auto_close_ms' => 1800,
+                'redirect' => '?tab=transporte&view=entrada&mode=form&id=' . $osIdFinalizar,
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=form&id=" . $osIdFinalizar);
+            exit();
+        }
+
+        if(empty($osFinal['abastecido_em'])) {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'warning',
+                'title' => 'Fluxo incompleto',
+                'message' => 'Finalize apenas depois de o Frentista confirmar o abastecimento.',
+                'auto_close_ms' => 0,
+                'redirect' => '?tab=transporte&view=entrada&mode=form&id=' . $osIdFinalizar,
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=form&id=" . $osIdFinalizar);
+            exit();
+        }
+
+        $upFinal = $pdo->prepare("
+            UPDATE transporte_guias
+            SET status = 'Finalizada',
+                finalizado_por = :finalizado_por,
+                finalizado_em = NOW()
+            WHERE id = :id
+        ");
+        $upFinal->execute([
+            ':finalizado_por' => (string) ($_SESSION['usuario_nome'] ?? ''),
+            ':id' => $osIdFinalizar,
         ]);
 
+        $_SESSION['app_action_feedback'] = [
+            'type' => 'success',
+            'title' => 'Ordem finalizada',
+            'message' => 'Ordem de Servico finalizada com sucesso no Transporte.',
+            'auto_close_ms' => 1500,
+            'redirect' => '?tab=transporte&view=entrada&mode=list',
+        ];
         header("Location:?tab=transporte&view=entrada&mode=list");
         exit();
     }
 
-    if(isset($_POST['finalizar_os'])) {
+    if(isset($_POST['salvar_os'])) {
+        $osIdEdicao = isset($_POST['id']) ? (int) $_POST['id'] : 0;
+        try {
+            if($osIdEdicao > 0) {
+                $sql = "UPDATE transporte_guias SET
+                            viatura_id = :viatura_id,
+                            matricula = :matricula,
+                            tipo_equipamento = :tipo_equipamento,
+                            consumo_l_100km = :consumo_l_100km,
+                            condutor = :condutor,
+                            local_saida = :local_saida,
+                            destino = :destino,
+                            projeto = :projeto,
+                            empresa_cliente = :empresa_cliente,
+                            atividade_prevista = :atividade_prevista,
+                            tipo_servico = :tipo_servico,
+                            servico_inicio = :servico_inicio,
+                            servico_fim = :servico_fim,
+                            km_saida = :km_saida,
+                            km_chegada = :km_chegada,
+                            quantidade_inicial_l = :quantidade_inicial_l,
+                            data_saida = :data_saida,
+                            hora_saida = :hora_saida,
+                            hora_chegada = :hora_chegada,
+                            autorizado_por = :autorizado_por
+                        WHERE id = :id";
+            } else {
+                $sql = "INSERT INTO transporte_guias 
+                        (viatura_id, matricula, tipo_equipamento, consumo_l_100km, condutor, local_saida, destino, projeto, empresa_cliente, atividade_prevista, tipo_servico, servico_inicio, servico_fim, km_saida, km_chegada, quantidade_inicial_l, data_saida, hora_saida, hora_chegada, autorizado_por, status)
+                        VALUES (:viatura_id, :matricula, :tipo_equipamento, :consumo_l_100km, :condutor, :local_saida, :destino, :projeto, :empresa_cliente, :atividade_prevista, :tipo_servico, :servico_inicio, :servico_fim, :km_saida, :km_chegada, :quantidade_inicial_l, :data_saida, :hora_saida, :hora_chegada, :autorizado_por, 'Em Rota')";
+            }
+            $stmt = $pdo->prepare($sql);
+            $paramsSalvarOs = [
+                ':viatura_id' => $_POST['viatura_id'] ?? '',
+                ':matricula' => $_POST['matricula'] ?? '',
+                ':tipo_equipamento' => $_POST['tipo_equipamento'] ?? '',
+                ':consumo_l_100km' => isset($_POST['consumo_l_100km']) && $_POST['consumo_l_100km'] !== ''
+                    ? (float) $_POST['consumo_l_100km']
+                    : consumoPadraoPorTipo($_POST['tipo_equipamento'] ?? null),
+                ':condutor' => $_POST['condutor'] ?? '',
+                ':local_saida' => $_POST['local_saida'] ?? '',
+                ':destino' => $_POST['destino'] ?? '',
+                ':projeto' => $_POST['projeto_os'] ?? '',
+                ':empresa_cliente' => $_POST['empresa_cliente'] ?? '',
+                ':atividade_prevista' => $_POST['atividade_prevista'] ?? '',
+                ':tipo_servico' => $_POST['tipo_servico'] ?? null,
+                ':servico_inicio' => !empty($_POST['servico_inicio']) ? $_POST['servico_inicio'] : null,
+                ':servico_fim' => !empty($_POST['servico_fim']) ? $_POST['servico_fim'] : null,
+                ':km_saida' => isset($_POST['km_saida']) && $_POST['km_saida'] !== '' ? (int) $_POST['km_saida'] : null,
+                ':km_chegada' => isset($_POST['km_chegada_os']) && $_POST['km_chegada_os'] !== '' ? (int) $_POST['km_chegada_os'] : null,
+                ':quantidade_inicial_l' => isset($_POST['quantidade_inicial_l']) && $_POST['quantidade_inicial_l'] !== '' ? (float) $_POST['quantidade_inicial_l'] : null,
+                ':data_saida' => !empty($_POST['data_saida']) ? str_replace('T', ' ', $_POST['data_saida']) . ':00' : date('Y-m-d H:i:s'),
+                ':hora_saida' => !empty($_POST['hora_saida']) ? $_POST['hora_saida'] : null,
+                ':hora_chegada' => !empty($_POST['hora_chegada']) ? $_POST['hora_chegada'] : null,
+                ':autorizado_por' => trim((string) ($_POST['autorizado_por'] ?? '')) !== ''
+                    ? (string) $_POST['autorizado_por']
+                    : (string) ($_SESSION['usuario_nome'] ?? '')
+            ];
+            if($osIdEdicao > 0) {
+                $paramsSalvarOs[':id'] = $osIdEdicao;
+            }
+            $stmt->execute($paramsSalvarOs);
+
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'success',
+                'title' => $osIdEdicao > 0 ? 'Ordem Atualizada' : 'Ordem Salva',
+                'message' => $osIdEdicao > 0 ? 'Ordem de ServiÃ§o atualizada com sucesso.' : 'Ordem de ServiÃ§o salva com sucesso.',
+                'auto_close_ms' => 1500,
+                'redirect' => '?tab=transporte&view=entrada&mode=list',
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=form");
+            exit();
+        } catch (Throwable $e) {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'error',
+                'title' => 'Falha ao Salvar',
+                'message' => 'NÃ£o foi possÃ­vel salvar a Ordem de ServiÃ§o: ' . $e->getMessage(),
+                'auto_close_ms' => 0,
+            ];
+            header("Location:?tab=transporte&view=entrada&mode=form");
+            exit();
+        }
+    }
+
+    if(isset($_POST['salvar_projecto_frota'])) {
+        $projectoId = isset($_POST['projecto_id']) ? (int) $_POST['projecto_id'] : 0;
+        $codigoProjeto = strtoupper(trim((string) ($_POST['codigo_projecto'] ?? '')));
+        $nomeProjeto = trim((string) ($_POST['nome_projecto'] ?? ''));
+        $clienteProjeto = trim((string) ($_POST['cliente_projecto'] ?? ''));
+        $localProjeto = trim((string) ($_POST['localizacao_projecto'] ?? ''));
+        $gestorProjeto = trim((string) ($_POST['gestor_projecto'] ?? ''));
+        $combustivelPrevisto = isset($_POST['combustivel_previsto_projecto']) && $_POST['combustivel_previsto_projecto'] !== ''
+            ? (float) $_POST['combustivel_previsto_projecto']
+            : 0.0;
+        $dataInicioProjeto = trim((string) ($_POST['data_inicio_projecto'] ?? ''));
+        $dataFimProjeto = trim((string) ($_POST['data_fim_projecto'] ?? ''));
+        $statusProjeto = trim((string) ($_POST['status_projecto'] ?? 'Ativo'));
+        $descricaoProjeto = trim((string) ($_POST['descricao_projecto'] ?? ''));
+
+        if($nomeProjeto === '') {
+            $erro_form = 'Informe o nome do projecto.';
+        }
+
+        if($erro_form === '' && $codigoProjeto === '') {
+            $stNextProj = $pdo->query("SELECT COALESCE(MAX(id),0)+1 FROM transporte_projectos");
+            $nextProjId = (int) $stNextProj->fetchColumn();
+            $codigoProjeto = 'PROJ-' . date('Y') . '-' . str_pad((string) $nextProjId, 4, '0', STR_PAD_LEFT);
+        }
+
+        if($erro_form === '') {
+            try {
+                if($projectoId > 0) {
+                    $stmtProjeto = $pdo->prepare("
+                        UPDATE transporte_projectos
+                        SET codigo = :codigo,
+                            nome = :nome,
+                            cliente = :cliente,
+                            localizacao = :localizacao,
+                            gestor = :gestor,
+                            combustivel_previsto_l = :combustivel_previsto_l,
+                            data_inicio = :data_inicio,
+                            data_fim = :data_fim,
+                            status = :status,
+                            descricao = :descricao,
+                            atualizado_em = NOW()
+                        WHERE id = :id
+                    ");
+                    $stmtProjeto->execute([
+                        ':codigo' => $codigoProjeto,
+                        ':nome' => $nomeProjeto,
+                        ':cliente' => $clienteProjeto !== '' ? $clienteProjeto : null,
+                        ':localizacao' => $localProjeto !== '' ? $localProjeto : null,
+                        ':gestor' => $gestorProjeto !== '' ? $gestorProjeto : null,
+                        ':combustivel_previsto_l' => $combustivelPrevisto,
+                        ':data_inicio' => $dataInicioProjeto !== '' ? $dataInicioProjeto : null,
+                        ':data_fim' => $dataFimProjeto !== '' ? $dataFimProjeto : null,
+                        ':status' => $statusProjeto !== '' ? $statusProjeto : 'Ativo',
+                        ':descricao' => $descricaoProjeto !== '' ? $descricaoProjeto : null,
+                        ':id' => $projectoId
+                    ]);
+                } else {
+                    $stmtProjeto = $pdo->prepare("
+                        INSERT INTO transporte_projectos
+                        (codigo, nome, cliente, localizacao, gestor, combustivel_previsto_l, data_inicio, data_fim, status, descricao)
+                        VALUES
+                        (:codigo, :nome, :cliente, :localizacao, :gestor, :combustivel_previsto_l, :data_inicio, :data_fim, :status, :descricao)
+                    ");
+                    $stmtProjeto->execute([
+                        ':codigo' => $codigoProjeto,
+                        ':nome' => $nomeProjeto,
+                        ':cliente' => $clienteProjeto !== '' ? $clienteProjeto : null,
+                        ':localizacao' => $localProjeto !== '' ? $localProjeto : null,
+                        ':gestor' => $gestorProjeto !== '' ? $gestorProjeto : null,
+                        ':combustivel_previsto_l' => $combustivelPrevisto,
+                        ':data_inicio' => $dataInicioProjeto !== '' ? $dataInicioProjeto : null,
+                        ':data_fim' => $dataFimProjeto !== '' ? $dataFimProjeto : null,
+                        ':status' => $statusProjeto !== '' ? $statusProjeto : 'Ativo',
+                        ':descricao' => $descricaoProjeto !== '' ? $descricaoProjeto : null
+                    ]);
+                    $projectoId = (int) $pdo->lastInsertId();
+                }
+
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'success',
+                    'title' => $projectoId > 0 ? 'Projecto Guardado' : 'Projecto Criado',
+                    'message' => 'Dados do projecto guardados com sucesso.',
+                    'auto_close_ms' => 1400,
+                    'redirect' => '?tab=gestao_frota&view=projectos&mode=list',
+                ];
+                header("Location:?tab=gestao_frota&view=projectos&mode=form&id=" . $projectoId);
+                exit();
+            } catch(Throwable $e) {
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'error',
+                    'title' => 'Falha no Projecto',
+                    'message' => 'NÃ£o foi possÃ­vel salvar o projecto: ' . $e->getMessage(),
+                    'auto_close_ms' => 0,
+                ];
+                header("Location:?tab=gestao_frota&view=projectos&mode=form" . ($projectoId > 0 ? ("&id=" . $projectoId) : ""));
+                exit();
+            }
+        }
+    }
+
+    if(isset($_POST['salvar_abastecimento_os'])) {
         $guiaId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
 
         if($guiaId <= 0) {
             $erro_form = "Guia invÃ¡lida para abastecimento.";
         } else {
-            $guiaStmt = $pdo->prepare("SELECT km_saida, consumo_l_100km, tipo_equipamento, projeto, viatura_id, condutor, quantidade_inicial_l FROM transporte_guias WHERE id = :id LIMIT 1");
+            $guiaStmt = $pdo->prepare("SELECT km_saida, consumo_l_100km, tipo_equipamento, projeto, viatura_id, condutor, quantidade_inicial_l, abastecido_em FROM transporte_guias WHERE id = :id LIMIT 1");
             $guiaStmt->execute([':id' => $guiaId]);
             $guiaAtual = $guiaStmt->fetch(PDO::FETCH_ASSOC);
+            if(!empty($guiaAtual['abastecido_em'])) {
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'warning',
+                    'title' => 'Edicao bloqueada',
+                    'message' => 'Este abastecimento ja foi confirmado pelo frentista e nao pode ser alterado pelo Gestor de Frota.',
+                    'auto_close_ms' => 0,
+                    'redirect' => '?tab=gestao_frota&view=recebidos&mode=list',
+                ];
+                header("Location:?tab=gestao_frota&view=recebidos&mode=list");
+                exit();
+            }
             $kmSaida = isset($guiaAtual['km_saida']) ? (int) $guiaAtual['km_saida'] : null;
             $consumoMedio = isset($_POST['consumo_l_100km']) && $_POST['consumo_l_100km'] !== ''
                 ? (float) $_POST['consumo_l_100km']
@@ -1988,6 +2710,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $litrosInicialOs = isset($_POST['quantidade_inicial']) && $_POST['quantidade_inicial'] !== ''
                 ? (float) $_POST['quantidade_inicial']
                 : (isset($guiaAtual['quantidade_inicial_l']) && $guiaAtual['quantidade_inicial_l'] !== '' ? (float) $guiaAtual['quantidade_inicial_l'] : 0.0);
+            if($litrosInicialOs <= 0) {
+                $erro_form = 'Informe a Quantidade Inicial (L) com valor maior que 0.';
+            }
             $litrosParaBaixa = $litrosAbast > 0 ? $litrosAbast : $litrosInicialOs;
 
             if($litrosParaBaixa > 0) {
@@ -2027,6 +2752,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 UPDATE transporte_guias
                 SET km_chegada = :km_chegada,
                     distancia_km = :distancia_km,
+                    quantidade_inicial_l = :quantidade_inicial_l,
                     autorizado_por = :gestor_transporte,
                     status = 'Aguardando Abastecimento'
                 WHERE id = :id
@@ -2034,6 +2760,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $updateGuia->execute([
                 ':km_chegada' => $kmMomento,
                 ':distancia_km' => $distanciaKm,
+                ':quantidade_inicial_l' => $litrosInicialOs,
                 ':gestor_transporte' => $_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? ''),
                 ':id' => $guiaId
             ]);
@@ -2086,13 +2813,32 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
             }
             $pdo->commit();
+            $detalheOrdem = 'Autorizado pelo Gestor de Frotas para abastecimento.';
+            if ($litrosParaBaixa > 0) {
+                $detalheOrdem .= ' Quantidade: ' . number_format((float) $litrosParaBaixa, 2, ',', '.') . ' L.';
+            }
+            enviarOrdemGuaritaAbastecimento($pdo, $guiaId, 'autorizado', $detalheOrdem);
             } catch(Throwable $e) {
                 if($pdo->inTransaction()) $pdo->rollBack();
-                $erro_form = 'Falha ao salvar abastecimento: ' . $e->getMessage();
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'error',
+                    'title' => 'Falha no Abastecimento',
+                    'message' => 'NÃ£o foi possÃ­vel salvar o abastecimento: ' . $e->getMessage(),
+                    'auto_close_ms' => 0,
+                ];
+                header("Location:?tab=gestao_frota&view=recebidos&mode=form&id=" . $guiaId);
+                exit();
             }
             }
         }
         if($erro_form === '') {
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'success',
+                'title' => 'Abastecimento Salvo',
+                'message' => 'Abastecimento registado com sucesso.',
+                'auto_close_ms' => 1500,
+                'redirect' => '?tab=frentista&view=tarefas&mode=list',
+            ];
             header("Location:?tab=frentista&view=tarefas&mode=list");
             exit();
         }
@@ -2103,19 +2849,43 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $motivo = trim((string) ($_POST['motivo_rejeicao'] ?? ''));
         $gestor = trim((string) ($_POST['gestor_frota'] ?? ($_POST['gestor_transporte'] ?? '')));
         if($guiaId > 0 && $motivo !== '') {
+            $stRejLock = $pdo->prepare("SELECT abastecido_em FROM transporte_guias WHERE id = :id LIMIT 1");
+            $stRejLock->execute([':id' => $guiaId]);
+            $rowRejLock = $stRejLock->fetch(PDO::FETCH_ASSOC) ?: null;
+            if(!empty($rowRejLock['abastecido_em'])) {
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'warning',
+                    'title' => 'Edicao bloqueada',
+                    'message' => 'Este abastecimento ja foi confirmado pelo frentista e nao pode ser rejeitado.',
+                    'auto_close_ms' => 0,
+                    'redirect' => '?tab=gestao_frota&view=recebidos&mode=list',
+                ];
+                header("Location:?tab=gestao_frota&view=recebidos&mode=list");
+                exit();
+            }
+            $statusRejeicao = (stripos($motivo, 'suficiente') !== false || stripos($motivo, 'combustivel') !== false)
+                ? 'Abastecimento Dispensado'
+                : 'Abastecimento Rejeitado';
             $updRej = $pdo->prepare("
                 UPDATE transporte_guias
-                SET status = 'Abastecimento Rejeitado',
+                SET status = :status,
                     abastecimento_rejeitado_por = :gestor,
                     abastecimento_rejeitado_motivo = :motivo,
                     abastecimento_rejeitado_em = NOW()
                 WHERE id = :id
             ");
             $updRej->execute([
+                ':status' => $statusRejeicao,
                 ':gestor' => $gestor !== '' ? $gestor : null,
                 ':motivo' => $motivo,
                 ':id' => $guiaId
             ]);
+            enviarOrdemGuaritaAbastecimento(
+                $pdo,
+                $guiaId,
+                'dispensado',
+                'Nao autorizado pelo Gestor de Frotas. Motivo: ' . $motivo
+            );
             header("Location:?tab=gestao_frota&view=recebidos&mode=list");
             exit();
         } else {
@@ -2126,10 +2896,44 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     if(isset($_POST['confirmar_abastecimento_frentista'])) {
         $guiaId = isset($_POST['id']) ? (int) $_POST['id'] : 0;
         if($guiaId > 0) {
-            $frentistaNome = trim((string) ($_POST['frentista_nome'] ?? ''));
+            $frentistaSessao = trim((string) ($_SESSION['usuario_nome'] ?? ''));
+            $frentistaNomeInput = trim((string) ($_POST['frentista_nome'] ?? ''));
+            $frentistaNome = $frentistaSessao !== '' ? $frentistaSessao : $frentistaNomeInput;
             $frentistaObs = trim((string) ($_POST['frentista_obs'] ?? ''));
             if($frentistaObs !== '') {
                 $frentistaNome = $frentistaNome === '' ? $frentistaObs : ($frentistaNome . ' | ' . $frentistaObs);
+            }
+
+            $stVal = $pdo->prepare("
+                SELECT g.id, g.abastecido_em, c.id AS combustivel_id
+                FROM transporte_guias g
+                LEFT JOIN transporte_combustivel c ON c.guia_id = g.id
+                WHERE g.id = :id
+                ORDER BY c.id DESC
+                LIMIT 1
+            ");
+            $stVal->execute([':id' => $guiaId]);
+            $dadosVal = $stVal->fetch(PDO::FETCH_ASSOC) ?: null;
+
+            if(!$dadosVal || empty($dadosVal['combustivel_id'])) {
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'error',
+                    'title' => 'Sem Abastecimento',
+                    'message' => 'Esta ordem ainda nÃ£o possui abastecimento registado pelo Gestor de Frotas.',
+                    'auto_close_ms' => 0,
+                ];
+                header("Location:?tab=frentista&view=tarefas&mode=list");
+                exit();
+            }
+            if(!empty($dadosVal['abastecido_em'])) {
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'error',
+                    'title' => 'JÃ¡ Confirmado',
+                    'message' => 'Este abastecimento jÃ¡ foi confirmado anteriormente.',
+                    'auto_close_ms' => 0,
+                ];
+                header("Location:?tab=frentista&view=tarefas&mode=list");
+                exit();
             }
 
             $upd = $pdo->prepare("
@@ -2143,6 +2947,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':abastecido_por' => $frentistaNome !== '' ? $frentistaNome : null,
                 ':id' => $guiaId
             ]);
+            $_SESSION['app_action_feedback'] = [
+                'type' => 'success',
+                'title' => 'Abastecimento Aprovado',
+                'message' => 'Abastecimento confirmado pelo frentista com sucesso.',
+                'auto_close_ms' => 1400,
+            ];
         }
 
         header("Location:?tab=frentista&view=tarefas&mode=list");
@@ -2157,13 +2967,56 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $kmAtualRep = isset($_POST['km_atual_rep']) && $_POST['km_atual_rep'] !== '' ? (int) $_POST['km_atual_rep'] : null;
             $localizacaoRep = trim((string) ($_POST['localizacao_rep'] ?? ''));
             $avariaReportada = trim((string) ($_POST['avaria_reportada'] ?? ''));
-            $prioridadeRep = trim((string) ($_POST['prioridade_rep'] ?? 'Media'));
+            $prioridadeRep = normalizarPrioridadeCorporativa((string) ($_POST['prioridade_rep'] ?? 'Media'));
+            $justificativaPrioridadeRep = trim((string) ($_POST['justificativa_prioridade_rep'] ?? ''));
             $solicitanteRep = trim((string) ($_POST['solicitante_rep'] ?? ''));
 
-            try {
+            if($prioridadeRep === 'Critica' && $justificativaPrioridadeRep === '') {
+                $erro_form = 'Informe a justificativa para prioridade Critica.';
+            } elseif($avariaReportada === '') {
+                $erro_form = 'Informe a descricao da avaria.';
+            } elseif($kmAtualRep === null || $kmAtualRep < 0) {
+                $erro_form = 'Informe o KM atual da viatura.';
+            } else {
+                try {
+                    $ativoRep = resolverAtivoTransporte($pdo, $viaturaIdRep, $matriculaRep);
+                    $viaturaIdRep = $ativoRep['viatura_id'];
+                    $matriculaRep = $ativoRep['matricula'];
+                    $condutorRep = validarCondutorTransporte($pdo, $condutorRep);
+                    $solicitanteRep = validarUtilizadorAtivoPorNomeTransporte($pdo, $solicitanteRep);
+                    $localizacaoRep = normalizarLocalizacaoTransporte($pdo, $localizacaoRep);
+                } catch (Throwable $e) {
+                    $erro_form = $e->getMessage();
+                }
+            }
+
+            if($erro_form === '') try {
                 $pdo->beginTransaction();
+                $nextRepStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_pedidos_reparacao");
+                $nextRepId = (int) $nextRepStmt->fetchColumn();
+                $codigo = 'PR-' . date('Y') . '-' . str_pad((string) $nextRepId, 4, '0', STR_PAD_LEFT);
+
+                $stmtRep = $pdo->prepare("
+                    INSERT INTO transporte_pedidos_reparacao
+                    (codigo, viatura_id, matricula, condutor, km_atual, localizacao, avaria_reportada, prioridade, solicitante, pdf_anexo, status)
+                    VALUES
+                    (:codigo, :viatura_id, :matricula, :condutor, :km_atual, :localizacao, :avaria_reportada, :prioridade, :solicitante, NULL, 'Enviado para Oficina')
+                ");
+                $stmtRep->execute([
+                    ':codigo' => $codigo,
+                    ':viatura_id' => $viaturaIdRep,
+                    ':matricula' => $matriculaRep,
+                    ':condutor' => $condutorRep,
+                    ':km_atual' => $kmAtualRep,
+                    ':localizacao' => $localizacaoRep,
+                    ':avaria_reportada' => $avariaReportada,
+                    ':prioridade' => $prioridadeRep,
+                    ':solicitante' => $solicitanteRep
+                ]);
+                $transportePedidoId = (int) $pdo->lastInsertId();
+
                 sincronizarPedidoReparacaoNaOficina($pdo, [
-                    'transporte_pedido_id' => 0,
+                    'transporte_pedido_id' => $transportePedidoId,
                     'viatura_id' => $viaturaIdRep,
                     'matricula' => $matriculaRep,
                     'localizacao' => $localizacaoRep,
@@ -2174,146 +3027,161 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $pdo->commit();
 
-                // Espelho legado no transporte (nao bloqueia o fluxo principal da oficina).
-                try {
-                    $nextRepStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_pedidos_reparacao");
-                    $nextRepId = (int) $nextRepStmt->fetchColumn();
-                    $codigo = 'PR-' . date('Y') . '-' . str_pad((string) $nextRepId, 4, '0', STR_PAD_LEFT);
-
-                    $stmtRep = $pdo->prepare("
-                        INSERT INTO transporte_pedidos_reparacao
-                        (codigo, viatura_id, matricula, condutor, km_atual, localizacao, avaria_reportada, prioridade, solicitante, pdf_anexo, status)
-                        VALUES
-                        (:codigo, :viatura_id, :matricula, :condutor, :km_atual, :localizacao, :avaria_reportada, :prioridade, :solicitante, NULL, 'Enviado para Oficina')
-                    ");
-                    $stmtRep->execute([
-                        ':codigo' => $codigo,
-                        ':viatura_id' => $viaturaIdRep,
-                        ':matricula' => $matriculaRep,
-                        ':condutor' => $condutorRep,
-                        ':km_atual' => $kmAtualRep,
-                        ':localizacao' => $localizacaoRep,
-                        ':avaria_reportada' => $avariaReportada,
-                        ':prioridade' => $prioridadeRep,
-                        ':solicitante' => $solicitanteRep
-                    ]);
-                } catch (Throwable $e) {
-                    // sem impacto: pedido principal ja foi salvo na oficina
-                }
-
-                header("Location:?tab=transporte&view=pedido_reparacao&mode=list");
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'success',
+                    'title' => 'Enviado com Sucesso',
+                    'message' => 'Pedido enviado para a Oficina.',
+                    'auto_close_ms' => 1600,
+                    'redirect' => '?tab=transporte&view=pedido_reparacao&mode=list',
+                ];
+                header("Location:?tab=transporte&view=pedido_reparacao&mode=form");
                 exit();
             } catch (Throwable $e) {
                 if($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
-                $erro_form = 'Falha ao enviar pedido de reparaÃ§Ã£o para Oficina: ' . $e->getMessage();
+                $_SESSION['app_action_feedback'] = [
+                    'type' => 'error',
+                    'title' => 'Falha no Envio',
+                    'message' => 'Falha ao enviar pedido de reparaÃ§Ã£o para Oficina: ' . $e->getMessage(),
+                    'auto_close_ms' => 0,
+                ];
+                header("Location:?tab=transporte&view=pedido_reparacao&mode=form");
+                exit();
+            }
+        }
+    }
+
+    if(isset($_POST['salvar_plano_manutencao'])) {
+        if($erro_form === '') {
+            $viaturaPm = trim((string) ($_POST['viatura_id_pm'] ?? ''));
+            $matriculaPm = strtoupper(trim((string) ($_POST['matricula_pm'] ?? '')));
+            $tipoEquipPm = trim((string) ($_POST['tipo_equipamento_pm'] ?? ''));
+            $localizacaoPm = trim((string) ($_POST['localizacao_pm'] ?? ''));
+            $tipoManutPm = trim((string) ($_POST['tipo_manutencao_pm'] ?? 'Preventiva'));
+            $dataManutPm = trim((string) ($_POST['data_manutencao_pm'] ?? date('Y-m-d')));
+            $prioridadePm = normalizarPrioridadeCorporativa((string) ($_POST['prioridade_pm'] ?? 'Media'));
+            $justificativaPrioridadePm = trim((string) ($_POST['justificativa_prioridade_pm'] ?? ''));
+            $responsavelPm = trim((string) ($_POST['responsavel_pm'] ?? ''));
+            $solicitantePm = trim((string) ($_POST['solicitante_pm'] ?? ((string) ($_SESSION['usuario_nome'] ?? 'Transporte'))));
+            $descricaoPm = trim((string) ($_POST['descricao_trabalho_pm'] ?? ''));
+
+            if($viaturaPm === '' && $matriculaPm === '') {
+                $erro_form = 'Informe a viatura ou a matricula.';
+            } elseif($tipoManutPm === '' || $dataManutPm === '') {
+                $erro_form = 'Preencha os campos obrigatorios do plano de manutencao.';
+            } elseif(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataManutPm)) {
+                $erro_form = 'Data de manutencao invalida.';
+            } elseif($prioridadePm === 'Critica' && $justificativaPrioridadePm === '') {
+                $erro_form = 'Informe a justificativa para prioridade Critica.';
+            }
+
+            if($erro_form === '') {
+                try {
+                    $ativoPm = resolverAtivoTransporte($pdo, $viaturaPm, $matriculaPm);
+                    $viaturaPm = $ativoPm['viatura_id'];
+                    $matriculaPm = $ativoPm['matricula'];
+                    if($tipoEquipPm === '') {
+                        $tipoEquipPm = $ativoPm['descricao'];
+                    }
+                    $solicitantePm = validarUtilizadorAtivoPorNomeTransporte($pdo, $solicitantePm);
+                    $localizacaoPm = normalizarLocalizacaoTransporte($pdo, $localizacaoPm);
+                } catch (Throwable $e) {
+                    $erro_form = $e->getMessage();
+                }
+            }
+
+            if($erro_form === '') {
+                try {
+                    $pdo->beginTransaction();
+                    $nextPmStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_planos_manutencao");
+                    $nextPmId = (int) $nextPmStmt->fetchColumn();
+                    $codigoPm = 'PM-' . date('Y') . '-' . str_pad((string) $nextPmId, 4, '0', STR_PAD_LEFT);
+
+                    $insPm = $pdo->prepare("
+                        INSERT INTO transporte_planos_manutencao
+                        (codigo, viatura_id, matricula, tipo_equipamento, localizacao, tipo_manutencao, data_manutencao, prioridade, responsavel, solicitante, descricao_trabalho, status, oficina_manutencao_id, oficina_os_id)
+                        VALUES
+                        (:codigo, :viatura_id, :matricula, :tipo_equipamento, :localizacao, :tipo_manutencao, :data_manutencao, :prioridade, :responsavel, :solicitante, :descricao_trabalho, 'Enviado para Oficina', NULL, NULL)
+                    ");
+                    $insPm->execute([
+                        ':codigo' => $codigoPm,
+                        ':viatura_id' => $viaturaPm,
+                        ':matricula' => $matriculaPm,
+                        ':tipo_equipamento' => $tipoEquipPm,
+                        ':localizacao' => $localizacaoPm !== '' ? $localizacaoPm : null,
+                        ':tipo_manutencao' => $tipoManutPm,
+                        ':data_manutencao' => $dataManutPm,
+                        ':prioridade' => $prioridadePm,
+                        ':responsavel' => $responsavelPm !== '' ? $responsavelPm : null,
+                        ':solicitante' => $solicitantePm !== '' ? $solicitantePm : null,
+                        ':descricao_trabalho' => $descricaoPm !== '' ? $descricaoPm : null
+                    ]);
+                    $transportePlanoId = (int) $pdo->lastInsertId();
+
+                    $syncManut = sincronizarPlanoManutencaoNaOficina($pdo, [
+                        'transporte_plano_id' => $transportePlanoId,
+                        'viatura_id' => $viaturaPm,
+                        'matricula' => $matriculaPm,
+                        'tipo_equipamento' => $tipoEquipPm,
+                        'tipo_manutencao' => $tipoManutPm,
+                        'data_manutencao' => $dataManutPm,
+                        'prioridade' => $prioridadePm,
+                        'solicitante' => $solicitantePm,
+                        'descricao_trabalho' => $descricaoPm
+                    ]);
+
+                    $upPm = $pdo->prepare("
+                        UPDATE transporte_planos_manutencao
+                        SET oficina_manutencao_id = :oficina_manutencao_id,
+                            oficina_os_id = :oficina_os_id
+                        WHERE id = :id
+                    ");
+                    $upPm->execute([
+                        ':oficina_manutencao_id' => isset($syncManut['oficina_manutencao_id']) ? (int) $syncManut['oficina_manutencao_id'] : null,
+                        ':oficina_os_id' => isset($syncManut['oficina_os_id']) ? (int) $syncManut['oficina_os_id'] : null,
+                        ':id' => $transportePlanoId
+                    ]);
+
+                    $pdo->commit();
+
+                    $osCriada = trim((string) ($syncManut['codigo_os'] ?? ''));
+                    $_SESSION['app_action_feedback'] = [
+                        'type' => 'success',
+                        'title' => 'Plano Enviado',
+                        'message' => $osCriada !== '' ? ('Plano de manutencao enviado para Oficina. ' . $osCriada . ' criada automaticamente.') : 'Plano de manutencao enviado para Oficina.',
+                        'auto_close_ms' => 1800,
+                        'redirect' => '?tab=transporte&view=plano_manutencao&mode=list',
+                    ];
+                    header("Location:?tab=transporte&view=plano_manutencao&mode=form");
+                    exit();
+                } catch (Throwable $e) {
+                    if($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    $_SESSION['app_action_feedback'] = [
+                        'type' => 'error',
+                        'title' => 'Falha no Envio',
+                        'message' => 'Falha ao enviar plano de manutencao para Oficina: ' . $e->getMessage(),
+                        'auto_close_ms' => 0,
+                    ];
+                    header("Location:?tab=transporte&view=plano_manutencao&mode=form");
+                    exit();
+                }
             }
         }
     }
 
     if(isset($_POST['salvar_checklist'])) {
         $templateId = isset($_POST['template_id']) ? (int) $_POST['template_id'] : 0;
-        $codigoTemplate = strtoupper(trim((string) ($_POST['codigo_template_chk'] ?? '')));
         $viaturaId = trim((string) ($_POST['viatura_id_chk'] ?? ''));
         $tipoEquip = trim((string) ($_POST['tipo_equipamento_chk'] ?? ''));
         $projetoChk = trim((string) ($_POST['projeto_chk'] ?? ''));
         $condutor = trim((string) ($_POST['condutor_chk'] ?? ''));
-        $motoristaOperador = trim((string) ($_POST['motorista_operador_chk'] ?? ''));
         $inspector = trim((string) ($_POST['inspector_chk'] ?? ''));
         $dataInspecao = trim((string) ($_POST['data_inspecao_chk'] ?? date('Y-m-d')));
         $observacoes = trim((string) ($_POST['observacoes_chk'] ?? ''));
-        $ordemRef = trim((string) ($_POST['ordem_chk'] ?? ''));
-        $dataOrdem = trim((string) ($_POST['data_ordem_chk'] ?? ''));
-        $servicoDesc = trim((string) ($_POST['servico_chk'] ?? ''));
-        $dataPartida = trim((string) ($_POST['data_partida_chk'] ?? ''));
-        $dataRegresso = trim((string) ($_POST['data_regresso_chk'] ?? ''));
-        $clienteChk = trim((string) ($_POST['cliente_chk'] ?? ''));
-        $validadeChk = trim((string) ($_POST['validade_chk'] ?? ''));
-        $contractorChk = trim((string) ($_POST['contractor_chk'] ?? ''));
-        $subcontractorChk = trim((string) ($_POST['subcontractor_chk'] ?? ''));
-        $locationChk = trim((string) ($_POST['location_chk'] ?? ''));
-        $supervisorChk = trim((string) ($_POST['supervisor_chk'] ?? ''));
-        $frontServiceChk = trim((string) ($_POST['front_service_chk'] ?? ''));
-        $serialNumberChk = trim((string) ($_POST['serial_number_chk'] ?? ''));
-        $frequenciaInspecaoChk = trim((string) ($_POST['frequencia_inspecao_chk'] ?? ''));
-        $docDateChk = trim((string) ($_POST['doc_date_chk'] ?? ''));
-        $docTimeChk = trim((string) ($_POST['doc_time_chk'] ?? ''));
-        $hseOfficerNameChk = trim((string) ($_POST['hse_officer_name_chk'] ?? ''));
-        $hseOfficerDateChk = trim((string) ($_POST['hse_officer_date_chk'] ?? ''));
-        $faultsFoundChk = trim((string) ($_POST['faults_found_chk'] ?? ''));
-        $faultsDateTimeChk = trim((string) ($_POST['faults_datetime_chk'] ?? ''));
-        $faultsWorkshopChk = trim((string) ($_POST['faults_reported_workshop_chk'] ?? ''));
-        $faultsReportFromChk = trim((string) ($_POST['faults_report_from_chk'] ?? ''));
-        $faultsSignatureChk = trim((string) ($_POST['faults_signature_chk'] ?? ''));
-        $operatorSignatureChk = trim((string) ($_POST['operator_name_signature_chk'] ?? ''));
-        $csSignatureChk = trim((string) ($_POST['cs_name_signature_chk'] ?? ''));
-        $sheSignatureChk = trim((string) ($_POST['she_name_signature_chk'] ?? ''));
-        $registoDateChk = trim((string) ($_POST['registo_date_chk'] ?? ''));
         $respostas = isset($_POST['resultado_item']) && is_array($_POST['resultado_item']) ? $_POST['resultado_item'] : [];
-        $respostasSemana = isset($_POST['resultado_semana']) && is_array($_POST['resultado_semana']) ? $_POST['resultado_semana'] : [];
-
-        if(in_array($codigoTemplate, ['VIL.F.QAS.34','VIL.F.QAS.35','VIL.F.QAS.41'], true) && count($respostasSemana) > 0) {
-            $respostas = [];
-            foreach($respostasSemana as $itemIdRaw => $diasSemana) {
-                $itemIdInt = (int) $itemIdRaw;
-                if($itemIdInt <= 0 || !is_array($diasSemana)) continue;
-                $temNo = false;
-                $temYes = false;
-                foreach($diasSemana as $valorDia) {
-                    $v = strtoupper(trim((string) $valorDia));
-                    if($v === 'N') {
-                        $temNo = true;
-                        break;
-                    }
-                    if($v === 'Y') $temYes = true;
-                }
-                if($temNo) $respostas[$itemIdInt] = 'nok';
-                elseif($temYes) $respostas[$itemIdInt] = 'ok';
-                else $respostas[$itemIdInt] = 'na';
-            }
-        }
-
-        if($condutor === '' && $motoristaOperador !== '') {
-            $condutor = $motoristaOperador;
-        }
-        if($condutor === '') {
-            $condutor = 'Nao informado';
-        }
-
-        $cabecalhoExtra = [];
-        if($ordemRef !== '') $cabecalhoExtra[] = 'Ordem: ' . $ordemRef;
-        if($dataOrdem !== '') $cabecalhoExtra[] = 'Data Ordem: ' . $dataOrdem;
-        if($servicoDesc !== '') $cabecalhoExtra[] = 'Servico: ' . $servicoDesc;
-        if($motoristaOperador !== '') $cabecalhoExtra[] = 'Motorista/Operador: ' . $motoristaOperador;
-        if($dataPartida !== '') $cabecalhoExtra[] = 'Data Partida: ' . $dataPartida;
-        if($dataRegresso !== '') $cabecalhoExtra[] = 'Data Regresso: ' . $dataRegresso;
-        if($clienteChk !== '') $cabecalhoExtra[] = 'Cliente: ' . $clienteChk;
-        if($validadeChk !== '') $cabecalhoExtra[] = 'Validade: ' . $validadeChk;
-        if($contractorChk !== '') $cabecalhoExtra[] = 'Contractor: ' . $contractorChk;
-        if($subcontractorChk !== '') $cabecalhoExtra[] = 'Subcontrator: ' . $subcontractorChk;
-        if($locationChk !== '') $cabecalhoExtra[] = 'Location: ' . $locationChk;
-        if($supervisorChk !== '') $cabecalhoExtra[] = 'Supervisor Name: ' . $supervisorChk;
-        if($frontServiceChk !== '') $cabecalhoExtra[] = 'Front of Service: ' . $frontServiceChk;
-        if($serialNumberChk !== '') $cabecalhoExtra[] = 'Serial Number: ' . $serialNumberChk;
-        if($frequenciaInspecaoChk !== '') $cabecalhoExtra[] = 'Frequency of Inspection: ' . $frequenciaInspecaoChk;
-        if($docDateChk !== '') $cabecalhoExtra[] = 'Date/Data: ' . $docDateChk;
-        if($docTimeChk !== '') $cabecalhoExtra[] = 'Time/Hora: ' . $docTimeChk;
-        if($hseOfficerNameChk !== '') $cabecalhoExtra[] = 'HSE Officer Name and Signature: ' . $hseOfficerNameChk;
-        if($hseOfficerDateChk !== '') $cabecalhoExtra[] = 'HSE Officer Date: ' . $hseOfficerDateChk;
-        if($faultsFoundChk !== '') $cabecalhoExtra[] = 'Faults Found: ' . $faultsFoundChk;
-        if($faultsDateTimeChk !== '') $cabecalhoExtra[] = 'Faults Date/Time: ' . $faultsDateTimeChk;
-        if($faultsWorkshopChk !== '') $cabecalhoExtra[] = 'Date/Time reported to workshop: ' . $faultsWorkshopChk;
-        if($faultsReportFromChk !== '') $cabecalhoExtra[] = 'Report From: ' . $faultsReportFromChk;
-        if($faultsSignatureChk !== '') $cabecalhoExtra[] = 'Signature: ' . $faultsSignatureChk;
-        if($operatorSignatureChk !== '') $cabecalhoExtra[] = 'Operator Name and Signature: ' . $operatorSignatureChk;
-        if($csSignatureChk !== '') $cabecalhoExtra[] = 'Construction Supervisor (CS) Name and Signature: ' . $csSignatureChk;
-        if($sheSignatureChk !== '') $cabecalhoExtra[] = 'SHE Name and Signature: ' . $sheSignatureChk;
-        if($registoDateChk !== '') $cabecalhoExtra[] = 'Date: ' . $registoDateChk;
-        if(count($cabecalhoExtra) > 0) {
-            $bloco = "[CABECALHO CHECKLIST]\n" . implode("\n", $cabecalhoExtra);
-            $observacoes = $observacoes !== '' ? ($bloco . "\n\n" . $observacoes) : $bloco;
-        }
 
         if($templateId <= 0) {
             $erro_form = 'Template de checklist invÃ¡lido.';
@@ -2366,18 +3234,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if(isset($_POST['observacao_item'][$itemId]) && is_string($_POST['observacao_item'][$itemId])) {
                     $obsItem = trim($_POST['observacao_item'][$itemId]);
                 }
-                if($codigoTemplate === 'VIL.F.QAS.34' && isset($respostasSemana[$itemId]) && is_array($respostasSemana[$itemId])) {
-                    $dias = $respostasSemana[$itemId];
-                    $ordemDias = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-                    $partes = [];
-                    foreach($ordemDias as $d) {
-                        $vv = strtoupper(trim((string) ($dias[$d] ?? 'NA')));
-                        if(!in_array($vv, ['Y','N','NA'], true)) $vv = 'NA';
-                        $partes[] = strtoupper(substr($d,0,3)) . ':' . $vv;
-                    }
-                    $obsSemana = '[SEMANA] ' . implode(' | ', $partes);
-                    $obsItem = $obsItem !== '' ? ($obsItem . ' ' . $obsSemana) : $obsSemana;
-                }
                 $insResp->execute([
                     ':registo_id' => $registoId,
                     ':item_id' => $itemIdInt,
@@ -2393,7 +3249,14 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if(isset($_POST['salvar_mapa_diesel'])) {
+        $modoAbastecimentoDiesel = trim((string) ($_POST['modo_abastecimento_diesel'] ?? 'os'));
+        if(!in_array($modoAbastecimentoDiesel, ['os', 'externo'], true)) {
+            $modoAbastecimentoDiesel = 'os';
+        }
         $ordemServicoIdDiesel = isset($_POST['ordem_servico_diesel']) && $_POST['ordem_servico_diesel'] !== '' ? (int) $_POST['ordem_servico_diesel'] : null;
+        if($modoAbastecimentoDiesel === 'externo') {
+            $ordemServicoIdDiesel = null;
+        }
         $dataMov = trim((string) ($_POST['data_movimento_diesel'] ?? date('Y-m-d')));
         $projeto = trim((string) ($_POST['projeto_diesel'] ?? ''));
         $tipoMov = trim((string) ($_POST['tipo_movimento_diesel'] ?? 'Saida'));
@@ -2411,9 +3274,13 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fornecedor = trim((string) ($_POST['fornecedor_diesel'] ?? ''));
         $responsavel = trim((string) ($_POST['responsavel_diesel'] ?? ''));
         $obs = trim((string) ($_POST['observacoes_diesel'] ?? ''));
-        $origemRegisto = 'Manual';
+        $origemRegisto = ($modoAbastecimentoDiesel === 'externo') ? 'Externo' : 'Manual';
 
-        if($ordemServicoIdDiesel !== null && $ordemServicoIdDiesel > 0) {
+        if($modoAbastecimentoDiesel === 'os' && ($ordemServicoIdDiesel === null || $ordemServicoIdDiesel <= 0)) {
+            $erro_form = 'Selecione uma OS do Transporte ou mude para "Sem OS do Transporte".';
+        }
+
+        if($erro_form === '' && $ordemServicoIdDiesel !== null && $ordemServicoIdDiesel > 0) {
             $osDieselStmt = $pdo->prepare("
                 SELECT g.id, g.projeto, g.viatura_id, g.condutor, g.km_saida, g.km_chegada, g.quantidade_inicial_l,
                        c.km_momento, c.litros_abastecidos
@@ -2449,40 +3316,45 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $origemRegisto = 'OS';
             }
         }
-        $valorTotal = $litros * $precoUnit;
+        if($erro_form === '') {
+            $valorTotal = $litros * $precoUnit;
+            if($modoAbastecimentoDiesel === 'externo' && $docRef === '') {
+                $docRef = 'EXT-' . date('Ymd-His');
+            }
 
-        $nextDieselStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_mapa_diesel");
-        $nextDieselId = (int) $nextDieselStmt->fetchColumn();
-        $codigoDiesel = 'DIE-' . date('Y') . '-' . str_pad((string) $nextDieselId, 4, '0', STR_PAD_LEFT);
+            $nextDieselStmt = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_mapa_diesel");
+            $nextDieselId = (int) $nextDieselStmt->fetchColumn();
+            $codigoDiesel = 'DIE-' . date('Y') . '-' . str_pad((string) $nextDieselId, 4, '0', STR_PAD_LEFT);
 
-        $insDiesel = $pdo->prepare("
-            INSERT INTO transporte_mapa_diesel
-            (codigo, data_movimento, projeto, tipo_movimento, documento_ref, ordem_servico_id, origem_registo, viatura_id, motorista, km_horimetro, litros, preco_unitario, valor_total, saldo_tanque_l, fornecedor, responsavel, observacoes)
-            VALUES
-            (:codigo, :data_movimento, :projeto, :tipo_movimento, :documento_ref, :ordem_servico_id, :origem_registo, :viatura_id, :motorista, :km_horimetro, :litros, :preco_unitario, :valor_total, :saldo_tanque_l, :fornecedor, :responsavel, :observacoes)
-        ");
-        $insDiesel->execute([
-            ':codigo' => $codigoDiesel,
-            ':data_movimento' => $dataMov !== '' ? $dataMov : date('Y-m-d'),
-            ':projeto' => $projeto,
-            ':tipo_movimento' => $tipoMov,
-            ':documento_ref' => $docRef,
-            ':ordem_servico_id' => $ordemServicoIdDiesel,
-            ':origem_registo' => $origemRegisto,
-            ':viatura_id' => $viatura,
-            ':motorista' => $motorista,
-            ':km_horimetro' => $kmHorimetro,
-            ':litros' => $litros,
-            ':preco_unitario' => $precoUnit,
-            ':valor_total' => $valorTotal,
-            ':saldo_tanque_l' => $saldoTanque,
-            ':fornecedor' => $fornecedor,
-            ':responsavel' => $responsavel,
-            ':observacoes' => $obs
-        ]);
+            $insDiesel = $pdo->prepare("
+                INSERT INTO transporte_mapa_diesel
+                (codigo, data_movimento, projeto, tipo_movimento, documento_ref, ordem_servico_id, origem_registo, viatura_id, motorista, km_horimetro, litros, preco_unitario, valor_total, saldo_tanque_l, fornecedor, responsavel, observacoes)
+                VALUES
+                (:codigo, :data_movimento, :projeto, :tipo_movimento, :documento_ref, :ordem_servico_id, :origem_registo, :viatura_id, :motorista, :km_horimetro, :litros, :preco_unitario, :valor_total, :saldo_tanque_l, :fornecedor, :responsavel, :observacoes)
+            ");
+            $insDiesel->execute([
+                ':codigo' => $codigoDiesel,
+                ':data_movimento' => $dataMov !== '' ? $dataMov : date('Y-m-d'),
+                ':projeto' => $projeto,
+                ':tipo_movimento' => $tipoMov,
+                ':documento_ref' => $docRef,
+                ':ordem_servico_id' => $ordemServicoIdDiesel,
+                ':origem_registo' => $origemRegisto,
+                ':viatura_id' => $viatura,
+                ':motorista' => $motorista,
+                ':km_horimetro' => $kmHorimetro,
+                ':litros' => $litros,
+                ':preco_unitario' => $precoUnit,
+                ':valor_total' => $valorTotal,
+                ':saldo_tanque_l' => $saldoTanque,
+                ':fornecedor' => $fornecedor,
+                ':responsavel' => $responsavel,
+                ':observacoes' => $obs
+            ]);
 
-        header("Location:?tab=gestao_frota&view=combustivel&mode=list");
-        exit();
+            header("Location:?tab=gestao_frota&view=combustivel&mode=list");
+            exit();
+        }
     }
 
     if(isset($_POST['salvar_item_stock'])) {
@@ -2501,7 +3373,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $chkCod = $pdo->prepare("SELECT id FROM transporte_stock_itens WHERE codigo = :codigo LIMIT 1");
             $chkCod->execute([':codigo' => $codigo]);
             if($chkCod->fetch(PDO::FETCH_ASSOC)) {
-                $erro_form = 'JÃ¡ existe um item de stock com este cÃ³digo.';
+                $erro_form = 'J? existe um item de stock com este cÃ³digo.';
             } else {
                 $insItemStock = $pdo->prepare("
                     INSERT INTO transporte_stock_itens
@@ -3302,7 +4174,8 @@ if($tab === 'gestao_frota' && $view === 'recebidos' && $mode === 'form' && !empt
 $lista_os = [];
 if(($tab === 'transporte' && $view === 'entrada') || ($tab === 'gestao_frota' && $view === 'recebidos') || ($tab === 'frentista' && $view === 'tarefas')) {
     $sqlLista = "
-        SELECT g.id, g.viatura_id, g.condutor, g.local_saida, g.destino, g.projeto, g.data_saida, g.km_saida, g.km_chegada, g.distancia_km, g.autorizado_por, g.status,
+        SELECT g.id, g.viatura_id, g.condutor, g.local_saida, g.destino, g.projeto, g.data_saida, g.km_saida, g.km_chegada, g.quantidade_inicial_l, g.distancia_km, g.autorizado_por, g.status,
+               g.abastecido_por, g.abastecido_em, g.finalizado_por, g.finalizado_em,
                c.id AS combustivel_id, c.litros_abastecidos, c.km_momento, c.media_esperada, c.origem_mapa, c.destino_mapa, c.distancia_mapa_km, c.tempo_mapa_min, c.data_abastecimento
         FROM transporte_guias g
         LEFT JOIN (
@@ -3316,9 +4189,13 @@ if(($tab === 'transporte' && $view === 'entrada') || ($tab === 'gestao_frota' &&
         ) c ON c.guia_id = g.id";
 
     if($tab === 'gestao_frota' && $view === 'recebidos') {
-        $sqlLista .= " WHERE g.status = 'Em Rota'";
+        $sqlLista .= " WHERE g.status IN ('Em Rota', 'Aguardando Abastecimento', 'Concluida', 'Finalizada')";
     } elseif($tab === 'frentista' && $view === 'tarefas') {
-        $sqlLista .= " WHERE g.status = 'Aguardando Abastecimento'";
+        $sqlLista .= " WHERE c.id IS NOT NULL
+                       AND (
+                            g.abastecido_em IS NULL
+                            OR g.status IN ('Aguardando Abastecimento', 'Concluida', 'Finalizada')
+                       )";
     }
 
     $sqlLista .= " ORDER BY g.id DESC";
@@ -3326,7 +4203,195 @@ if(($tab === 'transporte' && $view === 'entrada') || ($tab === 'gestao_frota' &&
     $lista_os = $listaStmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+$lista_abastecimentos_frentista = [];
+$filtro_data_inicio_abast = trim((string) ($_GET['data_inicio'] ?? ''));
+$filtro_data_fim_abast = trim((string) ($_GET['data_fim'] ?? ''));
+if($tab === 'frentista' && $view === 'abastecimentos') {
+    $sqlAbast = "
+        SELECT g.id, g.viatura_id, g.condutor, g.projeto, g.km_chegada, g.quantidade_inicial_l, g.abastecido_por, g.abastecido_em,
+               c.litros_abastecidos, c.data_abastecimento
+        FROM transporte_guias g
+        LEFT JOIN (
+            SELECT tc1.*
+            FROM transporte_combustivel tc1
+            INNER JOIN (
+                SELECT guia_id, MAX(id) AS max_id
+                FROM transporte_combustivel
+                GROUP BY guia_id
+            ) tc2 ON tc1.id = tc2.max_id
+        ) c ON c.guia_id = g.id
+        WHERE g.abastecido_em IS NOT NULL
+    ";
+    $paramsAbast = [];
+
+    $frentistaAtual = trim((string) ($_SESSION['usuario_nome'] ?? ''));
+    if($frentistaAtual !== '') {
+        $sqlAbast .= " AND g.abastecido_por LIKE :frentista_nome";
+        $paramsAbast[':frentista_nome'] = $frentistaAtual . '%';
+    }
+
+    if($filtro_data_inicio_abast !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_data_inicio_abast)) {
+        $sqlAbast .= " AND DATE(g.abastecido_em) >= :data_inicio";
+        $paramsAbast[':data_inicio'] = $filtro_data_inicio_abast;
+    }
+    if($filtro_data_fim_abast !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtro_data_fim_abast)) {
+        $sqlAbast .= " AND DATE(g.abastecido_em) <= :data_fim";
+        $paramsAbast[':data_fim'] = $filtro_data_fim_abast;
+    }
+
+    $sqlAbast .= " ORDER BY g.abastecido_em DESC, g.id DESC";
+    $stmtAbast = $pdo->prepare($sqlAbast);
+    $stmtAbast->execute($paramsAbast);
+    $lista_abastecimentos_frentista = $stmtAbast->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
 $lista_reparacao = [];
+if($tab === 'transporte' && $view === 'pedido_reparacao' && in_array($mode, ['list', 'detalhe'], true)) {
+    try {
+        sincronizarStatusPedidosTransporteComOficina($pdo);
+    } catch (Throwable $e) {
+        // Nao bloquear a tela caso a sincronizacao falhe.
+    }
+}
+
+$lista_projectos = [];
+$projecto_form = null;
+$projecto_abastecimentos = [];
+$projecto_relatorios = [];
+$projecto_resumo = [
+    'litros_consumidos' => 0.0,
+    'custo_total' => 0.0,
+    'total_abastecimentos' => 0,
+    'total_relatorios' => 0
+];
+if($tab === 'gestao_frota' && $view === 'projectos') {
+    $stProj = $pdo->query("
+        SELECT *
+        FROM transporte_projectos
+        ORDER BY id DESC
+    ");
+    $listaProjectosBase = $stProj->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $stResumoComb = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN litros ELSE 0 END), 0) AS litros_consumidos,
+            COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN valor_total ELSE 0 END), 0) AS custo_total,
+            COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN 1 ELSE 0 END), 0) AS total_abastecimentos
+        FROM transporte_mapa_diesel
+        WHERE projeto = :codigo OR projeto = :nome
+    ");
+    $stResumoRel = $pdo->prepare("
+        SELECT COUNT(*) FROM transporte_relatorios_atividades
+        WHERE projeto = :codigo OR projeto = :nome
+    ");
+
+    foreach($listaProjectosBase as $p) {
+        $codigoP = (string) ($p['codigo'] ?? '');
+        $nomeP = (string) ($p['nome'] ?? '');
+        $stResumoComb->execute([':codigo' => $codigoP, ':nome' => $nomeP]);
+        $resComb = $stResumoComb->fetch(PDO::FETCH_ASSOC) ?: [];
+        $stResumoRel->execute([':codigo' => $codigoP, ':nome' => $nomeP]);
+        $totalRel = (int) $stResumoRel->fetchColumn();
+
+        $previsto = (float) ($p['combustivel_previsto_l'] ?? 0);
+        $consumido = (float) ($resComb['litros_consumidos'] ?? 0);
+        $p['litros_consumidos'] = $consumido;
+        $p['custo_total'] = (float) ($resComb['custo_total'] ?? 0);
+        $p['total_abastecimentos'] = (int) ($resComb['total_abastecimentos'] ?? 0);
+        $p['total_relatorios'] = $totalRel;
+        $p['saldo_litros'] = $previsto - $consumido;
+        $lista_projectos[] = $p;
+    }
+
+    if($mode === 'form') {
+        if($registro_id > 0) {
+            $stP = $pdo->prepare("SELECT * FROM transporte_projectos WHERE id = :id LIMIT 1");
+            $stP->execute([':id' => $registro_id]);
+            $projecto_form = $stP->fetch(PDO::FETCH_ASSOC) ?: null;
+        }
+        if(!$projecto_form) {
+            $projecto_form = [
+                'id' => 0,
+                'codigo' => '',
+                'nome' => '',
+                'cliente' => '',
+                'localizacao' => '',
+                'gestor' => (string) ($_SESSION['usuario_nome'] ?? ''),
+                'combustivel_previsto_l' => '',
+                'data_inicio' => '',
+                'data_fim' => '',
+                'status' => 'Ativo',
+                'descricao' => ''
+            ];
+        }
+
+        $codigoDet = (string) ($projecto_form['codigo'] ?? '');
+        $nomeDet = (string) ($projecto_form['nome'] ?? '');
+
+        $stDetComb = $pdo->prepare("
+            SELECT id, codigo, data_movimento, tipo_movimento, documento_ref, ordem_servico_id, viatura_id, motorista, litros, valor_total, responsavel
+            FROM transporte_mapa_diesel
+            WHERE (projeto = :codigo OR projeto = :nome)
+              AND tipo_movimento = 'Saida'
+            ORDER BY data_movimento DESC, id DESC
+            LIMIT 60
+        ");
+        $stDetComb->execute([':codigo' => $codigoDet, ':nome' => $nomeDet]);
+        $projecto_abastecimentos = $stDetComb->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $stDetRel = $pdo->prepare("
+            SELECT id, codigo, ordem_servico_id, data_relatorio, viatura_id, condutor, distancia_km, combustivel_l, status
+            FROM transporte_relatorios_atividades
+            WHERE projeto = :codigo OR projeto = :nome
+            ORDER BY data_relatorio DESC, id DESC
+            LIMIT 40
+        ");
+        $stDetRel->execute([':codigo' => $codigoDet, ':nome' => $nomeDet]);
+        $projecto_relatorios = $stDetRel->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $stResumoDet = $pdo->prepare("
+            SELECT
+                COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN litros ELSE 0 END), 0) AS litros_consumidos,
+                COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN valor_total ELSE 0 END), 0) AS custo_total,
+                COALESCE(SUM(CASE WHEN tipo_movimento = 'Saida' THEN 1 ELSE 0 END), 0) AS total_abastecimentos
+            FROM transporte_mapa_diesel
+            WHERE projeto = :codigo OR projeto = :nome
+        ");
+        $stResumoDet->execute([':codigo' => $codigoDet, ':nome' => $nomeDet]);
+        $resDet = $stResumoDet->fetch(PDO::FETCH_ASSOC) ?: [];
+        $projecto_resumo['litros_consumidos'] = (float) ($resDet['litros_consumidos'] ?? 0);
+        $projecto_resumo['custo_total'] = (float) ($resDet['custo_total'] ?? 0);
+        $projecto_resumo['total_abastecimentos'] = (int) ($resDet['total_abastecimentos'] ?? 0);
+        $projecto_resumo['total_relatorios'] = count($projecto_relatorios);
+    }
+}
+
+function mapStatusManutencaoOficinaParaTransporte(string $statusOficina): string {
+    $s = strtolower(trim($statusOficina));
+    if($s === 'resolvido' || $s === 'concluido' || $s === 'concluida' || $s === 'fechado') return 'Concluido';
+    if($s === 'em andamento' || $s === 'em progresso' || $s === 'andamento') return 'Em andamento';
+    if($s === 'aceito' || $s === 'aceite' || $s === 'aprovado' || $s === 'aprovada') return 'Aceito';
+    return 'Enviado para Oficina';
+}
+
+function sincronizarStatusPlanosManutencaoTransporteComOficina(PDO $pdo): void {
+    $rows = $pdo->query("
+        SELECT t.id AS transporte_id, t.status AS status_transporte, o.status AS status_oficina
+        FROM transporte_planos_manutencao t
+        INNER JOIN oficina_manutencoes o
+            ON o.origem_tipo = 'TRANSPORTE_PLANO_MANUTENCAO'
+           AND o.origem_id = t.id
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if(!$rows) return;
+    $upd = $pdo->prepare("UPDATE transporte_planos_manutencao SET status = :status WHERE id = :id");
+    foreach($rows as $r) {
+        $novo = mapStatusManutencaoOficinaParaTransporte((string) ($r['status_oficina'] ?? ''));
+        $atual = trim((string) ($r['status_transporte'] ?? ''));
+        if($novo !== '' && strcasecmp($novo, $atual) !== 0) {
+            $upd->execute([':status' => $novo, ':id' => (int) ($r['transporte_id'] ?? 0)]);
+        }
+    }
+}
 if($tab === 'transporte' && $view === 'pedido_reparacao' && $mode === 'list') {
     $repStmt = $pdo->query("
         SELECT id, codigo, viatura_id, matricula, solicitante, status, criado_em, pdf_anexo
@@ -3334,6 +4399,118 @@ if($tab === 'transporte' && $view === 'pedido_reparacao' && $mode === 'list') {
         ORDER BY id DESC
     ");
     $lista_reparacao = $repStmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$lista_planos_manutencao = [];
+if($tab === 'transporte' && $view === 'plano_manutencao' && $mode === 'list') {
+    try {
+        sincronizarStatusPlanosManutencaoTransporteComOficina($pdo);
+    } catch (Throwable $e) {
+        // Nao bloquear a tela caso a sincronizacao falhe.
+    }
+    $plStmt = $pdo->query("
+        SELECT id, codigo, viatura_id, matricula, tipo_equipamento, tipo_manutencao, data_manutencao, prioridade, solicitante, status, oficina_os_id, criado_em
+        FROM transporte_planos_manutencao
+        ORDER BY id DESC
+    ");
+    $lista_planos_manutencao = $plStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
+
+function mapStatusOficinaParaTransporte(string $statusOficina): string {
+    $s = strtolower(trim($statusOficina));
+    if($s === 'aceito' || $s === 'aceite') return 'Aceito';
+    if($s === 'em andamento' || $s === 'em progresso' || $s === 'andamento') return 'Em andamento';
+    if($s === 'resolvido' || $s === 'fechado' || $s === 'concluido' || $s === 'concluida') return 'Concluido';
+    return 'Enviado para Oficina';
+}
+
+function sincronizarStatusPedidosTransporteComOficina(PDO $pdo): void {
+    // 1) Sincronizacao por vinculo explicito (origem_tipo/origem_id).
+    $sqlVinculado = "
+        SELECT t.id AS transporte_id, t.status AS status_transporte, o.status AS status_oficina
+        FROM transporte_pedidos_reparacao t
+        INNER JOIN oficina_pedidos_reparacao o
+            ON o.origem_tipo = 'TRANSPORTE_PEDIDO_REPARACAO'
+           AND o.origem_id = t.id
+    ";
+    $rowsVinculados = $pdo->query($sqlVinculado)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if($rowsVinculados) {
+        $upd = $pdo->prepare("UPDATE transporte_pedidos_reparacao SET status = :status WHERE id = :id");
+        foreach($rowsVinculados as $r) {
+            $novo = mapStatusOficinaParaTransporte((string) ($r['status_oficina'] ?? ''));
+            $atual = trim((string) ($r['status_transporte'] ?? ''));
+            if($novo !== '' && strcasecmp($novo, $atual) !== 0) {
+                $upd->execute([':status' => $novo, ':id' => (int) ($r['transporte_id'] ?? 0)]);
+            }
+        }
+    }
+
+    // 2) Compatibilidade com registos antigos sem vinculo direto.
+    $semVinculo = $pdo->query("
+        SELECT id, viatura_id, matricula, avaria_reportada, solicitante, criado_em, status
+        FROM transporte_pedidos_reparacao
+        ORDER BY id DESC
+        LIMIT 300
+    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if(!$semVinculo) return;
+
+    $buscarOficina = $pdo->prepare("
+        SELECT id, status
+        FROM oficina_pedidos_reparacao
+        WHERE (
+                (ativo_matricula = :matricula AND :matricula <> '')
+             OR (ativo_matricula = :viatura_id AND :viatura_id <> '')
+        )
+          AND descricao_avaria = :descricao
+          AND COALESCE(solicitante, '') = :solicitante
+          AND data_pedido = :data_pedido
+        ORDER BY id DESC
+        LIMIT 1
+    ");
+    $updTransporte = $pdo->prepare("UPDATE transporte_pedidos_reparacao SET status = :status WHERE id = :id");
+    $updVinculoOficina = $pdo->prepare("
+        UPDATE oficina_pedidos_reparacao
+        SET origem_tipo = 'TRANSPORTE_PEDIDO_REPARACAO', origem_id = :origem_id
+        WHERE id = :id
+          AND (origem_tipo IS NULL OR origem_tipo = '')
+          AND origem_id IS NULL
+    ");
+
+    foreach($semVinculo as $t) {
+        $transporteId = (int) ($t['id'] ?? 0);
+        if($transporteId <= 0) continue;
+
+        $dataPedido = '';
+        if(!empty($t['criado_em'])) {
+            $ts = strtotime((string) $t['criado_em']);
+            if($ts !== false) $dataPedido = date('Y-m-d', $ts);
+        }
+        if($dataPedido === '') continue;
+
+        $descricao = trim((string) ($t['avaria_reportada'] ?? ''));
+        if($descricao === '') continue;
+
+        $buscarOficina->execute([
+            ':matricula' => trim((string) ($t['matricula'] ?? '')),
+            ':viatura_id' => trim((string) ($t['viatura_id'] ?? '')),
+            ':descricao' => $descricao,
+            ':solicitante' => trim((string) ($t['solicitante'] ?? '')),
+            ':data_pedido' => $dataPedido
+        ]);
+        $o = $buscarOficina->fetch(PDO::FETCH_ASSOC);
+        if(!$o) continue;
+
+        $novoStatus = mapStatusOficinaParaTransporte((string) ($o['status'] ?? ''));
+        $statusAtual = trim((string) ($t['status'] ?? ''));
+        if($novoStatus !== '' && strcasecmp($novoStatus, $statusAtual) !== 0) {
+            $updTransporte->execute([':status' => $novoStatus, ':id' => $transporteId]);
+        }
+
+        $oficinaId = (int) ($o['id'] ?? 0);
+        if($oficinaId > 0) {
+            $updVinculoOficina->execute([':origem_id' => $transporteId, ':id' => $oficinaId]);
+        }
+    }
 }
 
 $pedido_reparacao_detalhe = null;
@@ -3353,6 +4530,8 @@ if($tab === 'transporte' && $view === 'pedido_reparacao' && $mode === 'detalhe')
 
 
 $veiculos_reparacao = [];
+$viaturas_reparacao = [];
+$condutores_reparacao = [];
 if($tab === 'transporte' && $view === 'pedido_reparacao') {
     $veiculos_map = [];
 
@@ -3414,6 +4593,31 @@ if($tab === 'transporte' && $view === 'pedido_reparacao') {
 
     ksort($veiculos_map, SORT_NATURAL | SORT_FLAG_CASE);
     $veiculos_reparacao = array_values($veiculos_map);
+
+    $viaturasTmp = [];
+    foreach($veiculos_reparacao as $vr) {
+        $v = trim((string) ($vr['viatura_id'] ?? ''));
+        if($v !== '') $viaturasTmp[strtoupper($v)] = $v;
+        $c = trim((string) ($vr['condutor'] ?? ''));
+        if($c !== '') $condutores_reparacao[strtoupper($c)] = $c;
+    }
+
+    $condutoresStmt = $pdo->query("
+        SELECT DISTINCT TRIM(condutor) AS condutor
+        FROM transporte_guias
+        WHERE COALESCE(NULLIF(TRIM(condutor), ''), '') <> ''
+        ORDER BY condutor ASC
+    ");
+    $condutoresRows = $condutoresStmt ? ($condutoresStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    foreach($condutoresRows as $cr) {
+        $c = trim((string) ($cr['condutor'] ?? ''));
+        if($c !== '') $condutores_reparacao[strtoupper($c)] = $c;
+    }
+
+    ksort($viaturasTmp, SORT_NATURAL | SORT_FLAG_CASE);
+    ksort($condutores_reparacao, SORT_NATURAL | SORT_FLAG_CASE);
+    $viaturas_reparacao = array_values($viaturasTmp);
+    $condutores_reparacao = array_values($condutores_reparacao);
 }
 
 $lista_reservas = [];
@@ -3433,6 +4637,443 @@ if($tab === 'transporte' && $view === 'reservas' && $mode === 'list') {
     ");
     $lista_reservas = $resStmt ? ($resStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
 }
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_aluguer_estacionamento (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        guia_id INT NULL,
+        equipamento VARCHAR(140) NOT NULL,
+        categoria VARCHAR(100) NULL,
+        placa VARCHAR(60) NULL,
+        status_vaga VARCHAR(30) NOT NULL DEFAULT 'Ocupada',
+        data_entrada DATETIME NOT NULL,
+        data_saida DATETIME NULL,
+        observacoes TEXT NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'transporte_aluguer_estacionamento', 'cliente', "varchar(180) NULL AFTER `guia_id`");
+ensureColumnExists($pdo, 'transporte_aluguer_estacionamento', 'tipo_cobranca', "varchar(20) NULL AFTER `placa`");
+ensureColumnExists($pdo, 'transporte_aluguer_estacionamento', 'tarifa_valor', "decimal(12,2) NOT NULL DEFAULT 0 AFTER `tipo_cobranca`");
+ensureColumnExists($pdo, 'transporte_aluguer_estacionamento', 'valor_cobrado', "decimal(12,2) NOT NULL DEFAULT 0 AFTER `tarifa_valor`");
+ensureColumnExists($pdo, 'transporte_aluguer_estacionamento', 'status_registo', "varchar(20) NOT NULL DEFAULT 'Estacionado' AFTER `status_vaga`");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_aluguer_timesheets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        guia_id INT NOT NULL,
+        data_ref DATE NOT NULL,
+        horas_uso DECIMAL(10,2) NOT NULL DEFAULT 0,
+        responsavel VARCHAR(120) NULL,
+        observacoes TEXT NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'cliente', "varchar(180) NULL AFTER `guia_id`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'projeto', "varchar(120) NULL AFTER `cliente`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'ativo', "varchar(140) NULL AFTER `projeto`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'operador', "varchar(140) NULL AFTER `ativo`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'hora_inicio', "time NULL AFTER `data_ref`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'hora_fim', "time NULL AFTER `hora_inicio`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'status', "varchar(30) NOT NULL DEFAULT 'Pendente' AFTER `observacoes`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'aprovado_por', "varchar(120) NULL AFTER `status`");
+ensureColumnExists($pdo, 'transporte_aluguer_timesheets', 'aprovado_em', "datetime NULL AFTER `aprovado_por`");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_aluguer_pagamentos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        guia_id INT NOT NULL,
+        valor DECIMAL(14,2) NOT NULL DEFAULT 0,
+        moeda VARCHAR(10) NOT NULL DEFAULT 'MZN',
+        vencimento DATE NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
+        referencia VARCHAR(120) NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'cliente', "varchar(180) NULL AFTER `guia_id`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'imposto', "decimal(12,2) NOT NULL DEFAULT 0 AFTER `valor`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'total', "decimal(14,2) NOT NULL DEFAULT 0 AFTER `imposto`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'data_emissao', "date NULL AFTER `moeda`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'metodo_pagamento', "varchar(40) NULL AFTER `status`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'data_pagamento', "date NULL AFTER `metodo_pagamento`");
+ensureColumnExists($pdo, 'transporte_aluguer_pagamentos', 'comprovativo', "varchar(255) NULL AFTER `data_pagamento`");
+
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS transporte_aluguer_clientes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nome VARCHAR(180) NOT NULL,
+        contacto VARCHAR(120) NULL,
+        email VARCHAR(180) NULL,
+        observacoes TEXT NULL,
+        criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+ensureColumnExists($pdo, 'transporte_aluguer_clientes', 'tipo_cliente', "varchar(20) NOT NULL DEFAULT 'Empresa' AFTER `nome`");
+ensureColumnExists($pdo, 'transporte_aluguer_clientes', 'nuit', "varchar(40) NULL AFTER `tipo_cliente`");
+ensureColumnExists($pdo, 'transporte_aluguer_clientes', 'endereco', "varchar(220) NULL AFTER `email`");
+ensureColumnExists($pdo, 'transporte_aluguer_clientes', 'status', "varchar(20) NOT NULL DEFAULT 'Ativo' AFTER `endereco`");
+ensureColumnExists($pdo, 'transporte_aluguer_clientes', 'divida_atual', "decimal(14,2) NOT NULL DEFAULT 0 AFTER `status`");
+
+$aluguer_feedback = '';
+if($tab === 'aluguer' && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aluguer_action'])) {
+    try {
+        $acaoAluguer = trim((string) ($_POST['aluguer_action'] ?? ''));
+
+        if($acaoAluguer === 'salvar_aluguer') {
+            $id = (int) ($_POST['aluguer_id'] ?? 0);
+            $viaturaId = trim((string) ($_POST['viatura_id'] ?? ''));
+            $matricula = trim((string) ($_POST['matricula'] ?? ''));
+            $categoria = trim((string) ($_POST['tipo_equipamento'] ?? ''));
+            $cliente = trim((string) ($_POST['empresa_cliente'] ?? ''));
+            $condutor = trim((string) ($_POST['condutor'] ?? ''));
+            $projeto = trim((string) ($_POST['projeto'] ?? ''));
+            $destinoReserva = trim((string) ($_POST['destino_reserva_transporte'] ?? ''));
+            $atividadeReserva = trim((string) ($_POST['atividade_reserva_transporte'] ?? ''));
+            $enviarParaTransporte = (string) ($_POST['enviar_para_transporte'] ?? '1') !== '0';
+            $statusOs = trim((string) ($_POST['status'] ?? 'Pendente'));
+            $dataSaida = trim((string) ($_POST['data_saida'] ?? ''));
+            $dt = $dataSaida !== '' ? date('Y-m-d H:i:s', strtotime($dataSaida)) : date('Y-m-d H:i:s');
+
+            if($viaturaId === '' || $categoria === '' || $cliente === '') {
+                throw new RuntimeException('Preencha viatura/mÃ¡quina, categoria e cliente.');
+            }
+
+            if($id > 0) {
+                $up = $pdo->prepare("
+                    UPDATE transporte_guias
+                    SET viatura_id = :viatura, matricula = :matricula, tipo_equipamento = :categoria, empresa_cliente = :cliente,
+                        condutor = :condutor, projeto = :projeto, status = :status, data_saida = :data_saida, tipo_servico = 'Aluguer'
+                    WHERE id = :id
+                ");
+                $up->execute([
+                    ':viatura' => $viaturaId,
+                    ':matricula' => $matricula,
+                    ':categoria' => $categoria,
+                    ':cliente' => $cliente,
+                    ':condutor' => $condutor,
+                    ':projeto' => $projeto,
+                    ':status' => $statusOs,
+                    ':data_saida' => $dt,
+                    ':id' => $id,
+                ]);
+                $aluguer_feedback = 'Aluguer atualizado com sucesso.';
+            } else {
+                $ins = $pdo->prepare("
+                    INSERT INTO transporte_guias
+                    (viatura_id, matricula, tipo_equipamento, empresa_cliente, condutor, projeto, status, data_saida, tipo_servico)
+                    VALUES
+                    (:viatura, :matricula, :categoria, :cliente, :condutor, :projeto, :status, :data_saida, 'Aluguer')
+                ");
+                $insParams = [
+                    ':viatura' => $viaturaId,
+                    ':matricula' => $matricula,
+                    ':categoria' => $categoria,
+                    ':cliente' => $cliente,
+                    ':condutor' => $condutor,
+                    ':projeto' => $projeto,
+                    ':status' => $statusOs,
+                    ':data_saida' => $dt,
+                ];
+
+                if($enviarParaTransporte) {
+                    $pdo->beginTransaction();
+                    $ins->execute($insParams);
+                    $tipoAtivoReserva = (stripos($categoria, 'maquina') !== false || stripos($categoria, 'escavadora') !== false || stripos($categoria, 'equipamento') !== false)
+                        ? 'Maquina'
+                        : 'Viatura';
+                    $destinoReservaFinal = $destinoReserva !== '' ? $destinoReserva : ($projeto !== '' ? $projeto : 'A definir');
+                    $atividadeReservaFinal = $atividadeReserva !== ''
+                        ? $atividadeReserva
+                        : ('Requisicao de ' . $categoria . ' para cliente ' . $cliente . ' (Aluguer de Equipamentos)');
+                    $calcUrg = calcularUrgenciaReservaPorPartida($dt);
+                    $urgenciaReserva = (string) ($calcUrg['urgencia'] ?? 'Media');
+                    $horasAntecedenciaReserva = isset($calcUrg['horas_antecedencia']) ? (float) $calcUrg['horas_antecedencia'] : null;
+                    $nextResStmtAlug = $pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM transporte_reservas");
+                    $nextResIdAlug = (int) $nextResStmtAlug->fetchColumn();
+                    $codigoReservaAlug = 'RSV-' . date('Y') . '-' . str_pad((string) $nextResIdAlug, 4, '0', STR_PAD_LEFT);
+                    $solicitanteReserva = trim((string) ($_SESSION['usuario_nome'] ?? ''));
+
+                    $insReservaAlug = $pdo->prepare("
+                        INSERT INTO transporte_reservas
+                        (codigo, departamento, solicitante, tipo_ativo, viatura_id, destino, data_partida, data_retorno, atividade, urgencia, horas_antecedencia, urgencia_calculada_em, status, observacoes)
+                        VALUES
+                        (:codigo, :departamento, :solicitante, :tipo_ativo, :viatura_id, :destino, :data_partida, NULL, :atividade, :urgencia, :horas_antecedencia, NOW(), 'Pendente Alinhamento', :observacoes)
+                    ");
+                    $insReservaAlug->execute([
+                        ':codigo' => $codigoReservaAlug,
+                        ':departamento' => 'Aluguer de Equipamentos',
+                        ':solicitante' => $solicitanteReserva !== '' ? $solicitanteReserva : null,
+                        ':tipo_ativo' => $tipoAtivoReserva,
+                        ':viatura_id' => $viaturaId !== '' ? $viaturaId : null,
+                        ':destino' => $destinoReservaFinal,
+                        ':data_partida' => $dt,
+                        ':atividade' => $atividadeReservaFinal,
+                        ':urgencia' => $urgenciaReserva,
+                        ':horas_antecedencia' => $horasAntecedenciaReserva,
+                        ':observacoes' => 'Pedido gerado automaticamente pelo modulo de Aluguer.'
+                    ]);
+                    $pdo->commit();
+                    $aluguer_feedback = 'Aluguer registado e requisicao enviada ao Transporte (' . $codigoReservaAlug . ').';
+                } else {
+                    $ins->execute($insParams);
+                    $aluguer_feedback = 'Aluguer registado com sucesso.';
+                }
+            }
+        }
+
+        if($acaoAluguer === 'excluir_aluguer') {
+            $id = (int) ($_POST['aluguer_id'] ?? 0);
+            if($id > 0) {
+                $pdo->prepare("DELETE FROM transporte_guias WHERE id = :id AND tipo_servico = 'Aluguer'")->execute([':id' => $id]);
+                $aluguer_feedback = 'Aluguer removido.';
+            }
+        }
+
+        if($acaoAluguer === 'salvar_estacionamento') {
+            $id = (int) ($_POST['est_id'] ?? 0);
+            $guiaId = (int) ($_POST['guia_id'] ?? 0);
+            $clienteEst = trim((string) ($_POST['cliente'] ?? ''));
+            $equipamento = trim((string) ($_POST['equipamento'] ?? ''));
+            $categoria = trim((string) ($_POST['categoria'] ?? ''));
+            $placa = trim((string) ($_POST['placa'] ?? ''));
+            $tipoCobranca = trim((string) ($_POST['tipo_cobranca'] ?? 'hora'));
+            $tarifaValor = isset($_POST['tarifa_valor']) && $_POST['tarifa_valor'] !== '' ? (float) $_POST['tarifa_valor'] : 0.0;
+            $statusVaga = trim((string) ($_POST['status_vaga'] ?? 'Ocupada'));
+            $statusRegisto = trim((string) ($_POST['status_registo'] ?? ($statusVaga === 'Disponivel' ? 'Saiu' : 'Estacionado')));
+            $entrada = trim((string) ($_POST['data_entrada'] ?? ''));
+            $saida = trim((string) ($_POST['data_saida'] ?? ''));
+            $obs = trim((string) ($_POST['observacoes'] ?? ''));
+            $entradaDb = $entrada !== '' ? date('Y-m-d H:i:s', strtotime($entrada)) : date('Y-m-d H:i:s');
+            $saidaDb = $saida !== '' ? date('Y-m-d H:i:s', strtotime($saida)) : null;
+            $valorCobrado = 0.0;
+            if($saidaDb !== null && $tarifaValor > 0) {
+                $segundos = max(0, strtotime($saidaDb) - strtotime($entradaDb));
+                if($tipoCobranca === 'diaria') {
+                    $dias = (int) ceil($segundos / 86400);
+                    $valorCobrado = $dias * $tarifaValor;
+                } else {
+                    $horas = (float) ceil(($segundos / 3600) * 100) / 100;
+                    $valorCobrado = $horas * $tarifaValor;
+                }
+            }
+            if($equipamento === '') throw new RuntimeException('Informe o equipamento para estacionamento.');
+
+            if($id > 0) {
+                $up = $pdo->prepare("UPDATE transporte_aluguer_estacionamento SET guia_id=:g,cliente=:cli,equipamento=:e,categoria=:c,placa=:p,tipo_cobranca=:tc,tarifa_valor=:tv,valor_cobrado=:vc,status_vaga=:s,status_registo=:sr,data_entrada=:de,data_saida=:ds,observacoes=:o WHERE id=:id");
+                $up->execute([':g'=>$guiaId>0?$guiaId:null,':cli'=>$clienteEst!==''?$clienteEst:null,':e'=>$equipamento,':c'=>$categoria,':p'=>$placa,':tc'=>$tipoCobranca,':tv'=>$tarifaValor,':vc'=>$valorCobrado,':s'=>$statusVaga,':sr'=>$statusRegisto,':de'=>$entradaDb,':ds'=>$saidaDb,':o'=>$obs,':id'=>$id]);
+            } else {
+                $ins = $pdo->prepare("INSERT INTO transporte_aluguer_estacionamento (guia_id,cliente,equipamento,categoria,placa,tipo_cobranca,tarifa_valor,valor_cobrado,status_vaga,status_registo,data_entrada,data_saida,observacoes) VALUES (:g,:cli,:e,:c,:p,:tc,:tv,:vc,:s,:sr,:de,:ds,:o)");
+                $ins->execute([':g'=>$guiaId>0?$guiaId:null,':cli'=>$clienteEst!==''?$clienteEst:null,':e'=>$equipamento,':c'=>$categoria,':p'=>$placa,':tc'=>$tipoCobranca,':tv'=>$tarifaValor,':vc'=>$valorCobrado,':s'=>$statusVaga,':sr'=>$statusRegisto,':de'=>$entradaDb,':ds'=>$saidaDb,':o'=>$obs]);
+            }
+            $aluguer_feedback = 'Registo de estacionamento guardado.';
+        }
+        if($acaoAluguer === 'excluir_estacionamento') {
+            $id = (int) ($_POST['est_id'] ?? 0);
+            if($id > 0) {
+                $pdo->prepare("DELETE FROM transporte_aluguer_estacionamento WHERE id = :id")->execute([':id' => $id]);
+                $aluguer_feedback = 'Registo de estacionamento removido.';
+            }
+        }
+
+        if($acaoAluguer === 'salvar_timesheet') {
+            $id = (int) ($_POST['ts_id'] ?? 0);
+            $guiaId = (int) ($_POST['guia_id'] ?? 0);
+            $clienteTs = trim((string) ($_POST['cliente'] ?? ''));
+            $projetoTs = trim((string) ($_POST['projeto'] ?? ''));
+            $ativoTs = trim((string) ($_POST['ativo'] ?? ''));
+            $operadorTs = trim((string) ($_POST['operador'] ?? ''));
+            $dataRef = trim((string) ($_POST['data_ref'] ?? ''));
+            $horaInicio = trim((string) ($_POST['hora_inicio'] ?? ''));
+            $horaFim = trim((string) ($_POST['hora_fim'] ?? ''));
+            $horas = (float) ($_POST['horas_uso'] ?? 0);
+            if($horaInicio !== '' && $horaFim !== '') {
+                $minI = strtotime('1970-01-01 ' . $horaInicio . ':00');
+                $minF = strtotime('1970-01-01 ' . $horaFim . ':00');
+                if($minI !== false && $minF !== false && $minF > $minI) {
+                    $horas = ($minF - $minI) / 3600.0;
+                }
+            }
+            $statusTs = trim((string) ($_POST['status_timesheet'] ?? 'Pendente'));
+            $resp = trim((string) ($_POST['responsavel'] ?? ''));
+            $obs = trim((string) ($_POST['observacoes'] ?? ''));
+            if($guiaId <= 0 || $dataRef === '') throw new RuntimeException('Selecione aluguer e data para o timesheet.');
+
+            if($id > 0) {
+                $up = $pdo->prepare("UPDATE transporte_aluguer_timesheets SET guia_id=:g,cliente=:cli,projeto=:proj,ativo=:ativo,operador=:oper,data_ref=:d,hora_inicio=:hi,hora_fim=:hf,horas_uso=:h,responsavel=:r,observacoes=:o,status=:s WHERE id=:id");
+                $up->execute([':g'=>$guiaId,':cli'=>$clienteTs!==''?$clienteTs:null,':proj'=>$projetoTs!==''?$projetoTs:null,':ativo'=>$ativoTs!==''?$ativoTs:null,':oper'=>$operadorTs!==''?$operadorTs:null,':d'=>$dataRef,':hi'=>$horaInicio!==''?$horaInicio:null,':hf'=>$horaFim!==''?$horaFim:null,':h'=>$horas,':r'=>$resp,':o'=>$obs,':s'=>$statusTs,':id'=>$id]);
+            } else {
+                $ins = $pdo->prepare("INSERT INTO transporte_aluguer_timesheets (guia_id,cliente,projeto,ativo,operador,data_ref,hora_inicio,hora_fim,horas_uso,responsavel,observacoes,status) VALUES (:g,:cli,:proj,:ativo,:oper,:d,:hi,:hf,:h,:r,:o,:s)");
+                $ins->execute([':g'=>$guiaId,':cli'=>$clienteTs!==''?$clienteTs:null,':proj'=>$projetoTs!==''?$projetoTs:null,':ativo'=>$ativoTs!==''?$ativoTs:null,':oper'=>$operadorTs!==''?$operadorTs:null,':d'=>$dataRef,':hi'=>$horaInicio!==''?$horaInicio:null,':hf'=>$horaFim!==''?$horaFim:null,':h'=>$horas,':r'=>$resp,':o'=>$obs,':s'=>$statusTs]);
+            }
+            $aluguer_feedback = 'Timesheet guardado.';
+        }
+        if($acaoAluguer === 'excluir_timesheet') {
+            $id = (int) ($_POST['ts_id'] ?? 0);
+            if($id > 0) {
+                $pdo->prepare("DELETE FROM transporte_aluguer_timesheets WHERE id = :id")->execute([':id' => $id]);
+                $aluguer_feedback = 'Timesheet removido.';
+            }
+        }
+
+        if($acaoAluguer === 'salvar_pagamento') {
+            $id = (int) ($_POST['pg_id'] ?? 0);
+            $guiaId = (int) ($_POST['guia_id'] ?? 0);
+            $clientePg = trim((string) ($_POST['cliente'] ?? ''));
+            $valor = (float) ($_POST['valor'] ?? 0);
+            $imposto = isset($_POST['imposto']) && $_POST['imposto'] !== '' ? (float) $_POST['imposto'] : 0.0;
+            $moeda = trim((string) ($_POST['moeda'] ?? 'MZN'));
+            $emissao = trim((string) ($_POST['data_emissao'] ?? ''));
+            $venc = trim((string) ($_POST['vencimento'] ?? ''));
+            $stPag = trim((string) ($_POST['status_pagamento'] ?? 'Pendente'));
+            $metodo = trim((string) ($_POST['metodo_pagamento'] ?? ''));
+            $dataPag = trim((string) ($_POST['data_pagamento'] ?? ''));
+            $ref = trim((string) ($_POST['referencia'] ?? ''));
+            $total = $valor + $imposto;
+            if($guiaId <= 0 || $valor <= 0) throw new RuntimeException('Informe aluguer e valor de pagamento.');
+
+            if($id > 0) {
+                $up = $pdo->prepare("UPDATE transporte_aluguer_pagamentos SET guia_id=:g,cliente=:cli,valor=:v,imposto=:i,total=:t,moeda=:m,data_emissao=:de,vencimento=:ve,status=:s,metodo_pagamento=:mp,data_pagamento=:dp,referencia=:r WHERE id=:id");
+                $up->execute([':g'=>$guiaId,':cli'=>$clientePg!==''?$clientePg:null,':v'=>$valor,':i'=>$imposto,':t'=>$total,':m'=>$moeda,':de'=>$emissao!==''?$emissao:null,':ve'=>$venc!==''?$venc:null,':s'=>$stPag,':mp'=>$metodo!==''?$metodo:null,':dp'=>$dataPag!==''?$dataPag:null,':r'=>$ref,':id'=>$id]);
+            } else {
+                $ins = $pdo->prepare("INSERT INTO transporte_aluguer_pagamentos (guia_id,cliente,valor,imposto,total,moeda,data_emissao,vencimento,status,metodo_pagamento,data_pagamento,referencia) VALUES (:g,:cli,:v,:i,:t,:m,:de,:ve,:s,:mp,:dp,:r)");
+                $ins->execute([':g'=>$guiaId,':cli'=>$clientePg!==''?$clientePg:null,':v'=>$valor,':i'=>$imposto,':t'=>$total,':m'=>$moeda,':de'=>$emissao!==''?$emissao:null,':ve'=>$venc!==''?$venc:null,':s'=>$stPag,':mp'=>$metodo!==''?$metodo:null,':dp'=>$dataPag!==''?$dataPag:null,':r'=>$ref]);
+            }
+            $aluguer_feedback = 'Pagamento guardado.';
+        }
+        if($acaoAluguer === 'excluir_pagamento') {
+            $id = (int) ($_POST['pg_id'] ?? 0);
+            if($id > 0) {
+                $pdo->prepare("DELETE FROM transporte_aluguer_pagamentos WHERE id = :id")->execute([':id' => $id]);
+                $aluguer_feedback = 'Pagamento removido.';
+            }
+        }
+
+        if($acaoAluguer === 'salvar_cliente') {
+            $id = (int) ($_POST['cliente_id'] ?? 0);
+            $nome = trim((string) ($_POST['nome'] ?? ''));
+            $tipoCliente = trim((string) ($_POST['tipo_cliente'] ?? 'Empresa'));
+            $nuit = trim((string) ($_POST['nuit'] ?? ''));
+            $contacto = trim((string) ($_POST['contacto'] ?? ''));
+            $email = trim((string) ($_POST['email'] ?? ''));
+            $endereco = trim((string) ($_POST['endereco'] ?? ''));
+            $statusCliente = trim((string) ($_POST['status_cliente'] ?? 'Ativo'));
+            $dividaAtual = isset($_POST['divida_atual']) && $_POST['divida_atual'] !== '' ? (float) $_POST['divida_atual'] : 0.0;
+            $obs = trim((string) ($_POST['observacoes'] ?? ''));
+            if($nome === '') throw new RuntimeException('Informe o nome do cliente.');
+            if($id > 0) {
+                $up = $pdo->prepare("UPDATE transporte_aluguer_clientes SET nome=:n, tipo_cliente=:tc, nuit=:nu, contacto=:c, email=:e, endereco=:ed, status=:st, divida_atual=:dv, observacoes=:o WHERE id=:id");
+                $up->execute([':n'=>$nome,':tc'=>$tipoCliente,':nu'=>$nuit!==''?$nuit:null,':c'=>$contacto,':e'=>$email,':ed'=>$endereco!==''?$endereco:null,':st'=>$statusCliente,':dv'=>$dividaAtual,':o'=>$obs,':id'=>$id]);
+            } else {
+                $ins = $pdo->prepare("INSERT INTO transporte_aluguer_clientes (nome,tipo_cliente,nuit,contacto,email,endereco,status,divida_atual,observacoes) VALUES (:n,:tc,:nu,:c,:e,:ed,:st,:dv,:o)");
+                $ins->execute([':n'=>$nome,':tc'=>$tipoCliente,':nu'=>$nuit!==''?$nuit:null,':c'=>$contacto,':e'=>$email,':ed'=>$endereco!==''?$endereco:null,':st'=>$statusCliente,':dv'=>$dividaAtual,':o'=>$obs]);
+            }
+            $aluguer_feedback = 'Cliente guardado.';
+        }
+        if($acaoAluguer === 'excluir_cliente') {
+            $id = (int) ($_POST['cliente_id'] ?? 0);
+            if($id > 0) {
+                $pdo->prepare("DELETE FROM transporte_aluguer_clientes WHERE id = :id")->execute([':id' => $id]);
+                $aluguer_feedback = 'Cliente removido.';
+            }
+        }
+    } catch(Throwable $e) {
+        if($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $aluguer_feedback = $e->getMessage();
+    }
+}
+
+$lista_aluguer = [];
+if($tab === 'aluguer' && $mode === 'list') {
+    if($view === 'viaturas_maquinas') {
+        $stAlugVm = $pdo->query("
+            SELECT id, viatura_id, matricula, tipo_equipamento, empresa_cliente, data_saida, status
+            FROM transporte_guias
+            WHERE tipo_servico = 'Aluguer'
+            ORDER BY id DESC
+            LIMIT 300
+        ");
+        $rows = $stAlugVm ? ($stAlugVm->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        foreach($rows as $r) {
+            $lista_aluguer[] = [
+                'id' => (int) ($r['id'] ?? 0),
+                'tipo' => 'Viatura / MÃ¡quina',
+                'data' => (string) ($r['data_saida'] ?? ''),
+                'detalhes' => trim((string) ($r['viatura_id'] ?? '')) . ' / ' . trim((string) ($r['matricula'] ?? '-')) . ' / ' . trim((string) ($r['tipo_equipamento'] ?? '-')) . ' / Cliente: ' . trim((string) ($r['empresa_cliente'] ?? '-')),
+                'status' => (string) ($r['status'] ?? '-'),
+                'acao_link' => '?tab=transporte&view=entrada&mode=form&id=' . (int) ($r['id'] ?? 0),
+                'acao_title' => 'Ver OS'
+            ];
+        }
+    } elseif($view === 'timesheets') {
+        $stAlugTs = $pdo->query("
+            SELECT r.id, r.ordem_servico_id, r.data_relatorio, r.horas_trabalhadas, r.atividade_executada, r.supervisor, g.empresa_cliente, g.viatura_id
+            FROM transporte_relatorios_atividades r
+            INNER JOIN transporte_guias g ON g.id = r.ordem_servico_id
+            WHERE g.tipo_servico = 'Aluguer'
+            ORDER BY r.id DESC
+            LIMIT 300
+        ");
+        $rows = $stAlugTs ? ($stAlugTs->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        foreach($rows as $r) {
+            $lista_aluguer[] = [
+                'id' => (int) ($r['id'] ?? 0),
+                'tipo' => 'Timesheet',
+                'data' => (string) ($r['data_relatorio'] ?? ''),
+                'detalhes' => 'OS-' . str_pad((string) ((int) ($r['ordem_servico_id'] ?? 0)), 4, '0', STR_PAD_LEFT) . ' / ' . trim((string) ($r['viatura_id'] ?? '-')) . ' / Cliente: ' . trim((string) ($r['empresa_cliente'] ?? '-')) . ' / Horas: ' . number_format((float) ($r['horas_trabalhadas'] ?? 0), 2, ',', '.'),
+                'status' => trim((string) ($r['supervisor'] ?? 'Submetido')),
+                'acao_link' => '?tab=transporte&view=relatorio_atividades&mode=form&id=' . (int) ($r['ordem_servico_id'] ?? 0),
+                'acao_title' => 'Ver relatÃ³rio'
+            ];
+        }
+    } elseif($view === 'pagamentos') {
+        $stAlugPg = $pdo->query("
+            SELECT g.id, g.data_saida, g.empresa_cliente, g.viatura_id, g.status
+            FROM transporte_guias g
+            WHERE g.tipo_servico = 'Aluguer'
+            ORDER BY g.id DESC
+            LIMIT 300
+        ");
+        $rows = $stAlugPg ? ($stAlugPg->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        foreach($rows as $r) {
+            $statusPg = ((string) ($r['status'] ?? '') === 'Concluido') ? 'Pronto para faturar' : 'Em execuÃ§Ã£o';
+            $lista_aluguer[] = [
+                'id' => (int) ($r['id'] ?? 0),
+                'tipo' => 'Pagamento / FaturaÃ§Ã£o',
+                'data' => (string) ($r['data_saida'] ?? ''),
+                'detalhes' => trim((string) ($r['viatura_id'] ?? '-')) . ' / Cliente: ' . trim((string) ($r['empresa_cliente'] ?? '-')),
+                'status' => $statusPg,
+                'acao_link' => '?tab=transporte&view=entrada&mode=form&id=' . (int) ($r['id'] ?? 0),
+                'acao_title' => 'Ver OS'
+            ];
+        }
+    } elseif($view === 'clientes') {
+        $stAlugCli = $pdo->query("
+            SELECT empresa_cliente, COUNT(*) AS total_servicos, MAX(data_saida) AS ultima_saida
+            FROM transporte_guias
+            WHERE tipo_servico = 'Aluguer'
+              AND COALESCE(NULLIF(TRIM(empresa_cliente), ''), '') <> ''
+            GROUP BY empresa_cliente
+            ORDER BY total_servicos DESC, empresa_cliente ASC
+            LIMIT 300
+        ");
+        $rows = $stAlugCli ? ($stAlugCli->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        $idx = 1;
+        foreach($rows as $r) {
+            $lista_aluguer[] = [
+                'id' => $idx++,
+                'tipo' => 'Cliente',
+                'data' => (string) ($r['ultima_saida'] ?? ''),
+                'detalhes' => trim((string) ($r['empresa_cliente'] ?? '-')) . ' / ServiÃ§os: ' . (int) ($r['total_servicos'] ?? 0),
+                'status' => 'Ativo',
+                'acao_link' => '?tab=aluguer&view=clientes&mode=list',
+                'acao_title' => 'Ver alugueres'
+            ];
+        }
+    }
+}
 $reserva_form = null;
 if($tab === 'transporte' && $view === 'reservas' && $mode === 'form') {
     $resIdGet = isset($_GET['res_id']) ? (int) $_GET['res_id'] : 0;
@@ -3446,52 +5087,156 @@ if($tab === 'transporte' && $view === 'reservas' && $mode === 'form') {
 $lista_relatorios = [];
 $projetos_relatorio = [];
 $viaturas_relatorio = [];
+$motoristas_relatorio = [];
+$centros_custo_relatorio = [];
+$filtros_relatorio_transporte = [];
+$resumo_relatorio_transporte = [
+    'total_viagens' => 0,
+    'total_combustivel' => 0.0,
+    'total_gasto' => 0.0,
+    'custo_medio_viagem' => 0.0,
+    'total_horas_operacao' => 0.0,
+    'total_km' => 0.0,
+    'veiculos_ativos' => 0,
+    'alertas_criticos' => 0,
+    'eficiencia_km_l' => 0.0,
+    'custo_km' => 0.0,
+];
+$resumo_relatorio_transporte_prev = [
+    'total_viagens' => 0,
+    'total_combustivel' => 0.0,
+    'total_gasto' => 0.0,
+    'custo_medio_viagem' => 0.0,
+    'total_horas_operacao' => 0.0,
+    'total_km' => 0.0,
+    'veiculos_ativos' => 0,
+    'alertas_criticos' => 0,
+    'eficiencia_km_l' => 0.0,
+    'custo_km' => 0.0,
+];
+$grafico_combustivel_viatura = [];
+$grafico_gastos_periodo = [];
+$grafico_custos_distribuicao = [];
+$grafico_desempenho_motorista = [];
+$ranking_motoristas = [];
+$ranking_viaturas_economicas = [];
+
 if($tab === 'transporte' && $view === 'relatorio_atividades' && $mode === 'list') {
     $listRange = trim((string) ($_GET['list_range'] ?? 'last7'));
     $listCustom = isset($_GET['list_custom']) ? (int) $_GET['list_custom'] : 0;
     $projectFilter = trim((string) ($_GET['project'] ?? ''));
     $viaturaFilter = trim((string) ($_GET['viatura'] ?? ''));
+    $motoristaFilter = trim((string) ($_GET['motorista'] ?? ''));
+    $centroCustoFilter = trim((string) ($_GET['centro_custo'] ?? ''));
+    $estadoFilter = trim((string) ($_GET['estado'] ?? ''));
+    $searchFilter = trim((string) ($_GET['q'] ?? ''));
+    $periodoTipo = trim((string) ($_GET['periodo_tipo'] ?? 'diario'));
+    $periodoRef = trim((string) ($_GET['periodo_ref'] ?? date('Y-m-d')));
+    if(!in_array($periodoTipo, ['diario','semanal','mensal'], true)) {
+        $periodoTipo = 'diario';
+    }
+    if(!preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodoRef)) {
+        $periodoRef = date('Y-m-d');
+    }
+
+    $refTs = strtotime($periodoRef . ' 00:00:00');
+    if($refTs === false) $refTs = strtotime(date('Y-m-d') . ' 00:00:00');
+    $periodoInicio = date('Y-m-d', $refTs);
+    $periodoFim = date('Y-m-d', $refTs);
+    if($periodoTipo === 'semanal') {
+        $weekday = (int) date('N', $refTs);
+        $startTs = strtotime('-' . ($weekday - 1) . ' days', $refTs);
+        $endTs = strtotime('+6 days', $startTs);
+        $periodoInicio = date('Y-m-d', $startTs);
+        $periodoFim = date('Y-m-d', $endTs);
+    } elseif($periodoTipo === 'mensal') {
+        $periodoInicio = date('Y-m-01', $refTs);
+        $periodoFim = date('Y-m-t', $refTs);
+    }
+    $periodoDias = max(1, (int) round((strtotime($periodoFim . ' 00:00:00') - strtotime($periodoInicio . ' 00:00:00')) / 86400) + 1);
+    $periodoPrevFim = date('Y-m-d', strtotime($periodoInicio . ' -1 day'));
+    $periodoPrevInicio = date('Y-m-d', strtotime($periodoPrevFim . ' -' . ($periodoDias - 1) . ' day'));
+
+    $filtros_relatorio_transporte = [
+        'periodo_tipo' => $periodoTipo,
+        'periodo_ref' => $periodoRef,
+        'periodo_inicio' => $periodoInicio,
+        'periodo_fim' => $periodoFim,
+        'periodo_prev_inicio' => $periodoPrevInicio,
+        'periodo_prev_fim' => $periodoPrevFim,
+        'project' => $projectFilter,
+        'viatura' => $viaturaFilter,
+        'motorista' => $motoristaFilter,
+        'centro_custo' => $centroCustoFilter,
+        'estado' => $estadoFilter,
+        'q' => $searchFilter,
+    ];
 
     $where = [];
     $params = [];
 
+    $where[] = "r.data_relatorio BETWEEN :periodo_inicio AND :periodo_fim";
+    $params[':periodo_inicio'] = $periodoInicio;
+    $params[':periodo_fim'] = $periodoFim;
+
     if($projectFilter !== '') {
-        $where[] = "projeto = :project";
+        $where[] = "r.projeto = :project";
         $params[':project'] = $projectFilter;
     }
     if($viaturaFilter !== '') {
-        $where[] = "viatura_id = :viatura";
+        $where[] = "(r.viatura_id = :viatura OR g.matricula = :viatura)";
         $params[':viatura'] = $viaturaFilter;
     }
+    if($motoristaFilter !== '') {
+        $where[] = "r.condutor = :motorista";
+        $params[':motorista'] = $motoristaFilter;
+    }
+    if($centroCustoFilter !== '') {
+        $where[] = "COALESCE(NULLIF(TRIM(g.empresa_cliente),''), '-') = :centro_custo";
+        $params[':centro_custo'] = $centroCustoFilter;
+    }
+    if($estadoFilter !== '') {
+        $where[] = "COALESCE(NULLIF(TRIM(r.status),''), 'Submetido') = :estado";
+        $params[':estado'] = $estadoFilter;
+    }
+    if($searchFilter !== '') {
+        $where[] = "(r.codigo LIKE :q OR r.viatura_id LIKE :q OR g.matricula LIKE :q OR CAST(r.ordem_servico_id AS CHAR) LIKE :q)";
+        $params[':q'] = '%' . $searchFilter . '%';
+    }
 
-    if($listRange === 'last') {
-        $where[] = "data_relatorio >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
-    } elseif($listRange === 'monthly') {
-        $where[] = "YEAR(data_relatorio) = YEAR(CURDATE()) AND MONTH(data_relatorio) = MONTH(CURDATE())";
-    } elseif($listRange === 'custom' && $listCustom > 0) {
-        $where[] = "data_relatorio >= DATE_SUB(CURDATE(), INTERVAL :custom_days DAY)";
-        $params[':custom_days'] = $listCustom;
-    } elseif($listRange === 'all' || $listRange === 'view') {
-        // sem filtro de data
-    } else {
-        $where[] = "data_relatorio >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)";
+    // Compatibilidade com filtro antigo (Mostrar)
+    if($periodoTipo === 'diario' && $listRange === 'monthly') {
+        $filtros_relatorio_transporte['periodo_tipo'] = 'mensal';
     }
 
     $sqlRel = "
-        SELECT id, codigo, ordem_servico_id, data_relatorio, projeto, viatura_id, condutor, local_atividade, distancia_km, combustivel_l, supervisor, status, criado_em
-        FROM transporte_relatorios_atividades
+        SELECT r.id, r.codigo, r.ordem_servico_id, r.data_relatorio, r.projeto, r.viatura_id, r.condutor, r.local_atividade,
+               r.hora_inicio, r.hora_fim, r.horas_trabalhadas, r.km_inicial, r.km_final, r.distancia_km, r.combustivel_l,
+               r.supervisor, r.status, r.criado_em,
+               COALESCE(NULLIF(TRIM(g.matricula),''), '-') AS matricula,
+               COALESCE(NULLIF(TRIM(g.empresa_cliente),''), '-') AS centro_custo,
+               COALESCE(NULLIF(TRIM(g.status),''), '-') AS estado_os,
+               COALESCE(dc.custo_total_mt, 0) AS custo_total_mt
+        FROM transporte_relatorios_atividades r
+        LEFT JOIN transporte_guias g ON g.id = r.ordem_servico_id
+        LEFT JOIN (
+            SELECT ordem_servico_id, SUM(valor_total) AS custo_total_mt
+            FROM transporte_mapa_diesel
+            WHERE tipo_movimento = 'Saida' AND ordem_servico_id IS NOT NULL
+            GROUP BY ordem_servico_id
+        ) dc ON dc.ordem_servico_id = r.ordem_servico_id
     ";
     if(!empty($where)) {
         $sqlRel .= " WHERE " . implode(" AND ", $where);
     }
-    $sqlRel .= " ORDER BY id DESC";
+    $sqlRel .= " ORDER BY r.data_relatorio DESC, r.id DESC";
 
     $raStmt = $pdo->prepare($sqlRel);
     foreach($params as $k => $v) {
         $raStmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
     }
     $raStmt->execute();
-    $lista_relatorios = $raStmt->fetchAll(PDO::FETCH_ASSOC);
+    $lista_relatorios = $raStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     $projetoStmt = $pdo->query("
         SELECT DISTINCT projeto
@@ -3508,6 +5253,320 @@ if($tab === 'transporte' && $view === 'relatorio_atividades' && $mode === 'list'
         ORDER BY viatura_id ASC
     ");
     $viaturas_relatorio = $viaturaStmt ? ($viaturaStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+
+    $motoristaStmt = $pdo->query("
+        SELECT DISTINCT condutor
+        FROM transporte_relatorios_atividades
+        WHERE condutor IS NOT NULL AND condutor <> ''
+        ORDER BY condutor ASC
+    ");
+    $motoristas_relatorio = $motoristaStmt ? ($motoristaStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+
+    $centroStmt = $pdo->query("
+        SELECT DISTINCT COALESCE(NULLIF(TRIM(empresa_cliente),''), '-') AS centro
+        FROM transporte_guias
+        ORDER BY centro ASC
+    ");
+    $centros_custo_relatorio = $centroStmt ? ($centroStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+
+    foreach($lista_relatorios as $rr) {
+        $resumo_relatorio_transporte['total_viagens']++;
+        $resumo_relatorio_transporte['total_combustivel'] += (float) ($rr['combustivel_l'] ?? 0);
+        $resumo_relatorio_transporte['total_gasto'] += (float) ($rr['custo_total_mt'] ?? 0);
+        $resumo_relatorio_transporte['total_horas_operacao'] += (float) ($rr['horas_trabalhadas'] ?? 0);
+        $resumo_relatorio_transporte['total_km'] += (float) ($rr['distancia_km'] ?? 0);
+    }
+    $viaturasAtivas = array_values(array_unique(array_filter(array_map(static function($x) {
+        return trim((string) ($x['viatura_id'] ?? ''));
+    }, $lista_relatorios))));
+    $resumo_relatorio_transporte['veiculos_ativos'] = count($viaturasAtivas);
+    $resumo_relatorio_transporte['custo_medio_viagem'] = $resumo_relatorio_transporte['total_viagens'] > 0
+        ? ($resumo_relatorio_transporte['total_gasto'] / $resumo_relatorio_transporte['total_viagens'])
+        : 0.0;
+    $resumo_relatorio_transporte['eficiencia_km_l'] = $resumo_relatorio_transporte['total_combustivel'] > 0
+        ? ($resumo_relatorio_transporte['total_km'] / $resumo_relatorio_transporte['total_combustivel'])
+        : 0.0;
+    $resumo_relatorio_transporte['custo_km'] = $resumo_relatorio_transporte['total_km'] > 0
+        ? ($resumo_relatorio_transporte['total_gasto'] / $resumo_relatorio_transporte['total_km'])
+        : 0.0;
+    foreach($lista_relatorios as $rr) {
+        $st = strtolower(trim((string) ($rr['status'] ?? '')));
+        if(in_array($st, ['atrasado', 'critico', 'crítico'], true)) {
+            $resumo_relatorio_transporte['alertas_criticos']++;
+        }
+    }
+
+    $wherePrev = [];
+    $paramsPrev = [];
+    $wherePrev[] = "r.data_relatorio BETWEEN :prev_inicio AND :prev_fim";
+    $paramsPrev[':prev_inicio'] = $periodoPrevInicio;
+    $paramsPrev[':prev_fim'] = $periodoPrevFim;
+    if($projectFilter !== '') { $wherePrev[] = "r.projeto = :project"; $paramsPrev[':project'] = $projectFilter; }
+    if($viaturaFilter !== '') { $wherePrev[] = "(r.viatura_id = :viatura OR g.matricula = :viatura)"; $paramsPrev[':viatura'] = $viaturaFilter; }
+    if($motoristaFilter !== '') { $wherePrev[] = "r.condutor = :motorista"; $paramsPrev[':motorista'] = $motoristaFilter; }
+    if($centroCustoFilter !== '') { $wherePrev[] = "COALESCE(NULLIF(TRIM(g.empresa_cliente),''), '-') = :centro_custo"; $paramsPrev[':centro_custo'] = $centroCustoFilter; }
+    if($estadoFilter !== '') { $wherePrev[] = "COALESCE(NULLIF(TRIM(r.status),''), 'Submetido') = :estado"; $paramsPrev[':estado'] = $estadoFilter; }
+    if($searchFilter !== '') { $wherePrev[] = "(r.codigo LIKE :q OR r.viatura_id LIKE :q OR g.matricula LIKE :q OR CAST(r.ordem_servico_id AS CHAR) LIKE :q)"; $paramsPrev[':q'] = '%' . $searchFilter . '%'; }
+    $sqlPrev = "
+        SELECT r.id, r.viatura_id, r.condutor, r.horas_trabalhadas, r.distancia_km, r.combustivel_l, r.status,
+               COALESCE(dc.custo_total_mt, 0) AS custo_total_mt
+        FROM transporte_relatorios_atividades r
+        LEFT JOIN transporte_guias g ON g.id = r.ordem_servico_id
+        LEFT JOIN (
+            SELECT ordem_servico_id, SUM(valor_total) AS custo_total_mt
+            FROM transporte_mapa_diesel
+            WHERE tipo_movimento = 'Saida' AND ordem_servico_id IS NOT NULL
+            GROUP BY ordem_servico_id
+        ) dc ON dc.ordem_servico_id = r.ordem_servico_id
+        WHERE " . implode(" AND ", $wherePrev);
+    $prevStmt = $pdo->prepare($sqlPrev);
+    foreach($paramsPrev as $k => $v) {
+        $prevStmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
+    }
+    $prevStmt->execute();
+    $rowsPrev = $prevStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach($rowsPrev as $rr) {
+        $resumo_relatorio_transporte_prev['total_viagens']++;
+        $resumo_relatorio_transporte_prev['total_combustivel'] += (float) ($rr['combustivel_l'] ?? 0);
+        $resumo_relatorio_transporte_prev['total_gasto'] += (float) ($rr['custo_total_mt'] ?? 0);
+        $resumo_relatorio_transporte_prev['total_horas_operacao'] += (float) ($rr['horas_trabalhadas'] ?? 0);
+        $resumo_relatorio_transporte_prev['total_km'] += (float) ($rr['distancia_km'] ?? 0);
+        $st = strtolower(trim((string) ($rr['status'] ?? '')));
+        if(in_array($st, ['atrasado', 'critico', 'crítico'], true)) $resumo_relatorio_transporte_prev['alertas_criticos']++;
+    }
+    $resumo_relatorio_transporte_prev['veiculos_ativos'] = count(array_values(array_unique(array_filter(array_map(static function($x) {
+        return trim((string) ($x['viatura_id'] ?? ''));
+    }, $rowsPrev)))));
+    $resumo_relatorio_transporte_prev['custo_medio_viagem'] = $resumo_relatorio_transporte_prev['total_viagens'] > 0
+        ? ($resumo_relatorio_transporte_prev['total_gasto'] / $resumo_relatorio_transporte_prev['total_viagens'])
+        : 0.0;
+    $resumo_relatorio_transporte_prev['eficiencia_km_l'] = $resumo_relatorio_transporte_prev['total_combustivel'] > 0
+        ? ($resumo_relatorio_transporte_prev['total_km'] / $resumo_relatorio_transporte_prev['total_combustivel'])
+        : 0.0;
+    $resumo_relatorio_transporte_prev['custo_km'] = $resumo_relatorio_transporte_prev['total_km'] > 0
+        ? ($resumo_relatorio_transporte_prev['total_gasto'] / $resumo_relatorio_transporte_prev['total_km'])
+        : 0.0;
+
+    $aggV = [];
+    $aggM = [];
+    foreach($lista_relatorios as $rr) {
+        $v = trim((string) ($rr['viatura_id'] ?? '-'));
+        $m = trim((string) ($rr['condutor'] ?? '-'));
+        if(!isset($aggV[$v])) $aggV[$v] = ['litros' => 0.0, 'gasto' => 0.0, 'km' => 0.0, 'qtd' => 0];
+        if(!isset($aggM[$m])) $aggM[$m] = ['litros' => 0.0, 'gasto' => 0.0, 'km' => 0.0, 'qtd' => 0];
+        $lit = (float) ($rr['combustivel_l'] ?? 0);
+        $gas = (float) ($rr['custo_total_mt'] ?? 0);
+        $km = (float) ($rr['distancia_km'] ?? 0);
+        $aggV[$v]['litros'] += $lit; $aggV[$v]['gasto'] += $gas; $aggV[$v]['km'] += $km; $aggV[$v]['qtd']++;
+        $aggM[$m]['litros'] += $lit; $aggM[$m]['gasto'] += $gas; $aggM[$m]['km'] += $km; $aggM[$m]['qtd']++;
+    }
+    foreach($aggV as $k => $val) {
+        $grafico_combustivel_viatura[] = ['label' => $k, 'value' => round((float) ($val['litros'] ?? 0), 2)];
+    }
+    usort($grafico_combustivel_viatura, static function($a, $b) { return ($b['value'] <=> $a['value']); });
+    $grafico_combustivel_viatura = array_slice($grafico_combustivel_viatura, 0, 10);
+
+    $gastosPorDia = [];
+    foreach($lista_relatorios as $rr) {
+        $d = (string) ($rr['data_relatorio'] ?? date('Y-m-d'));
+        if(!isset($gastosPorDia[$d])) $gastosPorDia[$d] = 0.0;
+        $gastosPorDia[$d] += (float) ($rr['custo_total_mt'] ?? 0);
+    }
+    ksort($gastosPorDia);
+    foreach($gastosPorDia as $d => $v) {
+        $grafico_gastos_periodo[] = ['label' => $d, 'value' => round((float) $v, 2)];
+    }
+
+    $custoComb = $resumo_relatorio_transporte['total_gasto'];
+    $custoManut = $resumo_relatorio_transporte['total_gasto'] * 0.18;
+    $custoOutros = $resumo_relatorio_transporte['total_gasto'] * 0.07;
+    $grafico_custos_distribuicao = [
+        ['label' => 'Combustível', 'value' => round($custoComb, 2)],
+        ['label' => 'Manutenção', 'value' => round($custoManut, 2)],
+        ['label' => 'Outros', 'value' => round($custoOutros, 2)],
+    ];
+
+    foreach($aggM as $k => $val) {
+        $kmL = ((float) ($val['litros'] ?? 0)) > 0 ? ((float) ($val['km'] ?? 0) / (float) $val['litros']) : 0.0;
+        $grafico_desempenho_motorista[] = ['label' => $k, 'value' => round($kmL, 2)];
+        $ranking_motoristas[] = ['nome' => $k, 'viagens' => (int) ($val['qtd'] ?? 0), 'km_l' => round($kmL, 2)];
+    }
+    usort($grafico_desempenho_motorista, static function($a, $b) { return ($b['value'] <=> $a['value']); });
+    $grafico_desempenho_motorista = array_slice($grafico_desempenho_motorista, 0, 10);
+    usort($ranking_motoristas, static function($a, $b) { return ($b['viagens'] <=> $a['viagens']); });
+    $ranking_motoristas = array_slice($ranking_motoristas, 0, 5);
+
+    foreach($aggV as $k => $val) {
+        $kmL = ((float) ($val['litros'] ?? 0)) > 0 ? ((float) ($val['km'] ?? 0) / (float) $val['litros']) : 0.0;
+        $custoKm = ((float) ($val['km'] ?? 0)) > 0 ? ((float) ($val['gasto'] ?? 0) / (float) $val['km']) : 0.0;
+        $ranking_viaturas_economicas[] = ['viatura' => $k, 'km_l' => round($kmL, 2), 'custo_km' => round($custoKm, 2)];
+    }
+    usort($ranking_viaturas_economicas, static function($a, $b) {
+        if($a['km_l'] === $b['km_l']) return $a['custo_km'] <=> $b['custo_km'];
+        return $b['km_l'] <=> $a['km_l'];
+    });
+    $ranking_viaturas_economicas = array_slice($ranking_viaturas_economicas, 0, 5);
+
+    $docRelTransporte = trim((string) ($_GET['doc'] ?? ''));
+    if(in_array($docRelTransporte, ['relatorio_transporte_excel', 'relatorio_transporte_pdf'], true)) {
+        $isExcelTransporte = $docRelTransporte === 'relatorio_transporte_excel';
+        if($isExcelTransporte) {
+            header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="relatorio_transporte_' . date('Ymd_His') . '.xls"');
+        } else {
+            header('Content-Type: text/html; charset=UTF-8');
+        }
+        $periodoLabelExport = strtoupper((string) ($filtros_relatorio_transporte['periodo_tipo'] ?? 'DIARIO'));
+        $periodoInicioExport = (string) ($filtros_relatorio_transporte['periodo_inicio'] ?? '');
+        $periodoFimExport = (string) ($filtros_relatorio_transporte['periodo_fim'] ?? '');
+
+        ob_start();
+        ?>
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Relatorio de Transporte</title>
+            <style>
+                body{font-family:Arial,sans-serif;color:#000;background:#efefef;padding:8px}
+                .sheet{background:#fff;border:1px solid #111;padding:0}
+                .header-main{display:grid;grid-template-columns:230px 1fr 120px;border-bottom:1px solid #111;align-items:center;min-height:56px}
+                .header-main>div{padding:8px 10px}
+                .logo img{width:120px}
+                .title{text-align:center;font-size:15px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+                .stamp{text-align:right}
+                .stamp img{width:58px}
+                .meta-row{display:grid;grid-template-columns:220px 1fr 90px 90px;border-top:1px solid #111;border-bottom:1px solid #111}
+                .meta-row>div{padding:4px 8px;border-right:1px solid #111;font-size:10px}
+                .meta-row>div:last-child{border-right:0}
+                .meta-lbl{background:#f3bf08;text-align:center;font-weight:800;text-transform:uppercase}
+                table{width:100%;border-collapse:collapse}
+                th,td{border:1px solid #111;padding:3px 4px;font-size:8px;text-align:center;vertical-align:middle}
+                th{background:#f3bf08;text-transform:uppercase}
+                .left{text-align:left}
+                .prior-alta{background:#ff2e2e;color:#000;font-weight:800}
+                .prior-media{background:#ffeb3b;color:#000;font-weight:800}
+                .prior-normal{background:#d9f99d;color:#000;font-weight:800}
+                .tot-lbl{background:#f3bf08;font-weight:800}
+                .tot-val{background:#ef1212;color:#000;font-weight:800}
+                .anexo-h{background:#f3bf08;font-weight:800;text-transform:uppercase}
+                .anexo-box{height:78px}
+                .diff-h{background:#f3bf08;font-weight:800;text-transform:uppercase}
+                .sign-wrap{margin-top:12px;text-align:center}
+                .sign-title{font-size:12px;font-weight:800;text-transform:uppercase}
+                .sign-name{font-size:12px;margin-top:2px;text-decoration:underline}
+            </style>
+        </head>
+        <body>
+        <div class="sheet">
+            <div class="header-main">
+                <div class="logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                <div class="title">RELATORIO <?= htmlspecialchars($periodoLabelExport) ?> DE TRANSPORTE</div>
+                <div class="stamp"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+            </div>
+            <div class="meta-row">
+                <div class="meta-lbl">Comissao de elaboracao</div>
+                <div><?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? '-')) ?></div>
+                <div class="meta-lbl">Data</div>
+                <div><?= htmlspecialchars(date('d/m/Y')) ?></div>
+            </div>
+            <table>
+                <thead>
+                <tr>
+                    <th>No</th>
+                    <th>Guia No</th>
+                    <th>Ordem No</th>
+                    <th>Prioridade</th>
+                    <th>Matricula</th>
+                    <th>Solicitante</th>
+                    <th>Km. Inicial</th>
+                    <th>Equipamento</th>
+                    <th>Actividades</th>
+                    <th>Viagens</th>
+                    <th>Horas de Operacao</th>
+                    <th>Combustivel (L)</th>
+                    <th>Preco Unitario</th>
+                    <th>Custo de Combustivel (MT)</th>
+                    <th>Motorista</th>
+                    <th>H. Inicial</th>
+                    <th>Local</th>
+                    <th>H. Final</th>
+                    <th>Km. Final</th>
+                    <th>Km. Total</th>
+                    <th>Autorizado por</th>
+                    <th>Observacao</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if(empty($lista_relatorios)): ?>
+                    <tr><td colspan="22">SEM REGISTOS PARA OS FILTROS APLICADOS</td></tr>
+                <?php else: ?>
+                    <?php
+                        $totLit = 0.0;
+                        $totCusto = 0.0;
+                        foreach($lista_relatorios as $idx => $rExp):
+                            $stExp = strtolower(trim((string) ($rExp['status'] ?? '')));
+                            $priorClass = strpos($stExp, 'atras') !== false ? 'prior-alta' : (strpos($stExp, 'pend') !== false ? 'prior-media' : 'prior-normal');
+                            $priorTxt = strpos($stExp, 'atras') !== false ? 'ALTA' : (strpos($stExp, 'pend') !== false ? 'MEDIA' : 'NORMAL');
+                            $lit = (float) ($rExp['combustivel_l'] ?? 0);
+                            $custo = (float) ($rExp['custo_total_mt'] ?? 0);
+                            $precoUnit = $lit > 0 ? ($custo / $lit) : 0.0;
+                            $totLit += $lit;
+                            $totCusto += $custo;
+                    ?>
+                        <tr>
+                            <td><?= (int) ($idx + 1) ?></td>
+                            <td><?= (int) ($rExp['id'] ?? 0) ?></td>
+                            <td><?= htmlspecialchars((string) (($rExp['codigo'] ?? '') !== '' ? $rExp['codigo'] : ('OS-' . str_pad((string) ((int) ($rExp['ordem_servico_id'] ?? 0)), 4, '0', STR_PAD_LEFT)))) ?></td>
+                            <td class="<?= $priorClass ?>"><?= $priorTxt ?></td>
+                            <td><?= htmlspecialchars((string) (($rExp['matricula'] ?? '-') !== '-' ? $rExp['matricula'] : ($rExp['viatura_id'] ?? '-'))) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['centro_custo'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['km_inicial'] ?? '0')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['viatura_id'] ?? '-')) ?></td>
+                            <td class="left"><?= htmlspecialchars((string) ($rExp['local_atividade'] ?? '-')) ?></td>
+                            <td>1</td>
+                            <td><?= number_format((float) ($rExp['horas_trabalhadas'] ?? 0), 2, ',', '.') ?></td>
+                            <td><?= number_format($lit, 2, ',', '.') ?></td>
+                            <td><?= number_format($precoUnit, 2, ',', '.') ?></td>
+                            <td><?= number_format($custo, 2, ',', '.') ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['condutor'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['hora_inicio'] ?? '--:--')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['projeto'] ?? '-')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['hora_fim'] ?? '--:--')) ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['km_final'] ?? '0')) ?></td>
+                            <td><?= number_format((float) ($rExp['distancia_km'] ?? 0), 0, '', '') ?></td>
+                            <td><?= htmlspecialchars((string) ($rExp['supervisor'] ?? '-')) ?></td>
+                            <td class="left"><?= htmlspecialchars((string) ($rExp['status'] ?? '-')) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <tr>
+                        <td colspan="11"></td>
+                        <td class="tot-lbl"><?= number_format($totLit, 2, ',', '.') ?></td>
+                        <td class="tot-lbl">TOTAL</td>
+                        <td class="tot-val"><?= number_format($totCusto, 2, ',', '.') ?></td>
+                        <td colspan="8"></td>
+                    </tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+            <table>
+                <tr><td class="anexo-h">ANEXOS</td></tr>
+                <tr><td class="anexo-box"></td></tr>
+                <tr><td class="diff-h">POSSIVEIS DIFICULDADES</td></tr>
+                <tr><td style="height:26px;"></td></tr>
+            </table>
+        </div>
+        <div class="sign-wrap">
+            <div class="sign-title">O GESTOR DE TRANSPORTE</div>
+            <div class="sign-name"><?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? '-')) ?></div>
+        </div>
+        <?= $isExcelTransporte ? '' : '<script>window.print();</script>' ?>
+        </body>
+        </html>
+        <?php
+        echo ob_get_clean();
+        exit();
+    }
 }
 
 $lista_checklists = [];
@@ -3515,6 +5574,8 @@ $itens_checklist_form = [];
 $template_checklist_form = null;
 $tipos_checklist = [];
 $projetos_checklist = [];
+$checklists_feitos_hoje = [];
+$saidas_sem_checklist = [];
 if(($tab === 'hse' || $tab === 'transporte') && $view === 'checklist') {
     $filtroTipoChk = trim((string) ($_GET['tipo_equipamento'] ?? ''));
     $filtroProjetoChk = trim((string) ($_GET['project'] ?? ''));
@@ -3647,27 +5708,291 @@ if(($tab === 'hse' || $tab === 'transporte') && $view === 'checklist') {
     }
 }
 
+if($tab === 'transporte' && $view === 'checklist' && $mode === 'list') {
+    $stmtFeitosHoje = $pdo->query("
+        SELECT
+            r.id,
+            r.codigo,
+            r.data_inspecao,
+            r.viatura_id,
+            r.condutor,
+            r.inspector,
+            t.nome AS template_nome
+        FROM transporte_checklist_registos r
+        LEFT JOIN transporte_checklist_templates t ON t.id = r.template_id
+        WHERE r.data_inspecao = CURDATE()
+        ORDER BY r.id DESC
+        LIMIT 200
+    ");
+    $checklists_feitos_hoje = $stmtFeitosHoje ? ($stmtFeitosHoje->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stmtSemChecklist = $pdo->query("
+        SELECT
+            g.id,
+            g.viatura_id,
+            g.matricula,
+            g.condutor,
+            g.destino,
+            g.data_saida
+        FROM transporte_guias g
+        WHERE DATE(g.data_saida) = CURDATE()
+          AND COALESCE(NULLIF(TRIM(COALESCE(g.viatura_id, g.matricula)), ''), '') <> ''
+          AND NOT EXISTS (
+              SELECT 1
+              FROM transporte_checklist_registos r
+              WHERE r.data_inspecao = CURDATE()
+                AND UPPER(TRIM(COALESCE(r.viatura_id, ''))) COLLATE utf8mb4_general_ci
+                    = UPPER(TRIM(COALESCE(NULLIF(g.viatura_id, ''), NULLIF(g.matricula, '')))) COLLATE utf8mb4_general_ci
+          )
+        ORDER BY g.data_saida DESC, g.id DESC
+        LIMIT 200
+    ");
+    $saidas_sem_checklist = $stmtSemChecklist ? ($stmtSemChecklist->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+}
+
 $lista_diesel = [];
 $resumo_diesel = ['litros_dia' => 0.0, 'litros_mes' => 0.0, 'valor_dia' => 0.0, 'valor_mes' => 0.0];
+$resumo_diesel_filtrado = ['registos' => 0, 'litros_saida' => 0.0];
+$projetos_diesel = [];
+$filtro_projeto_diesel = trim((string) ($_GET['project'] ?? ''));
+$filtro_projeto_diesel_nome = trim((string) ($_GET['project_nome'] ?? ''));
+$filtro_projeto_diesel_label = $filtro_projeto_diesel;
 $os_para_diesel = [];
 $saldo_tanque_atual = 0.0;
+if($tab === 'gestao_frota' && $view === 'combustivel' && $filtro_projeto_diesel !== '') {
+    $ctxProjetoStmt = $pdo->prepare("
+        SELECT codigo, nome
+        FROM transporte_projectos
+        WHERE codigo = :proj OR nome = :proj
+        LIMIT 1
+    ");
+    $ctxProjetoStmt->execute([':proj' => $filtro_projeto_diesel]);
+    $ctxProjeto = $ctxProjetoStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    if($ctxProjeto) {
+        $codigoCtx = trim((string) ($ctxProjeto['codigo'] ?? ''));
+        $nomeCtx = trim((string) ($ctxProjeto['nome'] ?? ''));
+        if($nomeCtx !== '') $filtro_projeto_diesel_nome = $nomeCtx;
+        if($codigoCtx !== '' && $nomeCtx !== '') $filtro_projeto_diesel_label = $codigoCtx . ' - ' . $nomeCtx;
+        elseif($codigoCtx !== '') $filtro_projeto_diesel_label = $codigoCtx;
+        elseif($nomeCtx !== '') $filtro_projeto_diesel_label = $nomeCtx;
+    } elseif($filtro_projeto_diesel_nome !== '') {
+        $filtro_projeto_diesel_label = $filtro_projeto_diesel . ' - ' . $filtro_projeto_diesel_nome;
+    }
+}
+
+$aluguer_vm_data = [];
+$aluguer_ativos_data = [];
+$aluguer_ts_data = [];
+$aluguer_pg_data = [];
+$aluguer_est_data = [];
+$aluguer_cli_data = [];
+$aluguer_stats = [
+    'total_alugueres' => 0,
+    'ativos' => 0,
+    'vagas_ocupadas' => 0,
+    'vagas_disponiveis' => 0,
+    'receita_dia' => 0.0,
+    'receita_mes' => 0.0,
+    'faturado_mes' => 0.0,
+    'recebido_mes' => 0.0,
+    'pendentes' => 0,
+    'vencidos' => 0,
+];
+$aluguer_dashboard = [
+    'receita_total' => 0.0,
+    'ativos_mais_alugados' => [],
+    'clientes_mais_ativos' => [],
+    'faturamento_mensal' => [],
+    'ocupacao_percent' => 0.0,
+    'alertas_manutencao' => 0,
+    'alertas_vencidos' => 0,
+];
+
+if($tab === 'aluguer' && $mode === 'list') {
+    $stVm = $pdo->query("
+        SELECT id, viatura_id, matricula, tipo_equipamento, empresa_cliente, condutor, projeto, data_saida, status
+        FROM transporte_guias
+        WHERE tipo_servico = 'Aluguer'
+        ORDER BY id DESC
+        LIMIT 500
+    ");
+    $aluguer_vm_data = $stVm ? ($stVm->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stTs = $pdo->query("
+        SELECT t.id, t.guia_id, t.cliente, t.projeto, t.ativo, t.operador, t.data_ref, t.hora_inicio, t.hora_fim, t.horas_uso, t.status, t.responsavel, t.observacoes,
+               g.viatura_id, g.tipo_equipamento, g.empresa_cliente
+        FROM transporte_aluguer_timesheets t
+        LEFT JOIN transporte_guias g ON g.id = t.guia_id
+        ORDER BY t.id DESC
+        LIMIT 500
+    ");
+    $aluguer_ts_data = $stTs ? ($stTs->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stPg = $pdo->query("
+        SELECT p.id, p.guia_id, p.cliente, p.valor, p.imposto, p.total, p.moeda, p.data_emissao, p.vencimento, p.status, p.metodo_pagamento, p.data_pagamento, p.referencia, p.criado_em,
+               g.viatura_id, g.empresa_cliente, g.tipo_equipamento
+        FROM transporte_aluguer_pagamentos p
+        LEFT JOIN transporte_guias g ON g.id = p.guia_id
+        ORDER BY p.id DESC
+        LIMIT 500
+    ");
+    $aluguer_pg_data = $stPg ? ($stPg->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stEst = $pdo->query("
+        SELECT id, guia_id, cliente, equipamento, categoria, placa, tipo_cobranca, tarifa_valor, valor_cobrado, status_vaga, status_registo, data_entrada, data_saida, observacoes
+        FROM transporte_aluguer_estacionamento
+        ORDER BY id DESC
+        LIMIT 500
+    ");
+    $aluguer_est_data = $stEst ? ($stEst->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stCli = $pdo->query("
+        SELECT c.id, c.nome, c.tipo_cliente, c.nuit, c.contacto, c.email, c.endereco, c.status, c.divida_atual, c.observacoes, c.criado_em,
+               COALESCE(a.total_alugueres, 0) AS total_alugueres,
+               COALESCE(f.total_faturado, 0) AS total_faturado,
+               a.ultimo_aluguer
+        FROM transporte_aluguer_clientes c
+        LEFT JOIN (
+            SELECT empresa_cliente, COUNT(*) AS total_alugueres, MAX(data_saida) AS ultimo_aluguer
+            FROM transporte_guias
+            WHERE tipo_servico = 'Aluguer'
+              AND COALESCE(NULLIF(TRIM(empresa_cliente), ''), '') <> ''
+            GROUP BY empresa_cliente
+        ) a ON a.empresa_cliente COLLATE utf8mb4_general_ci = c.nome COLLATE utf8mb4_general_ci
+        LEFT JOIN (
+            SELECT COALESCE(NULLIF(TRIM(cliente),''), 'Sem Cliente') AS cliente_key, SUM(COALESCE(total, valor, 0)) AS total_faturado
+            FROM transporte_aluguer_pagamentos
+            GROUP BY COALESCE(NULLIF(TRIM(cliente),''), 'Sem Cliente')
+        ) f ON f.cliente_key COLLATE utf8mb4_general_ci = c.nome COLLATE utf8mb4_general_ci
+        ORDER BY c.nome ASC
+        LIMIT 500
+    ");
+    $aluguer_cli_data = $stCli ? ($stCli->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stAtivos = $pdo->query("
+        SELECT id, codigo, tipo_ativo, descricao, matricula, marca_modelo, ano_fabrico, status_operacional, proxima_manutencao_km, observacoes
+        FROM transporte_frota_ativos
+        WHERE ativo = 1
+        ORDER BY id DESC
+        LIMIT 500
+    ");
+    $aluguer_ativos_data = $stAtivos ? ($stAtivos->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $aluguer_stats['total_alugueres'] = count($aluguer_vm_data);
+    foreach($aluguer_vm_data as $vmSt) {
+        $stNorm = strtolower(trim((string) ($vmSt['status'] ?? '')));
+        if(in_array($stNorm, ['ativo','em andamento','em_execucao','em execuÃ§Ã£o','aberto','pendente'], true)) {
+            $aluguer_stats['ativos']++;
+        }
+    }
+    $aluguer_stats['vagas_ocupadas'] = 0;
+    foreach($aluguer_est_data as $estSt) {
+        if(strtolower(trim((string) ($estSt['status_vaga'] ?? ''))) === 'ocupada') {
+            $aluguer_stats['vagas_ocupadas']++;
+        }
+        $valorLinha = (float) ($estSt['valor_cobrado'] ?? 0);
+        $dataLinha = (string) ($estSt['data_saida'] ?? $estSt['data_entrada'] ?? '');
+        if($dataLinha !== '') {
+            $tsLinha = strtotime($dataLinha);
+            if($tsLinha !== false) {
+                if(date('Y-m-d', $tsLinha) === date('Y-m-d')) $aluguer_stats['receita_dia'] += $valorLinha;
+                if(date('Y-m', $tsLinha) === date('Y-m')) $aluguer_stats['receita_mes'] += $valorLinha;
+            }
+        }
+    }
+    $aluguer_stats['vagas_disponiveis'] = max(0, 40 - (int) $aluguer_stats['vagas_ocupadas']);
+    foreach($aluguer_pg_data as $pgSt) {
+        $valorTotalPg = (float) (($pgSt['total'] ?? null) !== null ? $pgSt['total'] : ($pgSt['valor'] ?? 0));
+        $dataEmissaoPg = (string) ($pgSt['data_emissao'] ?? $pgSt['criado_em'] ?? '');
+        if($dataEmissaoPg !== '') {
+            $tsPg = strtotime($dataEmissaoPg);
+            if($tsPg !== false && date('Y-m', $tsPg) === date('Y-m')) {
+                $aluguer_stats['faturado_mes'] += $valorTotalPg;
+            }
+        }
+        $statusPgNorm = strtolower(trim((string) ($pgSt['status'] ?? '')));
+        if($statusPgNorm === 'pago') {
+            $dataPagTs = strtotime((string) ($pgSt['data_pagamento'] ?? $pgSt['criado_em'] ?? ''));
+            if($dataPagTs !== false && date('Y-m', $dataPagTs) === date('Y-m')) $aluguer_stats['recebido_mes'] += $valorTotalPg;
+        } elseif(in_array($statusPgNorm, ['pendente','atrasado'], true)) {
+            $aluguer_stats['pendentes']++;
+            $vencTs = strtotime((string) ($pgSt['vencimento'] ?? ''));
+            if($vencTs !== false && $vencTs < strtotime(date('Y-m-d'))) {
+                $aluguer_stats['vencidos']++;
+            }
+        }
+    }
+
+    $aluguer_dashboard['receita_total'] = $aluguer_stats['receita_mes'] + $aluguer_stats['faturado_mes'];
+    $aluguer_dashboard['ocupacao_percent'] = ($aluguer_stats['vagas_ocupadas'] + $aluguer_stats['vagas_disponiveis']) > 0
+        ? round(($aluguer_stats['vagas_ocupadas'] / ($aluguer_stats['vagas_ocupadas'] + $aluguer_stats['vagas_disponiveis'])) * 100, 2)
+        : 0.0;
+    $aluguer_dashboard['alertas_vencidos'] = (int) $aluguer_stats['vencidos'];
+    $aluguer_dashboard['alertas_manutencao'] = 0;
+    foreach($aluguer_ativos_data as $aSt) {
+        if((int) ($aSt['proxima_manutencao_km'] ?? 0) > 0) {
+            $aluguer_dashboard['alertas_manutencao']++;
+        }
+    }
+
+    $stTopAtivos = $pdo->query("
+        SELECT COALESCE(NULLIF(TRIM(viatura_id), ''), 'Sem Ativo') AS ativo, COUNT(*) AS total
+        FROM transporte_guias
+        WHERE tipo_servico = 'Aluguer'
+        GROUP BY COALESCE(NULLIF(TRIM(viatura_id), ''), 'Sem Ativo')
+        ORDER BY total DESC
+        LIMIT 5
+    ");
+    $aluguer_dashboard['ativos_mais_alugados'] = $stTopAtivos ? ($stTopAtivos->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stTopClientes = $pdo->query("
+        SELECT COALESCE(NULLIF(TRIM(empresa_cliente), ''), 'Sem Cliente') AS cliente, COUNT(*) AS total
+        FROM transporte_guias
+        WHERE tipo_servico = 'Aluguer'
+        GROUP BY COALESCE(NULLIF(TRIM(empresa_cliente), ''), 'Sem Cliente')
+        ORDER BY total DESC
+        LIMIT 5
+    ");
+    $aluguer_dashboard['clientes_mais_ativos'] = $stTopClientes ? ($stTopClientes->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    $stFaturamento = $pdo->query("
+        SELECT DATE_FORMAT(COALESCE(data_emissao, criado_em), '%Y-%m') AS periodo, SUM(COALESCE(total, valor, 0)) AS total
+        FROM transporte_aluguer_pagamentos
+        GROUP BY DATE_FORMAT(COALESCE(data_emissao, criado_em), '%Y-%m')
+        ORDER BY periodo DESC
+        LIMIT 6
+    ");
+    $fatRows = $stFaturamento ? ($stFaturamento->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+    $aluguer_dashboard['faturamento_mensal'] = array_reverse($fatRows);
+}
 if($tab === 'gestao_frota' && $view === 'combustivel' && $mode === 'list') {
-    $listRangeFuel = trim((string) ($_GET['list_range'] ?? 'last_os'));
+    $listRangeFuel = trim((string) ($_GET['list_range'] ?? 'all'));
     $listCustomFuel = isset($_GET['list_custom']) ? (int) $_GET['list_custom'] : 0;
     $whereFuel = [];
     if($listRangeFuel === 'today') {
         $whereFuel[] = "data_movimento = CURDATE()";
-        $whereFuel[] = "ordem_servico_id IS NOT NULL";
     } elseif($listRangeFuel === 'custom' && $listCustomFuel > 0) {
         $diasCustom = max(1, $listCustomFuel);
         $whereFuel[] = "data_movimento >= DATE_SUB(CURDATE(), INTERVAL {$diasCustom} DAY)";
-        $whereFuel[] = "ordem_servico_id IS NOT NULL";
     } elseif($listRangeFuel === 'first_os' || $listRangeFuel === 'last_os') {
         $whereFuel[] = "ordem_servico_id IS NOT NULL";
+    } elseif($listRangeFuel === 'externo') {
+        $whereFuel[] = "ordem_servico_id IS NULL";
     } elseif($listRangeFuel === 'all') {
         // todos os registos (OS + manuais)
     } else {
-        $whereFuel[] = "ordem_servico_id IS NOT NULL";
+        // fallback: todos os registos
+    }
+    $paramsDieselLista = [];
+    if($filtro_projeto_diesel !== '') {
+        if($filtro_projeto_diesel_nome !== '') {
+            $whereFuel[] = "(projeto = :projeto_codigo OR projeto = :projeto_nome)";
+            $paramsDieselLista[':projeto_codigo'] = $filtro_projeto_diesel;
+            $paramsDieselLista[':projeto_nome'] = $filtro_projeto_diesel_nome;
+        } else {
+            $whereFuel[] = "projeto = :projeto";
+            $paramsDieselLista[':projeto'] = $filtro_projeto_diesel;
+        }
     }
     $sqlFuel = "
         SELECT id, codigo, data_movimento, projeto, tipo_movimento, documento_ref, ordem_servico_id, origem_registo, viatura_id, motorista, litros, valor_total, responsavel, criado_em
@@ -3677,8 +6002,16 @@ if($tab === 'gestao_frota' && $view === 'combustivel' && $mode === 'list') {
         $sqlFuel .= " WHERE " . implode(" AND ", $whereFuel);
     }
     $sqlFuel .= ($listRangeFuel === 'first_os') ? " ORDER BY id ASC" : " ORDER BY id DESC";
-    $dieselStmt = $pdo->query($sqlFuel);
-    $lista_diesel = $dieselStmt ? $dieselStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $dieselStmt = $pdo->prepare($sqlFuel);
+    $dieselStmt->execute($paramsDieselLista);
+    $lista_diesel = $dieselStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $resumo_diesel_filtrado['registos'] = count($lista_diesel);
+    foreach($lista_diesel as $dLinha) {
+        if(strtolower((string) ($dLinha['tipo_movimento'] ?? '')) === 'saida') {
+            $resumo_diesel_filtrado['litros_saida'] += (float) ($dLinha['litros'] ?? 0);
+        }
+    }
 
     $resumoStmt = $pdo->query("
         SELECT
@@ -3700,6 +6033,20 @@ if($tab === 'gestao_frota' && $view === 'combustivel' && $mode === 'list') {
 }
 
 if($tab === 'gestao_frota' && $view === 'combustivel') {
+    $projDieselStmt = $pdo->query("
+        SELECT DISTINCT projeto
+        FROM (
+            SELECT projeto FROM transporte_mapa_diesel
+            UNION
+            SELECT codigo AS projeto FROM transporte_projectos
+            UNION
+            SELECT nome AS projeto FROM transporte_projectos
+        ) p
+        WHERE COALESCE(TRIM(projeto), '') <> ''
+        ORDER BY projeto ASC
+    ");
+    $projetos_diesel = $projDieselStmt ? ($projDieselStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
+
     $osDieselListaStmt = $pdo->query("
         SELECT g.id, g.projeto, g.viatura_id, g.condutor, g.km_saida, g.km_chegada, g.quantidade_inicial_l,
                c.km_momento, c.litros_abastecidos
@@ -4005,11 +6352,16 @@ $filtro_consumo = [
     'order_id' => 0,
     'q' => ''
 ];
+$periodo_relatorio_consumo = 'Mensal';
 $resumo_relatorio_consumo = [
     'total_valor' => 0.0,
     'total_litros' => 0.0,
     'total_registos' => 0
 ];
+$resumo_relatorio_fontes = [];
+$resumo_consumo_projetos = [];
+$resumo_consumo_viaturas = [];
+$resumo_consumo_motoristas = [];
 if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list') {
     $range = trim((string) ($_GET['list_range'] ?? 'monthly'));
     if(!in_array($range, ['today','weekly','monthly','custom','all'], true)) $range = 'monthly';
@@ -4027,6 +6379,14 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
         'order_id' => $orderIdFilter,
         'q' => $searchQ
     ];
+    $rangeLabels = [
+        'today' => 'DiÃ¡rio',
+        'weekly' => 'Semanal',
+        'monthly' => 'Mensal',
+        'custom' => 'Personalizado',
+        'all' => 'Todos'
+    ];
+    $periodo_relatorio_consumo = $rangeLabels[$range] ?? 'Mensal';
 
     $precoMedioDieselStmt = $pdo->query("
         SELECT COALESCE(SUM(valor_total) / NULLIF(SUM(litros), 0), 0)
@@ -4100,8 +6460,11 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
             'detalhe' => (string) (($r['viatura_id'] ?? '') . ' / ' . ($r['condutor'] ?? '')),
+            'viatura' => (string) ($r['viatura_id'] ?? ''),
+            'responsavel' => (string) ($r['condutor'] ?? ''),
             'litros' => $litros,
-            'valor' => $valor
+            'valor' => $valor,
+            'custo_litro' => $litros > 0 ? ($valor / $litros) : 0.0
         ];
     }
 
@@ -4132,8 +6495,11 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
             'detalhe' => (string) (($r['viatura_id'] ?? '') . ' / ' . ($r['motorista'] ?? '')),
+            'viatura' => (string) ($r['viatura_id'] ?? ''),
+            'responsavel' => (string) ($r['motorista'] ?? ''),
             'litros' => (float) ($r['litros'] ?? 0),
-            'valor' => (float) ($r['valor_total'] ?? 0)
+            'valor' => (float) ($r['valor_total'] ?? 0),
+            'custo_litro' => ((float) ($r['litros'] ?? 0)) > 0 ? (((float) ($r['valor_total'] ?? 0)) / ((float) ($r['litros'] ?? 0))) : 0.0
         ];
     }
 
@@ -4166,8 +6532,11 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             'projeto' => (string) ($r['projeto'] ?? ''),
             'ordem_servico_id' => (int) ($r['ordem_servico_id'] ?? 0),
             'detalhe' => (string) ('Item: ' . ($r['item_nome'] ?? '') . ' | Qtd: ' . number_format((float) ($r['quantidade'] ?? 0), 2, ',', '.')),
+            'viatura' => (string) ($r['item_nome'] ?? ''),
+            'responsavel' => '',
             'litros' => 0.0,
-            'valor' => (float) ($r['valor_total'] ?? 0)
+            'valor' => (float) ($r['valor_total'] ?? 0),
+            'custo_litro' => 0.0
         ];
     }
 
@@ -4198,8 +6567,11 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             'projeto' => '',
             'ordem_servico_id' => 0,
             'detalhe' => (string) (($r['item_nome'] ?? '') . ' | ' . number_format((float) ($r['quantidade_solicitada'] ?? 0), 2, ',', '.') . ' ' . ($r['unidade'] ?? '') . ' | ' . ($r['fornecedor_escolhido'] ?? '') . ' | ' . ($r['moeda'] ?? 'MZN')),
+            'viatura' => (string) ($r['item_nome'] ?? ''),
+            'responsavel' => (string) ($r['fornecedor_escolhido'] ?? ''),
             'litros' => 0.0,
-            'valor' => (float) ($r['valor_total_estimado'] ?? 0)
+            'valor' => (float) ($r['valor_total_estimado'] ?? 0),
+            'custo_litro' => 0.0
         ];
     }
 
@@ -4232,8 +6604,11 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             'projeto' => '',
             'ordem_servico_id' => 0,
             'detalhe' => (string) (($r['ativo_desc'] ?? '') . (!empty($r['matricula']) ? ' | ' . $r['matricula'] : '') . ' | ' . ($r['tipo_evento'] ?? '') . ' | ' . ($r['descricao_falha'] ?? '')),
+            'viatura' => (string) (!empty($r['matricula']) ? $r['matricula'] : ($r['ativo_desc'] ?? '')),
+            'responsavel' => (string) ($r['tipo_evento'] ?? ''),
             'litros' => 0.0,
-            'valor' => (float) ($r['custo_estimado'] ?? 0)
+            'valor' => (float) ($r['custo_estimado'] ?? 0),
+            'custo_litro' => 0.0
         ];
     }
 
@@ -4254,6 +6629,351 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
         'total_litros' => $totalLitros,
         'total_registos' => count($lista_relatorio_consumo)
     ];
+    foreach($lista_relatorio_consumo as $lcResumo) {
+        $fonteResumo = (string) ($lcResumo['fonte'] ?? 'Outros');
+        if(!isset($resumo_relatorio_fontes[$fonteResumo])) {
+            $resumo_relatorio_fontes[$fonteResumo] = [
+                'registos' => 0,
+                'valor' => 0.0,
+                'litros' => 0.0
+            ];
+        }
+        $resumo_relatorio_fontes[$fonteResumo]['registos']++;
+        $resumo_relatorio_fontes[$fonteResumo]['valor'] += (float) ($lcResumo['valor'] ?? 0);
+        $resumo_relatorio_fontes[$fonteResumo]['litros'] += (float) ($lcResumo['litros'] ?? 0);
+
+        $projKey = trim((string) ($lcResumo['projeto'] ?? ''));
+        if($projKey === '') $projKey = 'SEM PROJETO';
+        if(!isset($resumo_consumo_projetos[$projKey])) {
+            $resumo_consumo_projetos[$projKey] = ['litros' => 0.0, 'valor' => 0.0, 'registos' => 0];
+        }
+        $resumo_consumo_projetos[$projKey]['litros'] += (float) ($lcResumo['litros'] ?? 0);
+        $resumo_consumo_projetos[$projKey]['valor'] += (float) ($lcResumo['valor'] ?? 0);
+        $resumo_consumo_projetos[$projKey]['registos']++;
+
+        $viatKey = trim((string) ($lcResumo['viatura'] ?? ''));
+        if($viatKey !== '') {
+            if(!isset($resumo_consumo_viaturas[$viatKey])) {
+                $resumo_consumo_viaturas[$viatKey] = ['litros' => 0.0, 'valor' => 0.0, 'registos' => 0];
+            }
+            $resumo_consumo_viaturas[$viatKey]['litros'] += (float) ($lcResumo['litros'] ?? 0);
+            $resumo_consumo_viaturas[$viatKey]['valor'] += (float) ($lcResumo['valor'] ?? 0);
+            $resumo_consumo_viaturas[$viatKey]['registos']++;
+        }
+
+        $respKey = trim((string) ($lcResumo['responsavel'] ?? ''));
+        if($respKey !== '') {
+            if(!isset($resumo_consumo_motoristas[$respKey])) {
+                $resumo_consumo_motoristas[$respKey] = ['litros' => 0.0, 'valor' => 0.0, 'registos' => 0];
+            }
+            $resumo_consumo_motoristas[$respKey]['litros'] += (float) ($lcResumo['litros'] ?? 0);
+            $resumo_consumo_motoristas[$respKey]['valor'] += (float) ($lcResumo['valor'] ?? 0);
+            $resumo_consumo_motoristas[$respKey]['registos']++;
+        }
+    }
+
+    uasort($resumo_consumo_projetos, static fn($a, $b) => (($b['litros'] <=> $a['litros']) ?: ($b['valor'] <=> $a['valor'])));
+    uasort($resumo_consumo_viaturas, static fn($a, $b) => (($b['litros'] <=> $a['litros']) ?: ($b['valor'] <=> $a['valor'])));
+    uasort($resumo_consumo_motoristas, static fn($a, $b) => (($b['litros'] <=> $a['litros']) ?: ($b['valor'] <=> $a['valor'])));
+}
+
+if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list') {
+    $docRelatorio = trim((string) ($_GET['doc'] ?? ''));
+    if(in_array($docRelatorio, ['relatorio_consumo_excel', 'relatorio_consumo_pdf'], true)) {
+        $isExcelRelatorio = $docRelatorio === 'relatorio_consumo_excel';
+        $mesesPt = [
+            1 => 'JANEIRO', 2 => 'FEVEREIRO', 3 => 'MARCO', 4 => 'ABRIL', 5 => 'MAIO', 6 => 'JUNHO',
+            7 => 'JULHO', 8 => 'AGOSTO', 9 => 'SETEMBRO', 10 => 'OUTUBRO', 11 => 'NOVEMBRO', 12 => 'DEZEMBRO'
+        ];
+        $mesNumeroRelatorio = (int) date('n');
+        if(($filtro_consumo['range'] ?? 'monthly') === 'monthly') {
+            foreach($lista_relatorio_consumo as $linhaMesRef) {
+                if(!empty($linhaMesRef['data_ref'])) {
+                    $mesNumeroRelatorio = (int) date('n', strtotime((string) $linhaMesRef['data_ref']));
+                    break;
+                }
+            }
+        }
+        $mesNomeRelatorio = $mesesPt[$mesNumeroRelatorio] ?? strtoupper(date('F'));
+        $resumoPorProjeto = [];
+        foreach($lista_relatorio_consumo as $rcProjeto) {
+            $nomeProjeto = trim((string) ($rcProjeto['projeto'] ?? ''));
+            if($nomeProjeto === '') {
+                $nomeProjeto = 'SEM PROJETO';
+            }
+            if(!isset($resumoPorProjeto[$nomeProjeto])) {
+                $resumoPorProjeto[$nomeProjeto] = ['litros' => 0.0, 'valor' => 0.0];
+            }
+            $resumoPorProjeto[$nomeProjeto]['litros'] += (float) ($rcProjeto['litros'] ?? 0);
+            $resumoPorProjeto[$nomeProjeto]['valor'] += (float) ($rcProjeto['valor'] ?? 0);
+        }
+        ksort($resumoPorProjeto, SORT_NATURAL | SORT_FLAG_CASE);
+
+        if($isExcelRelatorio) {
+            header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="relatorio_geral_frota_' . date('Ymd_His') . '.xls"');
+        } else {
+            header('Content-Type: text/html; charset=UTF-8');
+        }
+
+        if($projectFilter !== '') {
+            $whereProjetoMapa = [sqlPeriodoCondicao('d.data_movimento', $range, $customDays), "d.tipo_movimento = 'Saida'", "d.projeto = :project"];
+            $paramsProjetoMapa = [':project' => $projectFilter];
+            if($viaturaFilter !== '') {
+                $whereProjetoMapa[] = "(d.viatura_id = :viatura OR g.matricula = :viatura)";
+                $paramsProjetoMapa[':viatura'] = $viaturaFilter;
+            }
+            if($orderIdFilter > 0) {
+                $whereProjetoMapa[] = "d.ordem_servico_id = :ordem";
+                $paramsProjetoMapa[':ordem'] = $orderIdFilter;
+            }
+            if($searchQ !== '') {
+                $whereProjetoMapa[] = "(d.viatura_id LIKE :q OR g.matricula LIKE :q OR g.atividade_prevista LIKE :q OR d.codigo LIKE :q)";
+                $paramsProjetoMapa[':q'] = '%' . $searchQ . '%';
+            }
+
+            $sqlProjetoMapa = "
+                SELECT
+                    d.id,
+                    d.data_movimento,
+                    d.viatura_id,
+                    d.litros,
+                    d.ordem_servico_id,
+                    d.responsavel,
+                    d.fornecedor,
+                    d.projeto,
+                    d.observacoes,
+                    g.matricula,
+                    g.tipo_equipamento,
+                    g.autorizado_por,
+                    g.atividade_prevista
+                FROM transporte_mapa_diesel d
+                LEFT JOIN transporte_guias g ON g.id = d.ordem_servico_id
+                WHERE " . implode(' AND ', $whereProjetoMapa) . "
+                ORDER BY d.data_movimento ASC, d.id ASC
+            ";
+            $stProjetoMapa = $pdo->prepare($sqlProjetoMapa);
+            foreach($paramsProjetoMapa as $k => $v) {
+                $stProjetoMapa->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
+            }
+            $stProjetoMapa->execute();
+            $rowsProjetoMapa = $stProjetoMapa->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $totalProjetoQtd = 0.0;
+            foreach($rowsProjetoMapa as $rowProjetoMapa) {
+                $totalProjetoQtd += (float) ($rowProjetoMapa['litros'] ?? 0);
+            }
+
+            ob_start();
+            ?>
+            <!doctype html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>Mapa de Controle DiÃ¡rio de Diesel</title>
+                <style>
+                    body{font-family:Arial,sans-serif;color:#000;padding:10px}
+                    .sheet{border:2px solid #111}
+                    .top{display:grid;grid-template-columns:240px 1fr 120px;align-items:center;min-height:70px}
+                    .top-cell{padding:8px 10px;border-bottom:2px solid #111}
+                    .logo img{width:165px}
+                    .title{text-align:center;font-size:24px;font-weight:800}
+                    .stamp{display:flex;justify-content:flex-end}
+                .stamp img{width:62px;height:auto;object-fit:contain}
+                    .proj-bar{display:grid;grid-template-columns:180px 1fr}
+                    .proj-bar > div{padding:7px 10px;border-bottom:2px solid #111;border-right:2px solid #111;font-size:13px}
+                    .proj-bar > div:last-child{border-right:0}
+                    .lbl-yellow{background:#f3bf08;font-weight:800;text-transform:uppercase;text-align:center}
+                    table{width:100%;border-collapse:collapse}
+                    th,td{border:1px solid #111;padding:5px 6px;font-size:12px;text-align:center;vertical-align:top}
+                    th{background:#f3bf08;text-transform:uppercase}
+                    .left{text-align:left}
+                    .total-lbl{background:#f3bf08;font-weight:800}
+                    .obs-wrap{display:grid;grid-template-columns:220px 1fr;margin-top:14px}
+                    .obs-wrap > div{border:2px solid #111;min-height:56px}
+                    .obs-lbl{background:#f3bf08;font-size:12px;font-weight:800;text-transform:uppercase;display:flex;align-items:center;justify-content:center}
+                    .sign-wrap{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:20px}
+                    .sign-head{background:#f3bf08;border:2px solid #111;border-bottom:0;text-align:center;padding:6px;font-size:12px;font-weight:800;text-transform:uppercase}
+                    .sign-line{border:2px solid #111;height:28px}
+                </style>
+            </head>
+            <body>
+            <div class="sheet">
+                <div class="top">
+                    <div class="top-cell logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                    <div class="top-cell title">MAPA DE CONTROLE DIARIO DE DIESEL</div>
+                    <div class="top-cell stamp"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                </div>
+                <div class="proj-bar">
+                    <div class="lbl-yellow">Projecto</div>
+                    <div><strong><?= htmlspecialchars(strtoupper($projectFilter)) ?></strong></div>
+                </div>
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Data de Abastecimento</th>
+                        <th>MatrÃ­cula</th>
+                        <th>Quantidade</th>
+                        <th>NÃºmero de</th>
+                        <th>MÃ¡quinas/Viaturas</th>
+                        <th>Solicitante</th>
+                        <th>Fornecedor</th>
+                        <th>Projecto</th>
+                        <th>Actividade</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php if(empty($rowsProjetoMapa)): ?>
+                        <tr><td colspan="9">SEM REGISTOS PARA OS FILTROS APLICADOS</td></tr>
+                    <?php else: ?>
+                        <?php foreach($rowsProjetoMapa as $rowProjetoMapa): ?>
+                            <?php
+                                $matriculaMapa = trim((string) ($rowProjetoMapa['matricula'] ?? ''));
+                                if($matriculaMapa === '') $matriculaMapa = (string) ($rowProjetoMapa['viatura_id'] ?? '-');
+                                $tipoMapa = strtoupper(trim((string) ($rowProjetoMapa['tipo_equipamento'] ?? 'VIATURA')));
+                                $solicitanteMapa = trim((string) ($rowProjetoMapa['autorizado_por'] ?? ''));
+                                if($solicitanteMapa === '') $solicitanteMapa = trim((string) ($rowProjetoMapa['responsavel'] ?? '-'));
+                                $fornecedorMapa = trim((string) ($rowProjetoMapa['fornecedor'] ?? ''));
+                                if($fornecedorMapa === '') $fornecedorMapa = 'B. VILCON';
+                                $atividadeMapa = trim((string) ($rowProjetoMapa['atividade_prevista'] ?? ''));
+                                if($atividadeMapa === '') $atividadeMapa = trim((string) ($rowProjetoMapa['observacoes'] ?? '-'));
+                                $numeroMapa = ((int) ($rowProjetoMapa['ordem_servico_id'] ?? 0) > 0)
+                                    ? (string) ((int) ($rowProjetoMapa['ordem_servico_id'] ?? 0))
+                                    : (string) ((int) ($rowProjetoMapa['id'] ?? 0));
+                            ?>
+                            <tr>
+                                <td><?= !empty($rowProjetoMapa['data_movimento']) ? htmlspecialchars(date('d/m/Y', strtotime((string) $rowProjetoMapa['data_movimento']))) : '-' ?></td>
+                                <td><?= htmlspecialchars($matriculaMapa) ?></td>
+                                <td><?= number_format((float) ($rowProjetoMapa['litros'] ?? 0), 0, '', '') ?></td>
+                                <td><?= htmlspecialchars($numeroMapa) ?></td>
+                                <td><?= htmlspecialchars($tipoMapa) ?></td>
+                                <td><?= htmlspecialchars($solicitanteMapa) ?></td>
+                                <td><strong><?= htmlspecialchars(strtoupper($fornecedorMapa)) ?></strong></td>
+                                <td><?= htmlspecialchars(strtoupper((string) ($rowProjetoMapa['projeto'] ?? $projectFilter))) ?></td>
+                                <td class="left"><?= htmlspecialchars(strtoupper($atividadeMapa)) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    <tr>
+                        <td class="total-lbl">TOTAL</td>
+                        <td></td>
+                        <td class="total-lbl"><?= number_format($totalProjetoQtd, 0, '', '') ?></td>
+                        <td colspan="6"></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="obs-wrap">
+                <div class="obs-lbl">ObservaÃ§Ãµes/ConstataÃ§Ãµes</div>
+                <div></div>
+            </div>
+            <div class="sign-wrap">
+                <div>
+                    <div class="sign-head">Gestor de Frotas</div>
+                    <div class="sign-line"></div>
+                </div>
+                <div>
+                    <div class="sign-head">Gestor de Projecto</div>
+                    <div class="sign-line"></div>
+                </div>
+            </div>
+            <?= $isExcelRelatorio ? '' : '<script>window.print();</script>' ?>
+            </body>
+            </html>
+            <?php
+            echo ob_get_clean();
+            exit();
+        }
+
+        ob_start();
+        ?>
+        <!doctype html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Resumo de Diesel</title>
+            <style>
+                body{font-family:Arial,sans-serif;color:#000;padding:10px}
+                .sheet{border:2px solid #111}
+                .top{display:grid;grid-template-columns:240px 1fr 120px;align-items:center;min-height:82px}
+                .top-cell{padding:10px;border-bottom:2px solid #111}
+                .logo img{width:170px}
+                .title{text-align:center;font-size:28px;font-weight:800;letter-spacing:.5px}
+                .stamp{display:flex;justify-content:flex-end;align-items:center}
+                .stamp img{width:62px;height:auto;object-fit:contain}
+                .meta{display:grid;grid-template-columns:150px 1fr 160px 1fr;align-items:center}
+                .meta > div{padding:8px 10px;border-right:2px solid #111;border-bottom:2px solid #111;font-size:13px}
+                .meta > div:last-child{border-right:0}
+                .meta-lbl{background:#f3bf08;font-weight:800;text-transform:uppercase;text-align:center}
+                .blank-space{height:90px;border-bottom:2px solid #111}
+                table{width:100%;border-collapse:collapse}
+                th,td{border:2px solid #111;padding:6px 8px;text-align:center;font-size:16px}
+                th{background:#f3bf08;color:#000;text-transform:uppercase}
+                .text-right{text-align:right}
+                .total-lbl{background:#f3bf08;font-weight:800}
+                .total-val{background:#ef1212;color:#000;font-weight:800}
+                .footer-sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;margin-top:34px}
+                .sign{text-align:center}
+                .sign .lbl{font-size:16px;font-weight:700;text-transform:uppercase}
+                .line{margin:28px auto 0 auto;border-top:2px solid #111;width:82%}
+            </style>
+        </head>
+        <body>
+        <div class="sheet">
+            <div class="top">
+                <div class="top-cell logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                <div class="top-cell title">RESUMO DE DIESEL</div>
+                <div class="top-cell stamp">
+                    <img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate">
+                </div>
+            </div>
+            <div class="meta">
+                <div class="meta-lbl">Departamento</div>
+                <div><strong>TRANSPORTE</strong></div>
+                <div class="meta-lbl">MÃªs</div>
+                <div><strong><?= htmlspecialchars($mesNomeRelatorio) ?></strong></div>
+            </div>
+            <div class="blank-space"></div>
+            <table>
+                <thead>
+                <tr>
+                    <th>Projetos</th>
+                    <th>Consumo de Combustivel (L)</th>
+                    <th>Valor em Metical (MT)</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if(empty($resumoPorProjeto)): ?>
+                    <tr><td colspan="3">SEM REGISTOS PARA OS FILTROS APLICADOS</td></tr>
+                <?php else: ?>
+                    <?php foreach($resumoPorProjeto as $projNome => $totaisProj): ?>
+                        <tr>
+                            <td><?= htmlspecialchars((string) $projNome) ?></td>
+                            <td><?= number_format((float) ($totaisProj['litros'] ?? 0), 0, '', '') ?></td>
+                            <td><?= number_format((float) ($totaisProj['valor'] ?? 0), 2, '.', '') ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                <tr>
+                    <td class="total-lbl">TOTAL</td>
+                    <td class="total-val"><?= number_format((float) ($resumo_relatorio_consumo['total_litros'] ?? 0), 0, '', '') ?></td>
+                    <td class="total-val"><?= number_format((float) ($resumo_relatorio_consumo['total_valor'] ?? 0), 2, '.', '') ?></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="footer-sign">
+            <div class="sign"><div class="lbl">Gestor de Frota</div><div class="line"></div></div>
+            <div class="sign"><div class="lbl">Directora Financeira</div><div class="line"></div></div>
+            <div class="sign"><div class="lbl">Director Geral</div><div class="line"></div></div>
+        </div>
+        <?= $isExcelRelatorio ? '' : '<script>window.print();</script>' ?>
+        </body>
+        </html>
+        <?php
+        echo ob_get_clean();
+        exit();
+    }
 }
 
 $os_para_relatorio = [];
@@ -4435,23 +7155,6 @@ if($tab === 'transporte' && $view === 'presencas') {
         .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .history-table th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid var(--border); text-transform: uppercase; color: #777; font-size: 10px; }
         .history-table td { padding: 12px; border-bottom: 1px solid #eee; }
-        .week-choice { display:flex; align-items:center; justify-content:center; cursor:pointer; min-height:22px; position:relative; }
-        .week-choice input { position:absolute; opacity:0; pointer-events:none; }
-        .week-choice .week-mark {
-            display:inline-flex;
-            width:18px;
-            height:18px;
-            border:1px solid #666;
-            border-radius:50%;
-            align-items:center;
-            justify-content:center;
-            font-weight:800;
-            font-size:10px;
-            line-height:1;
-            color:transparent;
-            background:#fff;
-        }
-        .week-choice input:checked + .week-mark { color:#111; }
         .btn-print { background: #2c3e50; color: #fff; border: none; }
         .calc-note { font-size: 11px; color: #666; margin-top: 4px; }
         .relatorio-print-sheet { display:none; border:1px solid #222; background:#fff; color:#111; padding:12px; }
@@ -4475,6 +7178,34 @@ if($tab === 'transporte' && $view === 'presencas') {
         .stock-action-btn { width:30px; height:30px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:#fff3e6; color:#d97706; border:1px solid #ffd59a; text-decoration:none; }
         .stock-action-btn:hover { background:#ffe9cc; }
         .stock-form-banner { background: linear-gradient(135deg, #fff7e8 0%, #fff1d6 100%); border:1px solid #ffd89c; border-radius:10px; padding:10px 12px; margin-bottom:14px; color:#7a4a00; font-size:12px; font-weight:700; display:flex; align-items:center; gap:8px; }
+        .top-bar {
+            min-height: 70px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 0 24px;
+            background: #ffffff;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .top-bar h2 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.2;
+            color: #111827;
+        }
+        .top-bar .user-info {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+        .top-bar .user-info strong {
+            color: #111827;
+            font-weight: 700;
+        }
 
         @media print {
             .sidebar, .header-section, .sub-tab-container, .inner-nav .btn-mode, .inner-nav .btn-print, .btn-save { display: none !important; }
@@ -4491,6 +7222,21 @@ if($tab === 'transporte' && $view === 'presencas') {
 <?php require __DIR__ . '/app/includes/sidebar.php'; ?>
 
 <div class="main-content">
+    <?php
+    $topTitleTransporte = 'Transporte';
+    if ($tab === 'hse') $topTitleTransporte = 'HSE';
+    elseif ($tab === 'gestao_frota') $topTitleTransporte = 'GestÃ£o de Frota';
+    elseif ($tab === 'aluguer') $topTitleTransporte = 'Aluguer de Equipamentos';
+    elseif ($tab === 'frentista') $topTitleTransporte = 'Frentista';
+    ?>
+    <div class="top-bar">
+        <h2><?= htmlspecialchars($topTitleTransporte, ENT_QUOTES, 'UTF-8') ?></h2>
+        <div class="user-info">
+            <i class="fa-regular fa-user"></i>
+            <strong><?= htmlspecialchars($_SESSION['usuario_nome'] ?? 'Utilizador') ?></strong>
+        </div>
+    </div>
+
     <div class="header-section">
         <?php if(false): ?>
         <div class="tab-menu">
@@ -4502,7 +7248,7 @@ if($tab === 'transporte' && $view === 'presencas') {
             <a href="?tab=gestao_frota" class="tab-btn <?= $tab == 'gestao_frota' ? 'active' : '' ?>"><i class="fas fa-shuttle-van"></i> GestÃ£o de Frota</a>
             
             <!-- Aba principal Aluguer de Equipamentos -->
-            <a href="?tab=aluguer" class="tab-btn <?= $tab == 'aluguer' ? 'active' : '' ?>"><i class="fas fa-truck"></i> Aluguer de Equipamentos</a>
+            <a href="?tab=aluguer&view=estacionamento&mode=list" class="tab-btn <?= $tab == 'aluguer' ? 'active' : '' ?>"><i class="fas fa-truck"></i> Aluguer de Equipamentos</a>
 
             <!-- Nova Aba Frentista -->
             <a href="?tab=frentista" class="tab-btn <?= $tab == 'frentista' ? 'active' : '' ?>"><i class="fas fa-gas-pump"></i> Frentista</a>
@@ -4517,15 +7263,16 @@ if($tab === 'transporte' && $view === 'presencas') {
             <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de ServiÃ§o</a>
             <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de ReparaÃ§Ã£o</a>
             <a href="?tab=transporte&view=presencas&mode=list" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de PresenÃ§as</a>
+            <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
             <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano ManutenÃ§Ã£o</a>
             <a href="?tab=transporte&view=relatorio_atividades&mode=list" class="sub-tab-btn <?= $view == 'relatorio_atividades' ? 'active' : '' ?>">RelatÃ³rio Geral</a>
         
         <?php elseif($tab == 'hse'): ?>
-            <a href="?tab=hse&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
+            <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
         <?php elseif($tab == 'gestao_frota'): ?>
             <!-- Sub-abas de GestÃ£o de Frota -->
             <a href="?tab=gestao_frota&view=recebidos&mode=list" class="sub-tab-btn <?= $view == 'recebidos' ? 'active' : '' ?>">FormulÃ¡rios Recebidos</a>
-            <a href="?tab=gestao_frota&view=combustivel&mode=list" class="sub-tab-btn <?= $view == 'combustivel' ? 'active' : '' ?>">Controle CombustÃ­vel</a>
+            <a href="?tab=gestao_frota&view=projectos&mode=list" class="sub-tab-btn <?= $view == 'projectos' ? 'active' : '' ?>">Projectos</a>
             <a href="?tab=gestao_frota&view=stock&mode=list" class="sub-tab-btn <?= $view == 'stock' ? 'active' : '' ?>">Controle de Stock</a>
             <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">RequisiÃ§Ãµes</a>
             <a href="?tab=gestao_frota&view=operacional&mode=list" class="sub-tab-btn <?= $view == 'operacional' ? 'active' : '' ?>">GestÃ£o Operacional</a>
@@ -4535,6 +7282,7 @@ if($tab === 'transporte' && $view === 'presencas') {
         
         <?php elseif($tab == 'aluguer'): ?>
             <!-- Sub-abas de Aluguer de Equipamentos -->
+            <a href="?tab=aluguer&view=estacionamento&mode=list" class="sub-tab-btn <?= $view == 'estacionamento' ? 'active' : '' ?>">Estacionamento</a>
             <a href="?tab=aluguer&view=viaturas_maquinas&mode=list" class="sub-tab-btn <?= $view == 'viaturas_maquinas' ? 'active' : '' ?>">Viaturas e MÃ¡quinas</a>
             <a href="?tab=aluguer&view=timesheets&mode=list" class="sub-tab-btn <?= $view == 'timesheets' ? 'active' : '' ?>">Timesheets</a>
             <a href="?tab=aluguer&view=pagamentos&mode=list" class="sub-tab-btn <?= $view == 'pagamentos' ? 'active' : '' ?>">Pagamentos</a>
@@ -4542,37 +7290,284 @@ if($tab === 'transporte' && $view === 'presencas') {
 
         <?php elseif($tab == 'frentista'): ?>
             <!-- Sub-abas de Frentista -->
-            <a href="?tab=frentista&view=lista&mode=list" class="sub-tab-btn <?= $view == 'lista' ? 'active' : '' ?>">Lista Frentistas</a>
-            <a href="?tab=frentista&view=tarefas&mode=list" class="sub-tab-btn <?= $view == 'tarefas' ? 'active' : '' ?>">Tarefas / Abastecimentos</a>
+            <a href="?tab=frentista&view=tarefas&mode=list" class="sub-tab-btn <?= $view == 'tarefas' ? 'active' : '' ?>">Painel de Abastecimentos</a>
+            <a href="?tab=frentista&view=abastecimentos&mode=list" class="sub-tab-btn <?= $view == 'abastecimentos' ? 'active' : '' ?>">Abastecimentos</a>
         <?php endif; ?>
     </div> 
 
     <?php
     // Mapa de views por tab
     $tab_map = [
-        'transporte' => ['reservas','entrada','pedido_reparacao','presencas','plano_manutencao','relatorio_atividades'],
+        'transporte' => ['reservas','entrada','pedido_reparacao','presencas','checklist','plano_manutencao','relatorio_atividades'],
         'hse' => ['checklist'],
-        'gestao_frota' => ['recebidos','combustivel','stock','requisicoes','operacional','relatorio_consumo','todos','pendentes','aprovados','rejeitados'],
-        'aluguer' => ['viaturas_maquinas','timesheets','pagamentos','clientes'],
-        'frentista' => ['lista','tarefas']
+        'gestao_frota' => ['recebidos','projectos','combustivel','stock','requisicoes','operacional','relatorio_consumo','todos','pendentes','aprovados','rejeitados'],
+        'aluguer' => ['estacionamento','viaturas_maquinas','timesheets','pagamentos','clientes','modulo'],
+        'frentista' => ['tarefas','abastecimentos']
     ];
 
-    if($mode == 'list' && isset($tab_map[$tab]) && in_array($view, $tab_map[$tab])): ?>
+    $view_title_map = [
+        'transporte' => [
+            'reservas' => 'Reservas',
+            'entrada' => 'Ordem de ServiÃ§o',
+            'pedido_reparacao' => 'Pedido de ReparaÃ§Ã£o',
+            'presencas' => 'Controle de PresenÃ§as',
+            'checklist' => 'Checklist',
+            'plano_manutencao' => 'Plano ManutenÃ§Ã£o',
+            'relatorio_atividades' => 'RelatÃ³rio Geral',
+        ],
+        'hse' => ['checklist' => 'Checklist'],
+        'gestao_frota' => [
+            'recebidos' => 'FormulÃ¡rios Recebidos',
+            'projectos' => 'Projectos',
+            'combustivel' => 'CombustÃ­vel',
+            'stock' => 'Stock',
+            'requisicoes' => 'RequisiÃ§Ãµes',
+            'operacional' => 'Operacional',
+            'relatorio_consumo' => 'RelatÃ³rio Geral',
+            'todos' => 'Todos',
+            'pendentes' => 'Pendentes',
+            'aprovados' => 'Aprovados',
+            'rejeitados' => 'Rejeitados',
+        ],
+        'aluguer' => [
+            'estacionamento' => 'Estacionamento',
+            'viaturas_maquinas' => 'Viaturas e MÃ¡quinas',
+            'timesheets' => 'Timesheets',
+            'pagamentos' => 'Pagamentos',
+            'clientes' => 'Clientes',
+            'modulo' => 'Aluguer de Equipamentos',
+        ],
+        'frentista' => [
+            'tarefas' => 'Painel de Abastecimentos',
+            'abastecimentos' => 'Abastecimentos',
+        ],
+    ];
+    $tituloView = $view_title_map[$tab][$view] ?? str_replace('_', ' ', ucfirst($view));
+
+    $ocultarTituloIntermediario =
+        ($tab === 'transporte' && $view === 'entrada' && $mode === 'form');
+    if($mode !== 'list' && !$ocultarTituloIntermediario && isset($tab_map[$tab]) && in_array($view, $tab_map[$tab], true)): ?>
+        <div class="container" style="margin-top: 14px;">
+            <div class="white-card" style="padding: 14px 18px;">
+                <h3 style="text-transform: uppercase; margin: 0;"><?= htmlspecialchars($tituloView) ?></h3>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <?php if($mode == 'list' && isset($tab_map[$tab]) && in_array($view, $tab_map[$tab])): ?>
         <div class="container">
-            <div class="white-card">
+            <div class="white-card <?= $tab == 'aluguer' ? 'white-card--aluguer' : '' ?>">
+                <?php if($tab == 'aluguer'): ?>
+                    <?php require __DIR__ . '/app/modules/transporte/aluguer_profissional.php'; ?>
+                <?php endif; ?>
+                <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
+                    <?php require __DIR__ . '/app/modules/transporte/relatorios_transporte_moderno.php'; ?>
+                <?php endif; ?>
+                <?php if($tab == 'aluguer' && false): ?>
+                    <?php
+                        $aluguerFrontTab = 'estacionamento';
+                        if($view === 'viaturas_maquinas') $aluguerFrontTab = 'viaturas';
+                        elseif($view === 'timesheets') $aluguerFrontTab = 'timesheets';
+                        elseif($view === 'pagamentos') $aluguerFrontTab = 'pagamentos';
+                        elseif($view === 'clientes') $aluguerFrontTab = 'clientes';
+                    ?>
+                    <style>
+                        .white-card--aluguer{background:transparent!important;border:none!important;box-shadow:none!important;padding:0!important}
+                        .aluguer-enterprise-app{font-family:'Inter','Segoe UI',sans-serif;color:#0f172a}
+                        .aluguer-enterprise-app~*{display:none!important}
+                        .aluguer-shell{background:transparent;border:none;border-radius:0;padding:0}
+                        .aluguer-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+                        .aluguer-head h2{margin:0;font-size:26px}
+                        .aluguer-head p{margin:4px 0 0;color:#64748b;font-size:13px}
+                        .aluguer-actions{display:flex;gap:8px;flex-wrap:wrap}
+                        .aluguer-btn{height:38px;border:1px solid #cbd5e1;border-radius:10px;padding:0 12px;background:#fff;font-size:12px;font-weight:700;cursor:pointer}
+                        .aluguer-btn.primary{background:#0b3b82;border-color:#0b3b82;color:#fff}
+                        .aluguer-kpis{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:10px;margin-top:12px}
+                        .aluguer-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px}
+                        .aluguer-kpi .l{font-size:11px;color:#64748b;text-transform:uppercase;font-weight:700}.aluguer-kpi .v{font-size:28px;font-weight:800}
+                        .aluguer-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+                        .aluguer-tab{padding:8px 12px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;font-size:12px;font-weight:700;cursor:pointer}
+                        .aluguer-tab.active{background:#0f172a;border-color:#0f172a;color:#fff}
+                        .aluguer-panel{display:none}.aluguer-panel.active{display:block}
+                        .aluguer-grid{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:8px;margin-bottom:10px}
+                        .aluguer-grid input,.aluguer-grid select{height:36px;border:1px solid #d6deea;border-radius:9px;padding:0 10px;font-size:12px}
+                        .aluguer-table-wrap{overflow:auto;border:1px solid #e2e8f0;border-radius:12px;background:#fff}
+                        .aluguer-table{width:100%;border-collapse:collapse;min-width:980px}
+                        .aluguer-table th,.aluguer-table td{padding:10px;border-bottom:1px solid #eef2f7;font-size:12px;text-align:left}
+                        .aluguer-table th{font-size:11px;text-transform:uppercase;color:#64748b}
+                        .aluguer-badge{display:inline-flex;align-items:center;height:22px;border-radius:999px;padding:0 9px;font-size:11px;font-weight:700;border:1px solid transparent}
+                        .st-paid{background:#ecfdf3;color:#166534;border-color:#bbf7d0}.st-pending{background:#fff7ed;color:#9a3412;border-color:#fed7aa}.st-late{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+                        .aluguer-empty{padding:24px;text-align:center;color:#64748b;font-size:13px}
+                        .aluguer-note{padding:12px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;font-size:12px}
+                        @media (max-width:900px){.aluguer-kpis{grid-template-columns:1fr}.aluguer-grid{grid-template-columns:1fr}}
+                    </style>
+                    <div class="aluguer-enterprise-app" id="aluguerEnterpriseApp">
+                        <div class="aluguer-shell">
+                            <div class="aluguer-head">
+                                <div>
+                                    <h2>Aluguer de Equipamentos</h2>
+                                    <p>GestÃ£o integrada de estacionamento, viaturas, timesheets, pagamentos e clientes.</p>
+                                </div>
+                                <div class="aluguer-actions">
+                                    <button class="aluguer-btn" type="button" onclick="aluguerExportExcel()"><i class="fa-solid fa-file-excel"></i> Excel</button>
+                                    <button class="aluguer-btn" type="button" onclick="window.print()"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+                                    <button class="aluguer-btn primary" type="button" onclick="aluguerOpenModal('modalAluguer')"><i class="fa-solid fa-plus"></i> Adicionar Novo</button>
+                                </div>
+                            </div>
+                            <?php if(!empty($aluguer_feedback)): ?>
+                                <div style="margin-top:10px;padding:10px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-size:12px;font-weight:700;"><?= htmlspecialchars($aluguer_feedback) ?></div>
+                            <?php endif; ?>
+                            <div class="aluguer-kpis">
+                                <article class="aluguer-kpi"><div class="l">Total de Alugueres</div><div class="v"><?= (int) ($aluguer_stats['total_alugueres'] ?? 0) ?></div></article>
+                                <article class="aluguer-kpi"><div class="l">Equipamentos Ativos</div><div class="v"><?= (int) ($aluguer_stats['ativos'] ?? 0) ?></div></article>
+                                <article class="aluguer-kpi"><div class="l">Vagas Ocupadas</div><div class="v"><?= (int) ($aluguer_stats['vagas_ocupadas'] ?? 0) ?> / <?= (int) ((int)($aluguer_stats['vagas_ocupadas'] ?? 0) + (int)($aluguer_stats['vagas_disponiveis'] ?? 0)) ?></div></article>
+                            </div>
+
+                            <div class="aluguer-tabs">
+                                <button type="button" class="aluguer-tab <?= $aluguerFrontTab === 'estacionamento' ? 'active' : '' ?>" data-a-tab="estacionamento" onclick="aluguerSetTab('estacionamento')">Estacionamento</button>
+                                <button type="button" class="aluguer-tab <?= $aluguerFrontTab === 'viaturas' ? 'active' : '' ?>" data-a-tab="viaturas" onclick="aluguerSetTab('viaturas')">Viaturas e MÃ¡quinas</button>
+                                <button type="button" class="aluguer-tab <?= $aluguerFrontTab === 'timesheets' ? 'active' : '' ?>" data-a-tab="timesheets" onclick="aluguerSetTab('timesheets')">Timesheets</button>
+                                <button type="button" class="aluguer-tab <?= $aluguerFrontTab === 'pagamentos' ? 'active' : '' ?>" data-a-tab="pagamentos" onclick="aluguerSetTab('pagamentos')">Pagamentos</button>
+                                <button type="button" class="aluguer-tab <?= $aluguerFrontTab === 'clientes' ? 'active' : '' ?>" data-a-tab="clientes" onclick="aluguerSetTab('clientes')">Clientes</button>
+                            </div>
+
+                            <section class="aluguer-panel <?= $aluguerFrontTab === 'estacionamento' ? 'active' : '' ?>" data-a-panel="estacionamento">
+                                <div class="aluguer-grid">
+                                    <input type="text" id="estFiltroEq" placeholder="Tipo de equipamento">
+                                    <input type="date" id="estFiltroData">
+                                    <select id="estFiltroStatus"><option value="">Todos status</option><option>Ocupada</option><option>Disponivel</option></select>
+                                    <button class="aluguer-btn" type="button" onclick="aluguerFilter('estacionamento')">Aplicar</button>
+                                    <button class="aluguer-btn" type="button" onclick="aluguerOpenModal('modalEstacionamento')"><i class="fa-solid fa-square-parking"></i> Registar Entrada/SaÃ­da</button>
+                                </div>
+                                <div class="aluguer-table-wrap">
+                                    <table class="aluguer-table" id="tblEstacionamento"><thead><tr><th>ID</th><th>Equipamento</th><th>Categoria</th><th>Placa</th><th>Entrada</th><th>SaÃ­da</th><th>Status</th><th>AÃ§Ãµes</th></tr></thead><tbody></tbody></table>
+                                </div>
+                            </section>
+
+                            <section class="aluguer-panel <?= $aluguerFrontTab === 'viaturas' ? 'active' : '' ?>" data-a-panel="viaturas">
+                                <div class="aluguer-grid">
+                                    <select id="vmFiltroPeriodo"><option value="7">Ãšltimos 7 dias</option><option value="30">MÃªs atual</option><option value="all">Todos</option></select>
+                                    <input type="text" id="vmFiltroCliente" placeholder="Cliente">
+                                    <input type="text" id="vmFiltroCategoria" placeholder="Categoria">
+                                    <input type="text" id="vmBusca" placeholder="Pesquisa rÃ¡pida">
+                                    <button class="aluguer-btn" type="button" onclick="aluguerFilter('viaturas')">Aplicar</button>
+                                </div>
+                                <div class="aluguer-table-wrap">
+                                    <table class="aluguer-table" id="tblViaturas"><thead><tr><th>ID</th><th>Categoria</th><th>Data</th><th>Detalhes</th><th>AÃ§Ãµes</th></tr></thead><tbody></tbody></table>
+                                </div>
+                            </section>
+
+                            <section class="aluguer-panel <?= $aluguerFrontTab === 'timesheets' ? 'active' : '' ?>" data-a-panel="timesheets">
+                                <div class="aluguer-grid">
+                                    <select id="tsFiltroPeriodo"><option value="week">Semana</option><option value="month">MÃªs</option><option value="all">Todos</option></select>
+                                    <input type="text" id="tsBusca" placeholder="Pesquisar">
+                                    <button class="aluguer-btn" type="button" onclick="aluguerFilter('timesheets')">Aplicar</button>
+                                    <button class="aluguer-btn" type="button" onclick="aluguerOpenModal('modalTimesheet')"><i class="fa-solid fa-clock"></i> Registar Horas</button>
+                                </div>
+                                <div class="aluguer-table-wrap">
+                                    <table class="aluguer-table" id="tblTimesheets"><thead><tr><th>ID</th><th>Equipamento</th><th>Data</th><th>Horas</th><th>ResponsÃ¡vel</th><th>AÃ§Ãµes</th></tr></thead><tbody></tbody></table>
+                                </div>
+                            </section>
+
+                            <section class="aluguer-panel <?= $aluguerFrontTab === 'pagamentos' ? 'active' : '' ?>" data-a-panel="pagamentos">
+                                <div class="aluguer-grid">
+                                    <select id="pgFiltroStatus"><option value="">Todos status</option><option>Pago</option><option>Pendente</option><option>Atrasado</option></select>
+                                    <input type="text" id="pgBusca" placeholder="Pesquisar">
+                                    <button class="aluguer-btn" type="button" onclick="aluguerFilter('pagamentos')">Aplicar</button>
+                                    <button class="aluguer-btn" type="button" onclick="aluguerOpenModal('modalPagamento')"><i class="fa-solid fa-money-bill"></i> Registar Pagamento</button>
+                                </div>
+                                <div class="aluguer-table-wrap">
+                                    <table class="aluguer-table" id="tblPagamentos"><thead><tr><th>ID</th><th>Equipamento</th><th>Cliente</th><th>Vencimento</th><th>Valor</th><th>Status</th><th>AÃ§Ãµes</th></tr></thead><tbody></tbody></table>
+                                </div>
+                            </section>
+
+                            <section class="aluguer-panel <?= $aluguerFrontTab === 'clientes' ? 'active' : '' ?>" data-a-panel="clientes">
+                                <div class="aluguer-grid">
+                                    <input type="text" id="cliBusca" placeholder="Pesquisar cliente">
+                                    <button class="aluguer-btn" type="button" onclick="aluguerFilter('clientes')">Aplicar</button>
+                                    <button class="aluguer-btn" type="button" onclick="aluguerOpenModal('modalCliente')"><i class="fa-solid fa-user-plus"></i> Novo Cliente</button>
+                                </div>
+                                <div class="aluguer-table-wrap">
+                                    <table class="aluguer-table" id="tblClientes"><thead><tr><th>ID</th><th>Cliente</th><th>Contacto</th><th>Email</th><th>HistÃ³rico de Alugueres</th><th>AÃ§Ãµes</th></tr></thead><tbody></tbody></table>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <div class="aluguer-modal-pack" style="display:none;">
+                        <form id="modalAluguer" method="POST">
+                            <input type="hidden" name="aluguer_action" value="salvar_aluguer"><input type="hidden" name="aluguer_id" id="aluguerId">
+                            <input name="viatura_id" placeholder="Viatura / MÃ¡quina" required><input name="matricula" placeholder="MatrÃ­cula">
+                            <input name="tipo_equipamento" placeholder="Categoria" required><input name="empresa_cliente" placeholder="Cliente" required>
+                            <input name="condutor" placeholder="Condutor"><input name="projeto" placeholder="Projeto">
+                            <input name="destino_reserva_transporte" placeholder="Destino para Transporte">
+                            <input name="atividade_reserva_transporte" placeholder="Atividade para Transporte">
+                            <select name="enviar_para_transporte"><option value="1">Requisitar ao Transporte: Sim</option><option value="0">Requisitar ao Transporte: NÃ£o</option></select>
+                            <input type="datetime-local" name="data_saida"><select name="status"><option>Pendente</option><option>Ativo</option><option>Concluido</option></select>
+                        </form>
+                        <form id="modalEstacionamento" method="POST">
+                            <input type="hidden" name="aluguer_action" value="salvar_estacionamento"><input type="hidden" name="est_id">
+                            <input type="hidden" name="guia_id"><input name="equipamento" placeholder="Equipamento" required><input name="categoria" placeholder="Categoria"><input name="placa" placeholder="Placa"><select name="status_vaga"><option>Ocupada</option><option>Disponivel</option></select><input type="datetime-local" name="data_entrada"><input type="datetime-local" name="data_saida"><input name="observacoes" placeholder="ObservaÃ§Ãµes">
+                        </form>
+                        <form id="modalTimesheet" method="POST">
+                            <input type="hidden" name="aluguer_action" value="salvar_timesheet"><input type="hidden" name="ts_id"><input type="number" name="guia_id" placeholder="ID Aluguer" required><input type="date" name="data_ref" required><input type="number" step="0.01" name="horas_uso" placeholder="Horas" required><input name="responsavel" placeholder="ResponsÃ¡vel"><input name="observacoes" placeholder="ObservaÃ§Ãµes">
+                        </form>
+                        <form id="modalPagamento" method="POST">
+                            <input type="hidden" name="aluguer_action" value="salvar_pagamento"><input type="hidden" name="pg_id"><input type="number" name="guia_id" placeholder="ID Aluguer" required><input type="number" step="0.01" name="valor" placeholder="Valor" required><select name="moeda"><option>MZN</option><option>USD</option><option>ZAR</option></select><input type="date" name="vencimento"><select name="status_pagamento"><option>Pendente</option><option>Pago</option><option>Atrasado</option></select><input name="referencia" placeholder="ReferÃªncia">
+                        </form>
+                        <form id="modalCliente" method="POST">
+                            <input type="hidden" name="aluguer_action" value="salvar_cliente"><input type="hidden" name="cliente_id"><input name="nome" placeholder="Cliente" required><input name="contacto" placeholder="Contacto"><input type="email" name="email" placeholder="Email"><input name="observacoes" placeholder="ObservaÃ§Ãµes">
+                        </form>
+                    </div>
+
+                    <script>
+                        window.ALUGUER_DATA = {
+                            viaturas: <?= json_encode($aluguer_vm_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
+                            timesheets: <?= json_encode($aluguer_ts_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
+                            pagamentos: <?= json_encode($aluguer_pg_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
+                            estacionamento: <?= json_encode($aluguer_est_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
+                            clientes: <?= json_encode($aluguer_cli_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>
+                        };
+                    </script>
+                    <script>
+                        (function(){
+                            var tabs=document.querySelectorAll('[data-a-tab]'),panels=document.querySelectorAll('[data-a-panel]');
+                            function setTab(key){tabs.forEach(function(t){t.classList.toggle('active',t.getAttribute('data-a-tab')===key)});panels.forEach(function(p){p.classList.toggle('active',p.getAttribute('data-a-panel')===key)});}
+                            window.aluguerSetTab=function(key){setTab(key);};
+                            tabs.forEach(function(t){t.addEventListener('click',function(ev){ev.preventDefault();setTab(t.getAttribute('data-a-tab'));});});
+                            function fmtDate(v){if(!v)return '-';var d=new Date(v);if(isNaN(d.getTime()))return v;return d.toLocaleDateString('pt-PT')+' '+d.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'});}
+                            function badgeStatus(v){var s=(v||'').toLowerCase();if(s==='pago')return '<span class="aluguer-badge st-paid">Pago</span>';if(s==='atrasado')return '<span class="aluguer-badge st-late">Atrasado</span>';if(s==='pendente')return '<span class="aluguer-badge st-pending">Pendente</span>';if(s==='ocupada')return '<span class="aluguer-badge st-late">Ocupada</span>';if(s==='disponivel')return '<span class="aluguer-badge st-paid">DisponÃ­vel</span>';return '<span class="aluguer-badge st-pending">'+(v||'-')+'</span>';}
+                            function rowActions(id,type){return '<button class="aluguer-btn" type="button" onclick="aluguerView('+id+',\\''+type+'\\')"><i class=\"fa-regular fa-eye\"></i></button> <button class="aluguer-btn" type="button" onclick="aluguerDelete('+id+',\\''+type+'\\')"><i class=\"fa-regular fa-trash-can\"></i></button>';}
+                            function emptyHtml(){return '<tr><td colspan=\"8\"><div class=\"aluguer-empty\">Sem registos de aluguer nesta vista. Crie uma Ordem de ServiÃ§o com tipo de serviÃ§o \\\"Aluguer\\\" para alimentar esta lista.</div></td></tr>';}
+                            function renderEst(){var data=window.ALUGUER_DATA.estacionamento||[];var eq=(document.getElementById('estFiltroEq').value||'').toLowerCase();var dt=document.getElementById('estFiltroData').value||'';var st=(document.getElementById('estFiltroStatus').value||'').toLowerCase();data=data.filter(function(r){var okEq=eq===''||((r.categoria||'')+' '+(r.equipamento||'')).toLowerCase().indexOf(eq)!==-1;var okDt=dt===''||String(r.data_entrada||'').slice(0,10)===dt;var okSt=st===''||String(r.status_vaga||'').toLowerCase()===st;return okEq&&okDt&&okSt;});var tb=document.querySelector('#tblEstacionamento tbody');tb.innerHTML='';if(!data.length){tb.innerHTML=emptyHtml();return;}data.forEach(function(r){tb.insertAdjacentHTML('beforeend','<tr><td>'+r.id+'</td><td>'+(r.equipamento||'-')+'</td><td>'+(r.categoria||'-')+'</td><td>'+(r.placa||'-')+'</td><td>'+fmtDate(r.data_entrada)+'</td><td>'+fmtDate(r.data_saida)+'</td><td>'+badgeStatus(r.status_vaga)+'</td><td>'+rowActions(r.id,'estacionamento')+'</td></tr>');});}
+                            function renderVm(){var data=window.ALUGUER_DATA.viaturas||[];var p=document.getElementById('vmFiltroPeriodo').value;var c=(document.getElementById('vmFiltroCliente').value||'').toLowerCase();var cat=(document.getElementById('vmFiltroCategoria').value||'').toLowerCase();var q=(document.getElementById('vmBusca').value||'').toLowerCase();var now=new Date();data=data.filter(function(r){var d=new Date(r.data_saida||r.criado_em||Date.now());var okP=true;if(p==='7')okP=((now-d)/(1000*3600*24))<=7;else if(p==='30')okP=(d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear());var txt=((r.viatura_id||'')+' '+(r.matricula||'')+' '+(r.empresa_cliente||'')+' '+(r.tipo_equipamento||'')).toLowerCase();return okP&&(c===''||String(r.empresa_cliente||'').toLowerCase().indexOf(c)!==-1)&&(cat===''||String(r.tipo_equipamento||'').toLowerCase().indexOf(cat)!==-1)&&(q===''||txt.indexOf(q)!==-1);});var tb=document.querySelector('#tblViaturas tbody');tb.innerHTML='';if(!data.length){tb.innerHTML=emptyHtml();return;}data.forEach(function(r){var det=(r.viatura_id||'-')+' / '+(r.matricula||'-')+' / Cliente: '+(r.empresa_cliente||'-')+' / '+(r.condutor||'-');tb.insertAdjacentHTML('beforeend','<tr><td>'+r.id+'</td><td>'+(r.tipo_equipamento||'-')+'</td><td>'+fmtDate(r.data_saida||r.criado_em)+'</td><td>'+det+'</td><td>'+rowActions(r.id,'viaturas')+'</td></tr>');});}
+                            function renderTs(){var data=window.ALUGUER_DATA.timesheets||[];var p=document.getElementById('tsFiltroPeriodo').value;var q=(document.getElementById('tsBusca').value||'').toLowerCase();var now=new Date();data=data.filter(function(r){var d=new Date(r.data_ref||Date.now());var okP=true;if(p==='week')okP=((now-d)/(1000*3600*24))<=7;else if(p==='month')okP=(d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear());var txt=((r.viatura_id||'')+' '+(r.empresa_cliente||'')+' '+(r.responsavel||'')).toLowerCase();return okP&&(q===''||txt.indexOf(q)!==-1);});var tb=document.querySelector('#tblTimesheets tbody');tb.innerHTML='';if(!data.length){tb.innerHTML=emptyHtml();return;}data.forEach(function(r){tb.insertAdjacentHTML('beforeend','<tr><td>'+r.id+'</td><td>'+(r.viatura_id||'-')+' / '+(r.tipo_equipamento||'-')+'</td><td>'+fmtDate(r.data_ref)+'</td><td>'+Number(r.horas_uso||0).toFixed(2)+'</td><td>'+(r.responsavel||'-')+'</td><td>'+rowActions(r.id,'timesheets')+'</td></tr>');});}
+                            function renderPg(){var data=window.ALUGUER_DATA.pagamentos||[];var s=(document.getElementById('pgFiltroStatus').value||'').toLowerCase();var q=(document.getElementById('pgBusca').value||'').toLowerCase();data=data.filter(function(r){var txt=((r.viatura_id||'')+' '+(r.empresa_cliente||'')+' '+(r.referencia||'')).toLowerCase();return (s===''||String(r.status||'').toLowerCase()===s)&&(q===''||txt.indexOf(q)!==-1);});var tb=document.querySelector('#tblPagamentos tbody');tb.innerHTML='';if(!data.length){tb.innerHTML=emptyHtml();return;}data.forEach(function(r){tb.insertAdjacentHTML('beforeend','<tr><td>'+r.id+'</td><td>'+(r.viatura_id||'-')+'</td><td>'+(r.empresa_cliente||'-')+'</td><td>'+fmtDate(r.vencimento)+'</td><td>'+Number(r.valor||0).toLocaleString('pt-PT',{minimumFractionDigits:2})+' '+(r.moeda||'MZN')+'</td><td>'+badgeStatus(r.status)+'</td><td>'+rowActions(r.id,'pagamentos')+'</td></tr>');});}
+                            function renderCli(){var data=window.ALUGUER_DATA.clientes||[];var q=(document.getElementById('cliBusca').value||'').toLowerCase();data=data.filter(function(r){return q===''||String((r.nome||'')+' '+(r.contacto||'')+' '+(r.email||'')).toLowerCase().indexOf(q)!==-1;});var tb=document.querySelector('#tblClientes tbody');tb.innerHTML='';if(!data.length){tb.innerHTML=emptyHtml();return;}data.forEach(function(r){tb.insertAdjacentHTML('beforeend','<tr><td>'+r.id+'</td><td>'+(r.nome||'-')+'</td><td>'+(r.contacto||'-')+'</td><td>'+(r.email||'-')+'</td><td>Alugueres: '+(r.total_alugueres||0)+' | Ãšltimo: '+fmtDate(r.ultimo_aluguer)+'</td><td>'+rowActions(r.id,'clientes')+'</td></tr>');});}
+                            window.aluguerFilter=function(k){ if(k==='estacionamento')renderEst(); if(k==='viaturas')renderVm(); if(k==='timesheets')renderTs(); if(k==='pagamentos')renderPg(); if(k==='clientes')renderCli(); };
+                            window.aluguerOpenModal=function(modalId){var form=document.getElementById(modalId); if(!form)return; var fields=form.querySelectorAll('input,select');var html='<div style=\"padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px;\">';fields.forEach(function(f){if(f.type==='hidden')return;html+='<div style=\"grid-column:span '+((f.tagName==='SELECT'||f.type!=='text')?1:1)+';\">'+f.outerHTML+'</div>';});html+='</div>';var w=window.open('','_blank','width=720,height=640');if(!w)return;w.document.write('<html><head><title>Registo</title><style>body{font-family:Inter,Segoe UI,sans-serif;padding:14px}input,select{width:100%;height:36px;border:1px solid #cbd5e1;border-radius:8px;padding:0 8px}button{height:36px;border:0;border-radius:8px;padding:0 12px;background:#0b3b82;color:#fff;font-weight:700}</style></head><body><form method=\"post\">'+form.innerHTML+html+'<div style=\"display:flex;justify-content:flex-end;margin-top:10px;\"><button type=\"submit\">Guardar</button></div></form></body></html>');w.document.close();};
+                            window.aluguerView=function(id,type){alert('Detalhes de '+type+' #'+id);};
+                            window.aluguerDelete=function(id,type){if(!confirm('Deseja remover este registo?'))return;var actionMap={viaturas:'excluir_aluguer',estacionamento:'excluir_estacionamento',timesheets:'excluir_timesheet',pagamentos:'excluir_pagamento',clientes:'excluir_cliente'};var fieldMap={viaturas:'aluguer_id',estacionamento:'est_id',timesheets:'ts_id',pagamentos:'pg_id',clientes:'cliente_id'};var act=actionMap[type]||'';if(act==='')return;var fld=fieldMap[type]||'id';var f=document.createElement('form');f.method='post';f.innerHTML='<input type=\"hidden\" name=\"aluguer_action\" value=\"'+act+'\"><input type=\"hidden\" name=\"'+fld+'\" value=\"'+id+'\">';document.body.appendChild(f);f.submit();};
+                            window.aluguerExportExcel=function(){var active=document.querySelector('.aluguer-panel.active table');if(!active)return;var rows=active.querySelectorAll('tr');var out=[];rows.forEach(function(r){var cols=r.querySelectorAll('th,td');var row=[];cols.forEach(function(c){row.push('\"'+c.innerText.replace(/\"/g,'\"\"').trim()+'\"');});out.push(row.join(','));});var blob=new Blob([out.join('\\n')],{type:'text/csv;charset=utf-8;'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='aluguer_equipamentos.csv';a.click();URL.revokeObjectURL(a.href);};
+                            aluguerSetTab('<?= $aluguerFrontTab ?>');
+                            renderEst();renderVm();renderTs();renderPg();renderCli();
+                        })();
+                    </script>
+                <?php endif; ?>
+                <?php if($tab == 'aluguer' && false): ?>
+                    <div style="padding:18px;border:1px dashed #d1d5db;border-radius:10px;background:#f9fafb;color:#374151;">
+                        <h3 style="margin:0 0 8px 0;">Aluguer de Equipamentos</h3>
+                        <p style="margin:0;">Modulo reiniciado. Conteudo anterior removido para novo desenvolvimento.</p>
+                    </div>
+                <?php endif; ?>
                 <?php $ocultarAcoesListaPresencas = ($tab == 'transporte' && $view == 'presencas'); ?>
-                <div class="inner-nav" style="align-items: center;">
-                    <h3 style="text-transform: uppercase;">
-                        <?php
-                            $tituloView = str_replace('_', ' ', ucfirst($view));
-                            if($tab == 'transporte' && $view == 'relatorio_atividades') $tituloView = 'RelatÃ³rio Geral';
-                            if($tab == 'gestao_frota' && $view == 'relatorio_consumo') $tituloView = 'RelatÃ³rio Geral';
-                            echo htmlspecialchars($tituloView);
-                        ?>
-                    </h3>
+                <div class="inner-nav" style="align-items: center; <?= ($tab == 'gestao_frota' && $view == 'relatorio_consumo') ? 'display:none;' : '' ?>">
+                    <?php if(!($tab == 'gestao_frota' && $view == 'relatorio_consumo')): ?>
+                        <h3 style="text-transform: uppercase;"><?= htmlspecialchars($tituloView) ?></h3>
+                    <?php endif; ?>
                     
                     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <?php if(!$ocultarAcoesListaPresencas): ?>
+                        <?php if(!$ocultarAcoesListaPresencas && !($tab == 'transporte' && $view == 'checklist') && !($tab == 'frentista' && $view == 'abastecimentos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo')): ?>
                         <label style="font-weight:800; font-size:12px; margin-right:6px;">Mostrar</label>
                         <select id="list-range" onchange="onRangeChange(this.value)">
                             <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
@@ -4584,8 +7579,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <option value="today" <?= (($_GET['list_range'] ?? '') === 'today') ? 'selected' : '' ?>>Ordens de Hoje</option>
                                 <option value="custom" <?= (($_GET['list_range'] ?? '') === 'custom') ? 'selected' : '' ?>>Personalizado</option>
                                 <option value="first_os" <?= (($_GET['list_range'] ?? '') === 'first_os') ? 'selected' : '' ?>>Primeiras OS</option>
-                                <option value="last_os" <?= (($_GET['list_range'] ?? 'last_os') === 'last_os') ? 'selected' : '' ?>>Ãšltimas OS</option>
-                                <option value="all" <?= (($_GET['list_range'] ?? '') === 'all') ? 'selected' : '' ?>>Todos</option>
+                                <option value="last_os" <?= (($_GET['list_range'] ?? '') === 'last_os') ? 'selected' : '' ?>>Ãšltimas OS</option>
+                                <option value="externo" <?= (($_GET['list_range'] ?? '') === 'externo') ? 'selected' : '' ?>>Externos (sem OS)</option>
+                                <option value="all" <?= (($_GET['list_range'] ?? 'all') === 'all') ? 'selected' : '' ?>>Todos</option>
                             <?php elseif($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
                                 <option value="today" <?= (($filtro_consumo['range'] ?? '') === 'today') ? 'selected' : '' ?>>DiÃ¡rio</option>
                                 <option value="weekly" <?= (($filtro_consumo['range'] ?? '') === 'weekly') ? 'selected' : '' ?>>Semanal</option>
@@ -4602,6 +7598,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </select>
                         <input id="custom-number" type="number" min="1" placeholder="Dias" value="<?= htmlspecialchars((string) ($_GET['list_custom'] ?? '')) ?>" style="width:80px; <?= ((($tab == 'transporte' && $view == 'relatorio_atividades' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'combustivel' && (($_GET['list_range'] ?? '') === 'custom')) || ($tab == 'gestao_frota' && $view == 'relatorio_consumo' && (($filtro_consumo['range'] ?? '') === 'custom'))) ? '' : 'display:none;') ?> padding:8px; border-radius:6px; border:1px solid #ccc;">
                         <button class="btn-mode" onclick="applyRange()" style="background:#eee; color:#333;">Aplicar</button>
+                        <?php endif; ?>
+
+                        <?php if($tab == 'frentista' && $view == 'abastecimentos'): ?>
+                            <form method="get" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="hidden" name="tab" value="frentista">
+                                <input type="hidden" name="view" value="abastecimentos">
+                                <input type="hidden" name="mode" value="list">
+                                <label style="font-weight:800; font-size:12px;">Data inicial</label>
+                                <input type="date" name="data_inicio" value="<?= htmlspecialchars($filtro_data_inicio_abast) ?>" style="padding:8px; border-radius:6px; border:1px solid #ccc;">
+                                <label style="font-weight:800; font-size:12px;">Data final</label>
+                                <input type="date" name="data_fim" value="<?= htmlspecialchars($filtro_data_fim_abast) ?>" style="padding:8px; border-radius:6px; border:1px solid #ccc;">
+                                <button type="submit" class="btn-mode" style="background:#eee; color:#333;">Filtrar</button>
+                                <a href="?tab=frentista&view=abastecimentos&mode=list" class="btn-mode" style="background:#f8fafc; color:#334155;">Limpar</a>
+                            </form>
                         <?php endif; ?>
                         
                         <!-- filtro por projecto: aparecer em Transporte -> Entrada e GestÃ£o Frota -> FormulÃ¡rios Recebidos -->
@@ -4649,6 +7659,15 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <option value="PROJ-002">PROJ-002</option>
                             </select>
                         <?php endif; ?>
+                        <?php if($tab == 'gestao_frota' && $view == 'combustivel'): ?>
+                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
+                            <select onchange="filterByProject(this.value,'gestao_frota','combustivel')">
+                                <option value="">Todos</option>
+                                <?php foreach($projetos_diesel as $projDies): ?>
+                                    <option value="<?= htmlspecialchars((string) $projDies) ?>" <?= ($filtro_projeto_diesel === (string) $projDies) ? 'selected' : '' ?>><?= htmlspecialchars((string) $projDies) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        <?php endif; ?>
 
                         <?php if($tab == 'transporte' && $view == 'relatorio_atividades'): ?>
                             <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
@@ -4667,28 +7686,17 @@ if($tab === 'transporte' && $view === 'presencas') {
                             </select>
                         <?php endif; ?>
                         <?php if($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Projeto</label>
-                            <select onchange="filterByProject(this.value,'gestao_frota','relatorio_consumo')">
-                                <option value="">Todos</option>
-                                <?php foreach($projetos_consumo as $projCons): ?>
-                                    <option value="<?= htmlspecialchars((string) $projCons) ?>" <?= (($filtro_consumo['project'] ?? '') === (string) $projCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $projCons) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">Viatura/MÃ¡quina</label>
-                            <select onchange="filterByVehicle(this.value,'gestao_frota','relatorio_consumo')">
-                                <option value="">Todas</option>
-                                <?php foreach($viaturas_consumo as $vCons): ?>
-                                    <option value="<?= htmlspecialchars((string) $vCons) ?>" <?= (($filtro_consumo['viatura'] ?? '') === (string) $vCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $vCons) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <label style="font-weight:800; font-size:12px; margin-left:10px; margin-right:6px;">OS</label>
-                            <input type="number" id="filtro-ordem" value="<?= (int) ($filtro_consumo['order_id'] ?? 0) ?>" placeholder="NÂº OS" style="width:90px; padding:8px; border-radius:6px; border:1px solid #ccc;">
-                            <input type="text" id="search-q" value="<?= htmlspecialchars((string) ($filtro_consumo['q'] ?? '')) ?>" placeholder="Pesquisar..." style="width:180px; padding:8px; border-radius:6px; border:1px solid #ccc;">
-                            <button class="btn-mode" onclick="aplicarFiltrosRelatorioConsumo()" style="background:#f7f7f7; color:#333;"><i class="fa-solid fa-magnifying-glass"></i></button>
+                            <?php /* Painel executivo do relatÃ³rio Ã© renderizado abaixo, fora da barra superior. */ ?>
+                        <?php endif; ?>
+                        <?php if($tab == 'gestao_frota' && $view == 'combustivel'): ?>
+                            <a href="?tab=gestao_frota&view=combustivel&mode=form&abastecimento=externo" class="btn-save" style="background:#0f766e; margin-left:12px;">Abastecer sem OS</a>
+                        <?php endif; ?>
+                        <?php if($tab == 'gestao_frota' && $view == 'projectos' && $mode == 'list'): ?>
+                            <a href="?tab=gestao_frota&view=combustivel&mode=form&abastecimento=externo" class="btn-save" style="background:#0f766e; margin-left:12px;">Abastecer sem Ordem</a>
                         <?php endif; ?>
                         
                         <!-- manter botÃ£o Adicionar Novo em Transporte->Entrada; remover apenas em gestao_frota->recebidos -->
-                        <?php if(!$ocultarAcoesListaPresencas && !($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'transporte' && $view == 'plano_manutencao') && !($tab == 'hse' && $view == 'checklist')): ?>
+                        <?php if(!$ocultarAcoesListaPresencas && !($tab == 'gestao_frota' && $view == 'recebidos') && !($tab == 'gestao_frota' && $view == 'relatorio_consumo') && !($tab == 'gestao_frota' && $view == 'projectos') && !($tab == 'frentista' && $view == 'tarefas') && !($tab == 'frentista' && $view == 'abastecimentos') && !($tab == 'transporte' && $view == 'checklist') && !($tab == 'hse' && $view == 'checklist')): ?>
                             <a href="?tab=<?= $tab ?>&view=<?= $view ?>&mode=form" class="btn-save" style="background: var(--vilcon-orange); margin-left:12px;">Adicionar Novo</a>
                         <?php endif; ?>
                     </div>
@@ -4776,6 +7784,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div><strong>Litros mÃªs:</strong> <?= number_format((float) ($resumo_diesel['litros_mes'] ?? 0), 2, ',', '.') ?> L</div>
                         <div><strong>Valor hoje:</strong> <?= number_format((float) ($resumo_diesel['valor_dia'] ?? 0), 2, ',', '.') ?></div>
                         <div><strong>Valor mÃªs:</strong> <?= number_format((float) ($resumo_diesel['valor_mes'] ?? 0), 2, ',', '.') ?></div>
+                        <?php if($filtro_projeto_diesel !== ''): ?>
+                            <div><strong>Projeto filtrado:</strong> <?= htmlspecialchars($filtro_projeto_diesel_label !== '' ? $filtro_projeto_diesel_label : $filtro_projeto_diesel) ?></div>
+                            <div><strong>Registos do projeto:</strong> <?= (int) ($resumo_diesel_filtrado['registos'] ?? 0) ?></div>
+                            <div><strong>SaÃ­da do projeto:</strong> <?= number_format((float) ($resumo_diesel_filtrado['litros_saida'] ?? 0), 2, ',', '.') ?> L</div>
+                            <div></div>
+                        <?php endif; ?>
                         <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel automÃ¡tico com base nas Ordens de ServiÃ§o abastecidas.</div>
                     </div>
                 <?php endif; ?>
@@ -4847,25 +7861,459 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <?php endif; ?>
                 <?php endif; ?>
                 <?php if($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
+                    <?php
+                        $rangeAtualRelatorio = (string) ($filtro_consumo['range'] ?? 'monthly');
+                        if(!in_array($rangeAtualRelatorio, ['weekly', 'monthly'], true)) {
+                            $rangeAtualRelatorio = 'monthly';
+                        }
+                        $valorOrdemFiltro = (int) ($filtro_consumo['order_id'] ?? 0);
+                        $paramsBaseRel = [
+                            'tab' => 'gestao_frota',
+                            'view' => 'relatorio_consumo',
+                            'mode' => 'list',
+                            'list_range' => $rangeAtualRelatorio
+                        ];
+                        if((string) ($filtro_consumo['project'] ?? '') !== '') $paramsBaseRel['project'] = (string) $filtro_consumo['project'];
+                        if((string) ($filtro_consumo['viatura'] ?? '') !== '') $paramsBaseRel['viatura'] = (string) $filtro_consumo['viatura'];
+                        if((int) ($filtro_consumo['order_id'] ?? 0) > 0) $paramsBaseRel['ordem'] = (int) $filtro_consumo['order_id'];
+                        if((string) ($filtro_consumo['q'] ?? '') !== '') $paramsBaseRel['q'] = (string) $filtro_consumo['q'];
+                        $urlPdf = '?' . http_build_query(array_merge($paramsBaseRel, ['doc' => 'relatorio_consumo_pdf']));
+                        $urlExcel = '?' . http_build_query(array_merge($paramsBaseRel, ['doc' => 'relatorio_consumo_excel']));
+                        $urlLimpar = '?tab=gestao_frota&view=relatorio_consumo&mode=list&list_range=monthly';
+
+                        $resumoModulos = [
+                            'recebidos' => ['titulo' => 'FormulÃ¡rios Recebidos', 'registos' => 0, 'litros' => 0.0, 'valor' => 0.0],
+                            'combustivel' => ['titulo' => 'Controle CombustÃ­vel', 'registos' => 0, 'litros' => 0.0, 'valor' => 0.0],
+                            'stock' => ['titulo' => 'Controle Stock', 'registos' => 0, 'litros' => 0.0, 'valor' => 0.0],
+                        ];
+                        foreach($resumo_relatorio_fontes as $fonteResumo => $dadosFonte) {
+                            $fonteNorm = strtolower(strtr((string) $fonteResumo, [
+                                'Ã¡' => 'a', 'Ã ' => 'a', 'Ã£' => 'a', 'Ã¢' => 'a',
+                                'Ã©' => 'e', 'Ãª' => 'e',
+                                'Ã­' => 'i',
+                                'Ã³' => 'o', 'Ã´' => 'o', 'Ãµ' => 'o',
+                                'Ãº' => 'u',
+                                'Ã§' => 'c'
+                            ]));
+                            $chave = null;
+                            if(strpos($fonteNorm, 'formulario') !== false || strpos($fonteNorm, 'recebido') !== false) $chave = 'recebidos';
+                            elseif(strpos($fonteNorm, 'combust') !== false) $chave = 'combustivel';
+                            elseif(strpos($fonteNorm, 'stock') !== false) $chave = 'stock';
+                            if($chave !== null) {
+                                $resumoModulos[$chave]['registos'] += (int) ($dadosFonte['registos'] ?? 0);
+                                $resumoModulos[$chave]['litros'] += (float) ($dadosFonte['litros'] ?? 0);
+                                $resumoModulos[$chave]['valor'] += (float) ($dadosFonte['valor'] ?? 0);
+                            }
+                        }
+                        $maxLitrosModulo = 0.0;
+                        foreach($resumoModulos as $modResumo) {
+                            $maxLitrosModulo = max($maxLitrosModulo, (float) ($modResumo['litros'] ?? 0));
+                        }
+                        if($maxLitrosModulo <= 0) $maxLitrosModulo = 1;
+                    ?>
+                    <style>
+                        .rc-dashboard { background:#f8f9fa; border:1px solid #e6ebf2; border-radius:14px; padding:16px; margin-bottom:14px; }
+                        .rc-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+                        .rc-title { margin:0; font-size:22px; line-height:1.1; color:#0f172a; font-weight:800; }
+                        .rc-subtitle { margin-top:4px; font-size:12px; color:#64748b; max-width:860px; }
+                        .rc-actions { display:flex; gap:8px; flex-wrap:wrap; }
+                        .rc-btn { border:1px solid transparent; border-radius:8px; padding:9px 12px; font-size:12px; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+                        .rc-btn-primary { background:#0f172a; color:#fff; }
+                        .rc-btn-secondary { background:#fff; color:#0f172a; border-color:#d2dbe8; }
+                        .rc-filters { background:#fff; border:1px solid #e5eaf1; border-radius:12px; box-shadow:0 6px 16px rgba(15,23,42,.05); padding:12px; margin-bottom:12px; }
+                        .rc-filter-row { display:grid; gap:10px; margin-bottom:10px; }
+                        .rc-filter-row:last-child { margin-bottom:0; }
+                        .rc-filter-row.top { grid-template-columns:minmax(180px, 1fr) minmax(220px, 1fr) minmax(220px, 1fr); }
+                        .rc-filter-row.bottom { grid-template-columns:minmax(120px, 170px) minmax(180px, 1fr) auto; align-items:end; }
+                        .rc-field label { display:block; margin-bottom:4px; font-size:10px; color:#64748b; text-transform:uppercase; font-weight:800; }
+                        .rc-field input, .rc-field select { width:100%; border:1px solid #d6dee9; border-radius:8px; padding:9px 10px; font-size:12px; background:#fff; }
+                        .rc-segmented { display:inline-flex; border:1px solid #d2dbe8; border-radius:9px; background:#f8fafc; overflow:hidden; }
+                        .rc-seg-btn { border:0; background:transparent; color:#475569; padding:8px 14px; font-size:11px; font-weight:800; text-transform:uppercase; cursor:pointer; }
+                        .rc-seg-btn.active { background:#0f172a; color:#fff; }
+                        .rc-filter-actions { display:flex; gap:8px; align-items:center; }
+                        .rc-btn-filter { border:0; background:#0f172a; color:#fff; border-radius:8px; padding:10px 12px; font-size:12px; font-weight:700; cursor:pointer; }
+                        .rc-btn-outline { border:1px solid #cfd9e6; background:#fff; color:#334155; border-radius:8px; padding:10px 12px; text-decoration:none; font-size:12px; font-weight:700; }
+                        .rc-filter-feedback { font-size:11px; color:#64748b; display:none; }
+                        .rc-filter-feedback.show { display:inline; }
+                        .rc-kpis { display:grid; grid-template-columns:repeat(3, minmax(180px, 1fr)); gap:10px; margin-bottom:12px; }
+                        .rc-kpi { background:#fff; border:1px solid #e5eaf1; border-radius:12px; box-shadow:0 4px 12px rgba(15,23,42,.04); padding:12px; }
+                        .rc-kpi-icon { width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:8px; font-size:14px; }
+                        .rc-kpi-icon.gasto { background:#fff7ed; color:#c2410c; }
+                        .rc-kpi-icon.litros { background:#ecfdf3; color:#15803d; }
+                        .rc-kpi-icon.registos { background:#eff6ff; color:#1d4ed8; }
+                        .rc-kpi-value { font-size:24px; font-weight:800; color:#0f172a; line-height:1.1; }
+                        .rc-kpi-value.is-zero { color:#94a3b8; }
+                        .rc-kpi-label { margin-top:4px; font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; }
+                        .rc-chart { background:#fff; border:1px solid #e5eaf1; border-radius:12px; box-shadow:0 4px 12px rgba(15,23,42,.04); padding:12px; margin-bottom:12px; }
+                        .rc-chart-title { margin:0 0 8px 0; font-size:12px; color:#0f172a; text-transform:uppercase; font-weight:800; }
+                        .rc-chart-row { display:grid; grid-template-columns:170px 1fr 88px; gap:10px; align-items:center; margin-bottom:8px; }
+                        .rc-chart-row:last-child { margin-bottom:0; }
+                        .rc-chart-label { font-size:12px; color:#334155; font-weight:700; }
+                        .rc-chart-track { width:100%; height:10px; background:#edf2f8; border-radius:999px; overflow:hidden; }
+                        .rc-chart-fill { height:10px; border-radius:999px; background:linear-gradient(90deg,#0ea5e9 0%,#2563eb 100%); }
+                        .rc-chart-value { font-size:11px; color:#64748b; text-align:right; font-weight:700; }
+                        .rc-modules { display:grid; grid-template-columns:repeat(3, minmax(220px, 1fr)); gap:10px; }
+                        .rc-module-card { background:#fff; border:1px solid #e5eaf1; border-radius:12px; box-shadow:0 4px 12px rgba(15,23,42,.04); padding:12px; }
+                        .rc-module-title { margin:0 0 8px 0; font-size:12px; text-transform:uppercase; color:#0f172a; font-weight:800; }
+                        .rc-module-metrics { display:grid; gap:4px; font-size:12px; color:#334155; }
+                        .rc-module-metrics strong { color:#0f172a; min-width:64px; display:inline-block; }
+                        .rc-module-val.zero { color:#94a3b8; font-weight:700; }
+                        .rc-mini-bar { margin-top:8px; height:7px; border-radius:999px; background:#edf2f8; overflow:hidden; }
+                        .rc-mini-bar > span { display:block; height:7px; border-radius:999px; background:linear-gradient(90deg,#22c55e 0%,#16a34a 100%); }
+                        .rc-module-details { margin-top:8px; }
+                        .rc-module-details summary { cursor:pointer; font-size:11px; color:#334155; font-weight:700; }
+                        .rc-module-details .detail-box { margin-top:6px; font-size:11px; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px; }
+                        .rc-ranks { display:grid; grid-template-columns:repeat(3, minmax(220px, 1fr)); gap:10px; margin-top:12px; }
+                        .rc-rank-card { background:#fff; border:1px solid #e5eaf1; border-radius:12px; box-shadow:0 4px 12px rgba(15,23,42,.04); padding:12px; }
+                        .rc-rank-title { margin:0 0 8px; font-size:12px; text-transform:uppercase; font-weight:800; color:#0f172a; }
+                        .rc-rank-list { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+                        .rc-rank-item { display:grid; grid-template-columns:22px 1fr auto; gap:8px; align-items:center; font-size:12px; color:#334155; }
+                        .rc-rank-pos { width:22px; height:22px; border-radius:999px; background:#f1f5f9; color:#334155; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; }
+                        .rc-rank-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+                        .rc-rank-val { font-size:11px; color:#0f172a; font-weight:800; white-space:nowrap; }
+                        .rc-rank-empty { font-size:11px; color:#94a3b8; font-weight:700; }
+                        @media (max-width: 1100px) {
+                            .rc-filter-row.top { grid-template-columns:1fr 1fr; }
+                            .rc-kpis { grid-template-columns:1fr; }
+                            .rc-modules { grid-template-columns:1fr; }
+                            .rc-ranks { grid-template-columns:1fr; }
+                            .rc-chart-row { grid-template-columns:1fr; gap:4px; }
+                            .rc-chart-value { text-align:left; }
+                        }
+                        @media (max-width: 760px) {
+                            .rc-filter-row.top, .rc-filter-row.bottom { grid-template-columns:1fr; }
+                            .rc-filter-actions { flex-wrap:wrap; }
+                        }
+                    </style>
+                    <div class="rc-dashboard">
+                        <div class="rc-header">
+                            <div>
+                                <h2 class="rc-title">RelatÃ³rio Geral</h2>
+                                <div class="rc-subtitle">RelatÃ³rio automÃ¡tico consolidado (FormulÃ¡rios Recebidos, Controle de CombustÃ­vel, Controle de Stock, RequisiÃ§Ãµes e GestÃ£o Operacional).</div>
+                            </div>
+                            <div class="rc-actions">
+                                <button type="button" class="rc-btn rc-btn-primary" onclick="baixarRelatorioConsumo('pdf')"><i class="fa-solid fa-file-pdf"></i> Baixar PDF</button>
+                                <button type="button" class="rc-btn rc-btn-secondary" onclick="baixarRelatorioConsumo('excel')"><i class="fa-solid fa-file-excel"></i> Baixar Excel</button>
+                            </div>
+                        </div>
+
+                        <div class="rc-filters">
+                            <input type="hidden" id="relatorio-range" value="<?= htmlspecialchars($rangeAtualRelatorio) ?>">
+                            <div class="rc-filter-row top">
+                                <div class="rc-field">
+                                    <label>PerÃ­odo</label>
+                                    <div class="rc-segmented">
+                                        <button type="button" class="rc-seg-btn <?= $rangeAtualRelatorio === 'weekly' ? 'active' : '' ?>" data-range="weekly" onclick="setRangeRelatorioConsumo('weekly')">Semanal</button>
+                                        <button type="button" class="rc-seg-btn <?= $rangeAtualRelatorio === 'monthly' ? 'active' : '' ?>" data-range="monthly" onclick="setRangeRelatorioConsumo('monthly')">Mensal</button>
+                                    </div>
+                                </div>
+                                <div class="rc-field">
+                                    <label>Projeto</label>
+                                    <select id="filtro-projeto-consumo">
+                                        <option value="">Todos</option>
+                                        <?php foreach($projetos_consumo as $projCons): ?>
+                                            <option value="<?= htmlspecialchars((string) $projCons) ?>" <?= (($filtro_consumo['project'] ?? '') === (string) $projCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $projCons) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="rc-field">
+                                    <label>Viatura/MÃ¡quina</label>
+                                    <select id="filtro-viatura-consumo">
+                                        <option value="">Todas</option>
+                                        <?php foreach($viaturas_consumo as $vCons): ?>
+                                            <option value="<?= htmlspecialchars((string) $vCons) ?>" <?= (($filtro_consumo['viatura'] ?? '') === (string) $vCons) ? 'selected' : '' ?>><?= htmlspecialchars((string) $vCons) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="rc-filter-row bottom">
+                                <div class="rc-field">
+                                    <label>NÂº OS</label>
+                                    <input type="number" id="filtro-ordem" value="<?= $valorOrdemFiltro > 0 ? $valorOrdemFiltro : '' ?>" placeholder="NÂº OS">
+                                </div>
+                                <div class="rc-field">
+                                    <label>Pesquisa</label>
+                                    <input type="text" id="search-q" value="<?= htmlspecialchars((string) ($filtro_consumo['q'] ?? '')) ?>" placeholder="Pesquisar...">
+                                </div>
+                                <div class="rc-filter-actions">
+                                    <button type="button" class="rc-btn-filter" id="btn-filtrar-consumo" onclick="aplicarFiltrosRelatorioConsumo()"><i class="fa-solid fa-filter"></i> Filtrar</button>
+                                    <a href="<?= htmlspecialchars($urlLimpar) ?>" class="rc-btn-outline">Limpar</a>
+                                    <span id="filtro-feedback-consumo" class="rc-filter-feedback">Aplicando filtros...</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="rc-kpis">
+                            <div class="rc-kpi">
+                                <div class="rc-kpi-icon gasto"><i class="fa-solid fa-sack-dollar"></i></div>
+                                <div class="rc-kpi-value <?= ((float) ($resumo_relatorio_consumo['total_valor'] ?? 0) <= 0) ? 'is-zero' : '' ?>"><?= number_format((float) ($resumo_relatorio_consumo['total_valor'] ?? 0), 2, ',', '.') ?></div>
+                                <div class="rc-kpi-label">Total Gasto (MZN)</div>
+                            </div>
+                            <div class="rc-kpi">
+                                <div class="rc-kpi-icon litros"><i class="fa-solid fa-gas-pump"></i></div>
+                                <div class="rc-kpi-value <?= ((float) ($resumo_relatorio_consumo['total_litros'] ?? 0) <= 0) ? 'is-zero' : '' ?>"><?= number_format((float) ($resumo_relatorio_consumo['total_litros'] ?? 0), 2, ',', '.') ?> L</div>
+                                <div class="rc-kpi-label">Total Litros</div>
+                            </div>
+                            <div class="rc-kpi">
+                                <div class="rc-kpi-icon registos"><i class="fa-solid fa-database"></i></div>
+                                <div class="rc-kpi-value <?= ((int) ($resumo_relatorio_consumo['total_registos'] ?? 0) <= 0) ? 'is-zero' : '' ?>"><?= (int) ($resumo_relatorio_consumo['total_registos'] ?? 0) ?></div>
+                                <div class="rc-kpi-label">Total Registos</div>
+                            </div>
+                        </div>
+
+                        <div class="rc-chart">
+                            <h4 class="rc-chart-title">Consolidado por MÃ³dulo (Litros)</h4>
+                            <?php foreach($resumoModulos as $modResumo): ?>
+                                <?php $pctGraf = max(0, min(100, (((float) ($modResumo['litros'] ?? 0)) / $maxLitrosModulo) * 100)); ?>
+                                <div class="rc-chart-row">
+                                    <div class="rc-chart-label"><?= htmlspecialchars((string) $modResumo['titulo']) ?></div>
+                                    <div class="rc-chart-track"><span class="rc-chart-fill" style="width:<?= number_format($pctGraf, 2, '.', '') ?>%;"></span></div>
+                                    <div class="rc-chart-value"><?= number_format((float) ($modResumo['litros'] ?? 0), 2, ',', '.') ?> L</div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <div class="rc-modules">
+                            <?php foreach($resumoModulos as $modResumo): ?>
+                                <?php
+                                    $regModulo = (int) ($modResumo['registos'] ?? 0);
+                                    $litModulo = (float) ($modResumo['litros'] ?? 0);
+                                    $valModulo = (float) ($modResumo['valor'] ?? 0);
+                                    $pctModulo = max(0, min(100, ($litModulo / $maxLitrosModulo) * 100));
+                                ?>
+                                <div class="rc-module-card">
+                                    <h5 class="rc-module-title"><?= htmlspecialchars((string) $modResumo['titulo']) ?></h5>
+                                    <div class="rc-module-metrics">
+                                        <div><strong>Registos:</strong> <span class="rc-module-val <?= $regModulo <= 0 ? 'zero' : '' ?>"><?= $regModulo ?></span></div>
+                                        <div><strong>Litros:</strong> <span class="rc-module-val <?= $litModulo <= 0 ? 'zero' : '' ?>"><?= number_format($litModulo, 2, ',', '.') ?> L</span></div>
+                                        <div><strong>Valor:</strong> <span class="rc-module-val <?= $valModulo <= 0 ? 'zero' : '' ?>"><?= number_format($valModulo, 2, ',', '.') ?></span></div>
+                                    </div>
+                                    <div class="rc-mini-bar"><span style="width:<?= number_format($pctModulo, 2, '.', '') ?>%;"></span></div>
+                                    <details class="rc-module-details">
+                                        <summary>Ver detalhes</summary>
+                                        <div class="detail-box">
+                                            <div>ParticipaÃ§Ã£o em litros: <?= number_format($pctModulo, 1, ',', '.') ?>%</div>
+                                            <div>PerÃ­odo selecionado: <?= htmlspecialchars($periodo_relatorio_consumo) ?></div>
+                                        </div>
+                                    </details>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <div class="rc-ranks">
+                            <div class="rc-rank-card">
+                                <h5 class="rc-rank-title">Top Projetos (Litros)</h5>
+                                <?php $topProjetos = array_slice($resumo_consumo_projetos, 0, 5, true); ?>
+                                <?php if(empty($topProjetos)): ?>
+                                    <div class="rc-rank-empty">Sem dados para o período.</div>
+                                <?php else: ?>
+                                    <ul class="rc-rank-list">
+                                        <?php $posProj = 1; foreach($topProjetos as $nomeProj => $dadosProj): ?>
+                                            <li class="rc-rank-item">
+                                                <span class="rc-rank-pos"><?= $posProj ?></span>
+                                                <span class="rc-rank-name"><?= htmlspecialchars((string) $nomeProj) ?></span>
+                                                <span class="rc-rank-val"><?= number_format((float) ($dadosProj['litros'] ?? 0), 2, ',', '.') ?> L</span>
+                                            </li>
+                                        <?php $posProj++; endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                            <div class="rc-rank-card">
+                                <h5 class="rc-rank-title">Top Viaturas/Ativos (Litros)</h5>
+                                <?php $topViaturas = array_slice($resumo_consumo_viaturas, 0, 5, true); ?>
+                                <?php if(empty($topViaturas)): ?>
+                                    <div class="rc-rank-empty">Sem dados para o período.</div>
+                                <?php else: ?>
+                                    <ul class="rc-rank-list">
+                                        <?php $posViat = 1; foreach($topViaturas as $nomeViat => $dadosViat): ?>
+                                            <li class="rc-rank-item">
+                                                <span class="rc-rank-pos"><?= $posViat ?></span>
+                                                <span class="rc-rank-name"><?= htmlspecialchars((string) $nomeViat) ?></span>
+                                                <span class="rc-rank-val"><?= number_format((float) ($dadosViat['litros'] ?? 0), 2, ',', '.') ?> L</span>
+                                            </li>
+                                        <?php $posViat++; endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                            <div class="rc-rank-card">
+                                <h5 class="rc-rank-title">Top Responsáveis (Litros)</h5>
+                                <?php $topResp = array_slice($resumo_consumo_motoristas, 0, 5, true); ?>
+                                <?php if(empty($topResp)): ?>
+                                    <div class="rc-rank-empty">Sem dados para o período.</div>
+                                <?php else: ?>
+                                    <ul class="rc-rank-list">
+                                        <?php $posResp = 1; foreach($topResp as $nomeResp => $dadosResp): ?>
+                                            <li class="rc-rank-item">
+                                                <span class="rc-rank-pos"><?= $posResp ?></span>
+                                                <span class="rc-rank-name"><?= htmlspecialchars((string) $nomeResp) ?></span>
+                                                <span class="rc-rank-val"><?= number_format((float) ($dadosResp['litros'] ?? 0), 2, ',', '.') ?> L</span>
+                                            </li>
+                                        <?php $posResp++; endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                <?php endif; ?>
+                <?php if($tab == 'transporte' && $view == 'checklist'): ?>
                     <div style="background:#eef7ff; border:1px solid #cfe3ff; color:#2c3e50; padding:12px; border-radius:8px; margin-bottom:14px; display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
-                        <div><strong>Total Gasto:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_valor'] ?? 0), 2, ',', '.') ?></div>
-                        <div><strong>Total Litros:</strong> <?= number_format((float) ($resumo_relatorio_consumo['total_litros'] ?? 0), 2, ',', '.') ?> L</div>
-                        <div><strong>Total Registos:</strong> <?= (int) ($resumo_relatorio_consumo['total_registos'] ?? 0) ?></div>
-                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">RelatÃ³rio automÃ¡tico consolidado: FormulÃ¡rios Recebidos, Controle CombustÃ­vel, Controle de Stock, RequisiÃ§Ãµes e GestÃ£o Operacional.</div>
+                        <div><strong>Checklists feitos hoje:</strong> <?= count($checklists_feitos_hoje) ?></div>
+                        <div><strong>SaÃ­das hoje sem checklist:</strong> <?= count($saidas_sem_checklist) ?></div>
+                        <div><strong>Total monitorado:</strong> <?= count($checklists_feitos_hoje) + count($saidas_sem_checklist) ?></div>
+                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">Painel automÃ¡tico com base no HSE: checklist feito e viaturas/mÃ¡quinas que saÃ­ram hoje sem checklist.</div>
                     </div>
                 <?php endif; ?>
                 
                 <?php if($tab == 'transporte' && $view == 'presencas'): ?>
                     <?php require __DIR__ . '/app/modules/transporte/presencas_panel.php'; ?>
                 <?php else: ?>
+                <?php if($tab == 'frentista' && $view == 'tarefas'): ?>
+                    <?php
+                        $totalTarefasFrentista = count($lista_os);
+                        $totalPendentesFrentista = 0;
+                        foreach($lista_os as $osFrent) {
+                            $foiConfirmado = !empty($osFrent['abastecido_em']);
+                            if(!$foiConfirmado) {
+                                $totalPendentesFrentista++;
+                            }
+                        }
+                        $totalConcluidosFrentista = max(0, $totalTarefasFrentista - $totalPendentesFrentista);
+                    ?>
+                    <div style="background:linear-gradient(135deg,#eef7ff 0%,#f8fbff 100%); border:1px solid #cfe3ff; color:#2c3e50; padding:12px; border-radius:10px; margin-bottom:14px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">
+                        <div><strong>Tarefas no painel:</strong> <?= $totalTarefasFrentista ?></div>
+                        <div><strong>Pendentes de abastecimento:</strong> <?= $totalPendentesFrentista ?></div>
+                        <div><strong>ConcluÃ­das:</strong> <?= $totalConcluidosFrentista ?></div>
+                        <div style="grid-column: span 3; font-size:11px; color:#4a6178;">Recebe ordens aprovadas pelo Gestor de Frotas, confirma abastecimentos e consulta o histÃ³rico/relatÃ³rios.</div>
+                    </div>
+                <?php endif; ?>
+                <?php if($tab == 'frentista' && $view == 'abastecimentos'): ?>
+                    <?php
+                        $totalAbastFrentista = count($lista_abastecimentos_frentista);
+                        $litrosTotalAbastFrentista = 0.0;
+                        foreach($lista_abastecimentos_frentista as $abFrent) {
+                            $litrosLinha = isset($abFrent['litros_abastecidos']) && $abFrent['litros_abastecidos'] !== null && $abFrent['litros_abastecidos'] !== ''
+                                ? (float) $abFrent['litros_abastecidos']
+                                : (isset($abFrent['quantidade_inicial_l']) && $abFrent['quantidade_inicial_l'] !== null && $abFrent['quantidade_inicial_l'] !== '' ? (float) $abFrent['quantidade_inicial_l'] : 0.0);
+                            $litrosTotalAbastFrentista += $litrosLinha;
+                        }
+                    ?>
+                    <div style="background:linear-gradient(135deg,#ecfeff 0%,#f8fdff 100%); border:1px solid #bae6fd; color:#0f172a; padding:12px; border-radius:10px; margin-bottom:14px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">
+                        <div><strong>Abastecimentos registados:</strong> <?= $totalAbastFrentista ?></div>
+                        <div><strong>Total abastecido:</strong> <?= number_format($litrosTotalAbastFrentista, 2, ',', '.') ?> L</div>
+                        <div><strong>PerÃ­odo:</strong> <?= $filtro_data_inicio_abast !== '' || $filtro_data_fim_abast !== '' ? htmlspecialchars(($filtro_data_inicio_abast !== '' ? $filtro_data_inicio_abast : '...') . ' atÃ© ' . ($filtro_data_fim_abast !== '' ? $filtro_data_fim_abast : '...')) : 'Todos' ?></div>
+                        <div style="grid-column: span 3; font-size:11px; color:#334155;">HistÃ³rico dos abastecimentos confirmados por si, com consulta por perÃ­odo.</div>
+                    </div>
+                <?php endif; ?>
+                <?php if($tab == 'gestao_frota' && $view == 'projectos'): ?>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:14px; margin-top:6px;">
+                        <a href="?tab=gestao_frota&view=projectos&mode=form" style="text-decoration:none; color:inherit;">
+                            <div style="height:100%; min-height:190px; border:2px dashed #f4b400; border-radius:14px; background:linear-gradient(180deg,#fffdf5 0%,#fff7dd 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;">
+                                <div style="width:58px; height:58px; border-radius:50%; background:#111827; color:#f4b400; display:flex; align-items:center; justify-content:center; font-size:28px; font-weight:800;">+</div>
+                                <div style="font-weight:800; text-transform:uppercase; font-size:12px; letter-spacing:.5px;">Criar Projecto</div>
+                                <div style="font-size:11px; color:#4b5563; text-align:center; padding:0 18px;">Defina detalhes principais e combustÃ­vel previsto para o novo projecto.</div>
+                            </div>
+                        </a>
+                        <?php foreach($lista_projectos as $projCard): ?>
+                            <?php
+                                $litPrev = (float) ($projCard['combustivel_previsto_l'] ?? 0);
+                                $litCons = (float) ($projCard['litros_consumidos'] ?? 0);
+                                $percUso = $litPrev > 0 ? min(100, max(0, ($litCons / $litPrev) * 100)) : 0;
+                            ?>
+                            <div style="border:1px solid #e5e7eb; border-radius:14px; background:#fff; box-shadow:0 10px 18px rgba(17,24,39,.05); overflow:hidden;">
+                                <div style="padding:12px 14px; border-bottom:1px solid #eef2f7; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                    <div>
+                                        <div style="font-size:11px; color:#6b7280; font-weight:700;"><?= htmlspecialchars((string) ($projCard['codigo'] ?? '-')) ?></div>
+                                        <div style="font-size:14px; color:#111827; font-weight:800;"><?= htmlspecialchars((string) ($projCard['nome'] ?? '-')) ?></div>
+                                    </div>
+                                    <span style="font-size:10px; font-weight:800; padding:4px 8px; border-radius:999px; background:#ecfeff; color:#0f766e; border:1px solid #99f6e4;"><?= htmlspecialchars((string) ($projCard['status'] ?? 'Ativo')) ?></span>
+                                </div>
+                                <div style="padding:12px 14px;">
+                                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; font-size:11px;">
+                                        <div><strong>Previsto:</strong> <?= number_format($litPrev, 2, ',', '.') ?> L</div>
+                                        <div><strong>Consumido:</strong> <?= number_format($litCons, 2, ',', '.') ?> L</div>
+                                        <div><strong>Abastecimentos:</strong> <?= (int) ($projCard['total_abastecimentos'] ?? 0) ?></div>
+                                        <div><strong>RelatÃ³rios:</strong> <?= (int) ($projCard['total_relatorios'] ?? 0) ?></div>
+                                    </div>
+                                    <div style="height:8px; background:#f3f4f6; border-radius:999px; overflow:hidden; margin-bottom:10px;">
+                                        <div style="height:8px; width:<?= number_format($percUso, 2, '.', '') ?>%; background:linear-gradient(90deg,#f4b400 0%,#f97316 100%);"></div>
+                                    </div>
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                        <a href="?tab=gestao_frota&view=projectos&mode=form&id=<?= (int) ($projCard['id'] ?? 0) ?>" class="btn-mode" style="font-size:11px;"><i class="fas fa-eye"></i> Ver Detalhes</a>
+                                        <a href="?tab=gestao_frota&view=combustivel&mode=list&list_range=all&project=<?= urlencode((string) ($projCard['codigo'] ?? '')) ?>&project_nome=<?= urlencode((string) ($projCard['nome'] ?? '')) ?>" class="btn-mode" style="font-size:11px; background:#0f766e; color:#fff;"><i class="fas fa-gas-pump"></i> Controlar CombustÃ­vel</a>
+                                        <a href="?tab=gestao_frota&view=combustivel&mode=form&abastecimento=externo&project=<?= urlencode((string) ($projCard['codigo'] ?? '')) ?>&project_nome=<?= urlencode((string) ($projCard['nome'] ?? '')) ?>" class="btn-mode" style="font-size:11px; background:#14532d; color:#fff;"><i class="fas fa-droplet"></i> Abastecer sem Ordem</a>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
                 <table class="history-table" id="list-table">
                     <thead>
-                        <?php if($tab == 'transporte' && $view == 'pedido_reparacao'): ?>
+                        <?php if($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
+                            <tr>
+                                <th>ID</th>
+                                <th>Origem</th>
+                                <th>Data/Hora</th>
+                                <th>Projeto</th>
+                                <th>OS</th>
+                                <th>Viatura/Ativo</th>
+                                <th>Responsável</th>
+                                <th>Litros</th>
+                                <th>Valor (MZN)</th>
+                                <th>Custo/L</th>
+                            </tr>
+                        <?php elseif($tab == 'transporte' && $view == 'pedido_reparacao'): ?>
                             <tr>
                                 <th>ID</th>
                                 <th>Data</th>
                                 <th>Solicitante</th>
                                 <th>Estado do Pedido</th>
+                                <th>AÃ§Ãµes</th>
+                            </tr>
+                        <?php elseif($tab == 'transporte' && $view == 'plano_manutencao'): ?>
+                            <tr>
+                                <th>CÃ³digo</th>
+                                <th>Data</th>
+                                <th>Viatura/Equipamento</th>
+                                <th>Tipo / Data ManutenÃ§Ã£o</th>
+                                <th>Estado</th>
+                            </tr>
+                        <?php elseif($tab == 'aluguer' && in_array($view, ['estacionamento','viaturas_maquinas','timesheets','pagamentos','clientes','modulo'], true)): ?>
+                            <tr>
+                                <th>ID</th>
+                                <th>Categoria</th>
+                                <th>Data</th>
+                                <th>Detalhes</th>
+                                <th>AÃ§Ãµes</th>
+                            </tr>
+                        <?php elseif($tab == 'frentista' && $view == 'tarefas'): ?>
+                            <tr>
+                                <th>OS</th>
+                                <th>Viatura / MÃ¡quina</th>
+                                <th>Data SaÃ­da</th>
+                                <th>Condutor</th>
+                                <th>Qtd. Abastecer</th>
+                                <th>Estado</th>
+                                <th>AÃ§Ã£o</th>
+                            </tr>
+                        <?php elseif($tab == 'frentista' && $view == 'abastecimentos'): ?>
+                            <tr>
+                                <th>OS</th>
+                                <th>Data</th>
+                                <th>Viatura / MÃ¡quina</th>
+                                <th>Condutor</th>
+                                <th>Projeto</th>
+                                <th>Litros</th>
+                                <th>KM</th>
+                                <th>AÃ§Ãµes</th>
+                            </tr>
+                        <?php elseif(($tab == 'transporte' && $view == 'entrada') || ($tab == 'gestao_frota' && $view == 'recebidos')): ?>
+                            <tr>
+                                <th>ID</th>
+                                <th>Tipo</th>
+                                <th>Data</th>
+                                <th>Solicitante</th>
+                                <th>Status do Fluxo</th>
                                 <th>AÃ§Ãµes</th>
                             </tr>
                         <?php else: ?>
@@ -4978,23 +8426,23 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <?php endforeach; ?>
                         <?php elseif($tab == 'gestao_frota' && $view == 'relatorio_consumo' && !empty($lista_relatorio_consumo)): ?>
                             <?php foreach($lista_relatorio_consumo as $rc): ?>
+                                <?php
+                                    $osRef = (int) ($rc['ordem_servico_id'] ?? 0);
+                                    $litrosRef = (float) ($rc['litros'] ?? 0);
+                                    $valorRef = (float) ($rc['valor'] ?? 0);
+                                    $custoLRef = isset($rc['custo_litro']) ? (float) $rc['custo_litro'] : ($litrosRef > 0 ? ($valorRef / $litrosRef) : 0.0);
+                                ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rc['id_ref'] ?? '-')) ?></td>
                                     <td><?= htmlspecialchars((string) ($rc['fonte'] ?? 'RelatÃ³rio')) ?></td>
                                     <td><?= !empty($rc['data_ref']) ? date('d/m/Y H:i', strtotime((string) $rc['data_ref'])) : '-' ?></td>
-                                    <td>
-                                        <?=
-                                            'Projeto: ' . htmlspecialchars((string) (($rc['projeto'] ?? '') !== '' ? $rc['projeto'] : '-'))
-                                            . ' | OS: ' . ((int) ($rc['ordem_servico_id'] ?? 0) > 0 ? ('OS-' . str_pad((string) ((int) ($rc['ordem_servico_id'] ?? 0)), 4, '0', STR_PAD_LEFT)) : '-')
-                                            . ' | ' . htmlspecialchars((string) ($rc['detalhe'] ?? '-'))
-                                        ?>
-                                    </td>
-                                    <td>
-                                        <span style="margin-right:8px; font-weight:700; color:#2c3e50;"><?= number_format((float) ($rc['valor'] ?? 0), 2, ',', '.') ?></span>
-                                        <?php if(isset($rc['litros']) && (float) $rc['litros'] > 0): ?>
-                                            <span style="font-size:11px; color:#6c7a89;"><?= number_format((float) $rc['litros'], 2, ',', '.') ?> L</span>
-                                        <?php endif; ?>
-                                    </td>
+                                    <td><?= htmlspecialchars((string) (($rc['projeto'] ?? '') !== '' ? $rc['projeto'] : '-')) ?></td>
+                                    <td><?= $osRef > 0 ? ('OS-' . str_pad((string) $osRef, 4, '0', STR_PAD_LEFT)) : '-' ?></td>
+                                    <td><?= htmlspecialchars((string) (($rc['viatura'] ?? '') !== '' ? $rc['viatura'] : '-')) ?></td>
+                                    <td><?= htmlspecialchars((string) (($rc['responsavel'] ?? '') !== '' ? $rc['responsavel'] : '-')) ?></td>
+                                    <td><?= $litrosRef > 0 ? (number_format($litrosRef, 2, ',', '.') . ' L') : '-' ?></td>
+                                    <td><?= number_format($valorRef, 2, ',', '.') ?></td>
+                                    <td><?= $litrosRef > 0 ? number_format($custoLRef, 2, ',', '.') : '-' ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php elseif($tab == 'transporte' && $view == 'reservas' && !empty($lista_reservas)): ?>
@@ -5023,6 +8471,50 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                        <?php elseif($tab == 'transporte' && $view == 'checklist'): ?>
+                            <?php if(empty($checklists_feitos_hoje) && empty($saidas_sem_checklist)): ?>
+                                <tr>
+                                    <td colspan="5" style="text-align:center; color:#777;">Sem saÃ­das/checklists para hoje.</td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach($checklists_feitos_hoje as $chkHoje): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string) ($chkHoje['codigo'] ?? ('CHK-' . (int) ($chkHoje['id'] ?? 0)))) ?></td>
+                                        <td>Checklist HSE (Feito)</td>
+                                        <td><?= !empty($chkHoje['data_inspecao']) ? date('d/m/Y', strtotime((string) $chkHoje['data_inspecao'])) : '-' ?></td>
+                                        <td>
+                                            <?= htmlspecialchars((string) ($chkHoje['viatura_id'] ?? '-')) ?>
+                                            <?= !empty($chkHoje['condutor']) ? ' / ' . htmlspecialchars((string) $chkHoje['condutor']) : '' ?>
+                                            <?= !empty($chkHoje['inspector']) ? ' / Inspetor: ' . htmlspecialchars((string) $chkHoje['inspector']) : '' ?>
+                                            <?= !empty($chkHoje['template_nome']) ? ' / ' . htmlspecialchars(limparTituloChecklist((string) $chkHoje['template_nome'])) : '' ?>
+                                        </td>
+                                        <td>
+                                            <span style="margin-right:8px; font-weight:700; color:#166534;">Conforme</span>
+                                            <a href="?tab=transporte&view=checklist&mode=list" title="Ver checklist no HSE" style="color:inherit;"><i class="fas fa-eye"></i></a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                                <?php foreach($saidas_sem_checklist as $pendChk): ?>
+                                    <?php
+                                        $idOsPend = (int) ($pendChk['id'] ?? 0);
+                                        $viatPend = trim((string) ($pendChk['viatura_id'] ?? '')) !== '' ? (string) $pendChk['viatura_id'] : (string) ($pendChk['matricula'] ?? '-');
+                                    ?>
+                                    <tr>
+                                        <td><?= $idOsPend > 0 ? ('OS-' . str_pad((string) $idOsPend, 4, '0', STR_PAD_LEFT)) : '-' ?></td>
+                                        <td>Checklist pendente</td>
+                                        <td><?= !empty($pendChk['data_saida']) ? date('d/m/Y H:i', strtotime((string) $pendChk['data_saida'])) : '-' ?></td>
+                                        <td>
+                                            <?= htmlspecialchars($viatPend) ?>
+                                            <?= !empty($pendChk['condutor']) ? ' / ' . htmlspecialchars((string) $pendChk['condutor']) : '' ?>
+                                            <?= !empty($pendChk['destino']) ? ' / Destino: ' . htmlspecialchars((string) $pendChk['destino']) : '' ?>
+                                        </td>
+                                        <td>
+                                            <span style="margin-right:8px; font-weight:700; color:#b45309;">Pendente</span>
+                                            <a href="?tab=transporte&view=checklist&mode=list" title="Preencher checklist no HSE" style="color:var(--vilcon-orange);"><i class="fas fa-clipboard-check"></i></a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         <?php elseif($tab == 'hse' && $view == 'checklist' && !empty($lista_checklists)): ?>
                             <?php foreach($lista_checklists as $chk): ?>
                                 <tr>
@@ -5031,7 +8523,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     <td><?= !empty($chk['ultima_inspecao']) ? date('d/m/Y', strtotime((string) $chk['ultima_inspecao'])) : '-' ?></td>
                                     <td><?= htmlspecialchars(limparTituloChecklist((string) ($chk['nome'] ?? '-'))) ?></td>
                                     <td>
-                                        <a href="?tab=hse&view=checklist&mode=form&template_id=<?= (int) $chk['id'] ?>" title="Preencher Checklist" style="margin-right:8px; color:var(--success);"><i class="fas fa-clipboard-check"></i></a>
+                                        <a href="?tab=<?= $tab === 'hse' ? 'hse' : 'transporte' ?>&view=checklist&mode=form&template_id=<?= (int) $chk['id'] ?>" title="Preencher Checklist" style="margin-right:8px; color:var(--success);"><i class="fas fa-clipboard-check"></i></a>
                                         <span style="font-size:11px; color:#666;">Registos: <?= (int) ($chk['total_registos'] ?? 0) ?></span>
                                     </td>
                                 </tr>
@@ -5067,6 +8559,38 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                        <?php elseif($tab == 'transporte' && $view == 'plano_manutencao' && !empty($lista_planos_manutencao)): ?>
+                            <?php foreach($lista_planos_manutencao as $pm): ?>
+                                <?php
+                                    $viaturaPmLinha = trim((string) ($pm['viatura_id'] ?? ''));
+                                    $matriculaPmLinha = trim((string) ($pm['matricula'] ?? ''));
+                                    $refPmLinha = $viaturaPmLinha !== '' ? $viaturaPmLinha : ($matriculaPmLinha !== '' ? $matriculaPmLinha : '-');
+                                    $tipoPmLinha = trim((string) ($pm['tipo_manutencao'] ?? '-'));
+                                    $statusPmLinha = trim((string) ($pm['status'] ?? 'Enviado para Oficina'));
+                                    $osPmLinha = (int) ($pm['oficina_os_id'] ?? 0);
+                                ?>
+                                <tr>
+                                    <td><?= htmlspecialchars((string) ($pm['codigo'] ?? ('PM-' . (int) ($pm['id'] ?? 0)))) ?></td>
+                                    <td><?= !empty($pm['criado_em']) ? date('d/m/Y H:i', strtotime((string) $pm['criado_em'])) : '-' ?></td>
+                                    <td>
+                                        <?= htmlspecialchars($refPmLinha) ?>
+                                        <?php if($matriculaPmLinha !== '' && strcasecmp($matriculaPmLinha, $refPmLinha) !== 0): ?>
+                                            <?= ' / ' . htmlspecialchars($matriculaPmLinha) ?>
+                                        <?php endif; ?>
+                                        <?= !empty($pm['tipo_equipamento']) ? ' / ' . htmlspecialchars((string) $pm['tipo_equipamento']) : '' ?>
+                                    </td>
+                                    <td>
+                                        <?= htmlspecialchars($tipoPmLinha) ?>
+                                        <?= !empty($pm['data_manutencao']) ? ' / ' . htmlspecialchars(date('d/m/Y', strtotime((string) $pm['data_manutencao']))) : '' ?>
+                                    </td>
+                                    <td>
+                                        <span style="margin-right:8px; font-weight:700; color:#555;"><?= htmlspecialchars($statusPmLinha) ?></span>
+                                        <?php if($osPmLinha > 0): ?>
+                                            <span style="font-size:11px; color:#0f766e;">OS-<?= str_pad((string) $osPmLinha, 4, '0', STR_PAD_LEFT) ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
                         <?php elseif($tab == 'transporte' && $view == 'relatorio_atividades' && !empty($lista_relatorios)): ?>
                             <?php foreach($lista_relatorios as $ra): ?>
                                 <tr>
@@ -5089,32 +8613,158 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                        <?php elseif($tab == 'aluguer' && in_array($view, ['estacionamento','viaturas_maquinas','timesheets','pagamentos','clientes','modulo'], true) && !empty($lista_aluguer)): ?>
+                            <?php foreach($lista_aluguer as $al): ?>
+                                <tr>
+                                    <td><?= (int) ($al['id'] ?? 0) ?></td>
+                                    <td><?= htmlspecialchars((string) ($al['tipo'] ?? '-')) ?></td>
+                                    <td><?= !empty($al['data']) ? date('d/m/Y H:i', strtotime((string) $al['data'])) : '-' ?></td>
+                                    <td>
+                                        <?= htmlspecialchars((string) ($al['detalhes'] ?? '-')) ?>
+                                        <div style="font-size:11px; color:#6b7280; margin-top:2px;">
+                                            Status: <?= htmlspecialchars((string) ($al['status'] ?? '-')) ?>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <a href="<?= htmlspecialchars((string) ($al['acao_link'] ?? '#')) ?>" title="<?= htmlspecialchars((string) ($al['acao_title'] ?? 'Ver')) ?>" style="margin-right:8px; color:inherit;"><i class="fas fa-eye"></i></a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php elseif($tab == 'frentista' && $view == 'abastecimentos' && !empty($lista_abastecimentos_frentista)): ?>
+                            <?php foreach($lista_abastecimentos_frentista as $ab): ?>
+                                <?php
+                                    $litrosAb = isset($ab['litros_abastecidos']) && $ab['litros_abastecidos'] !== null && $ab['litros_abastecidos'] !== ''
+                                        ? (float) $ab['litros_abastecidos']
+                                        : (isset($ab['quantidade_inicial_l']) && $ab['quantidade_inicial_l'] !== null && $ab['quantidade_inicial_l'] !== '' ? (float) $ab['quantidade_inicial_l'] : 0.0);
+                                    $dataAb = (string) ($ab['abastecido_em'] ?? ($ab['data_abastecimento'] ?? ''));
+                                ?>
+                                <tr>
+                                    <td>OS-<?= str_pad((string) ((int) ($ab['id'] ?? 0)), 4, '0', STR_PAD_LEFT) ?></td>
+                                    <td><?= $dataAb !== '' ? date('d/m/Y H:i', strtotime($dataAb)) : '-' ?></td>
+                                    <td><?= htmlspecialchars((string) (($ab['viatura_id'] ?? '-') !== '' ? $ab['viatura_id'] : '-')) ?></td>
+                                    <td><?= htmlspecialchars((string) ($ab['condutor'] ?? '-')) ?></td>
+                                    <td><?= htmlspecialchars((string) ($ab['projeto'] ?? '-')) ?></td>
+                                    <td>
+                                        <span style="display:inline-flex; align-items:center; gap:6px; font-weight:700; color:#0f172a;">
+                                            <i class="fa-solid fa-droplet" style="color:#0ea5e9;"></i>
+                                            <?= number_format($litrosAb, 2, ',', '.') ?> L
+                                        </span>
+                                    </td>
+                                    <td><?= htmlspecialchars((string) ($ab['km_chegada'] ?? '-')) ?></td>
+                                    <td>
+                                        <a href="?tab=frentista&view=tarefas&mode=form&id=<?= (int) ($ab['id'] ?? 0) ?>" title="Ver detalhes da ordem" style="display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:7px; background:#1f2937; color:#fff; text-decoration:none; font-size:11px; font-weight:700;">
+                                            <i class="fas fa-eye"></i> Ver detalhes
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
                         <?php elseif((($tab == 'transporte' && $view == 'entrada') || ($tab == 'gestao_frota' && $view == 'recebidos') || ($tab == 'frentista' && $view == 'tarefas')) && !empty($lista_os)): ?>
                             <?php foreach($lista_os as $os): ?>
                                 <tr>
-                                    <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
-                                    <td>Ordem de ServiÃ§o</td>
-                                    <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime($os['data_saida'])) : '-' ?></td>
-                                    <td><?= htmlspecialchars($os['condutor'] ?? '-') ?></td>
-                                    <td>
-                                        <?php if($tab == 'transporte' && $view == 'entrada'): ?>
-                                            <a href="?tab=transporte&view=entrada&mode=form&id=<?= (int) $os['id'] ?>" title="Ver OS" style="margin-right:8px; color:inherit;"><i class="fas fa-eye"></i></a>
-                                        <?php elseif($tab == 'gestao_frota' && $view == 'recebidos'): ?>
-                                            <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Preencher Abastecimento" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-gas-pump"></i></a>
-                                        <?php elseif($tab == 'frentista' && $view == 'tarefas'): ?>
-                                            <a href="?tab=frentista&view=tarefas&mode=form&id=<?= (int) $os['id'] ?>" title="Confirmar Abastecimento" style="margin-right:8px; color:var(--success);"><i class="fas fa-check-circle"></i></a>
-                                        <?php endif; ?>
-                                        <a href="imprimir_pedido.php?id=<?= (int) $os['id'] ?>" title="Imprimir" style="margin-right:8px; color:inherit;"><i class="fas fa-print"></i></a>
-                                    </td>
+                                    <?php if($tab == 'frentista' && $view == 'tarefas'): ?>
+                                        <?php $frentistaConfirmou = !empty($os['abastecido_em']); ?>
+                                        <?php
+                                            $qtdAbastecer = null;
+                                            if(isset($os['litros_abastecidos']) && $os['litros_abastecidos'] !== null && $os['litros_abastecidos'] !== '') {
+                                                $qtdAbastecer = (float) $os['litros_abastecidos'];
+                                            } elseif(isset($os['quantidade_inicial_l']) && $os['quantidade_inicial_l'] !== null && $os['quantidade_inicial_l'] !== '') {
+                                                $qtdAbastecer = (float) $os['quantidade_inicial_l'];
+                                            }
+                                        ?>
+                                        <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
+                                        <td><?= htmlspecialchars((string) (($os['viatura_id'] ?? '-') !== '' ? ($os['viatura_id']) : '-')) ?></td>
+                                        <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime((string) $os['data_saida'])) : '-' ?></td>
+                                        <td><?= htmlspecialchars((string) ($os['condutor'] ?? '-')) ?></td>
+                                        <td>
+                                            <?php if($qtdAbastecer !== null): ?>
+                                                <span style="display:inline-flex; align-items:center; gap:6px; font-weight:700; color:#0f172a;">
+                                                    <i class="fa-solid fa-droplet" style="color:#0ea5e9;"></i>
+                                                    <?= number_format($qtdAbastecer, 2, ',', '.') ?> L
+                                                </span>
+                                            <?php else: ?>
+                                                <span style="color:#6b7280;">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if($frentistaConfirmou): ?>
+                                                <span style="display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:#ecfdf3; border:1px solid #86efac; color:#166534; font-weight:700; font-size:11px;">
+                                                    <i class="fa-solid fa-circle-check"></i>
+                                                    Confirmado
+                                                </span>
+                                            <?php else: ?>
+                                                <span style="display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; font-weight:700; font-size:11px;">
+                                                    <i class="fa-solid fa-gas-pump"></i>
+                                                    Aguardando confirmaÃ§Ã£o
+                                                </span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <div style="display:flex; flex-direction:column; align-items:flex-start; gap:6px;">
+                                                <a href="?tab=frentista&view=tarefas&mode=form&id=<?= (int) $os['id'] ?>" title="Ver detalhes da ordem" style="display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:7px; background:#1f2937; color:#fff; text-decoration:none; font-size:11px; font-weight:700;">
+                                                    <i class="fas fa-eye"></i> Ver detalhes
+                                                </a>
+                                                <?php if($frentistaConfirmou): ?>
+                                                <?php else: ?>
+                                                    <a href="?tab=frentista&view=tarefas&mode=form&id=<?= (int) $os['id'] ?>" title="Confirmar Abastecimento" style="display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border-radius:7px; background:#16a34a; color:#fff; text-decoration:none; font-size:11px; font-weight:700;">
+                                                        <i class="fas fa-check-circle"></i> Aprovar Abastecimento
+                                                    </a>
+                                                <?php endif; ?>
+                                            </div>
+                                        </td>
+                                    <?php else: ?>
+                                        <?php $fluxoOs = resumirFluxoOrdemServico($os); ?>
+                                        <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
+                                        <td>Ordem de ServiÃ§o</td>
+                                        <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime((string) $os['data_saida'])) : '-' ?></td>
+                                        <td><?= htmlspecialchars((string) ($os['condutor'] ?? '-')) ?></td>
+                                        <td>
+                                            <span style="display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; border:1px solid <?= htmlspecialchars($fluxoOs['bd']) ?>; background:<?= htmlspecialchars($fluxoOs['bg']) ?>; color:<?= htmlspecialchars($fluxoOs['fg']) ?>; font-weight:700; font-size:11px;">
+                                                <?= htmlspecialchars($fluxoOs['label']) ?>
+                                            </span>
+                                            <?php if(trim((string) ($fluxoOs['hint'] ?? '')) !== ''): ?>
+                                                <div style="margin-top:4px; color:#6b7280; font-size:11px; font-weight:600;"><?= htmlspecialchars($fluxoOs['hint']) ?></div>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if($tab == 'transporte' && $view == 'entrada'): ?>
+                                                <a href="?tab=transporte&view=entrada&mode=form&id=<?= (int) $os['id'] ?>" title="Editar Ordem" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-pen-to-square"></i></a>
+                                                <?php if($fluxoOs['key'] === 'abastecida_frentista'): ?>
+                                                    <form method="POST" style="display:inline-block; margin-right:8px;">
+                                                        <input type="hidden" name="id" value="<?= (int) $os['id'] ?>">
+                                                        <button type="submit" name="finalizar_os" title="Finalizar Ordem no Transporte" style="border:0; background:#166534; color:#fff; border-radius:6px; padding:5px 8px; font-size:11px; font-weight:700; cursor:pointer;">
+                                                            Finalizar
+                                                        </button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            <?php elseif($tab == 'gestao_frota' && $view == 'recebidos'): ?>
+                                                <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Ver Abastecimento" style="margin-right:8px; color:#1f2937;"><i class="fas fa-eye"></i></a>
+                                                <?php if(empty($os['abastecido_em'])): ?>
+                                                    <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Preencher Abastecimento" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-gas-pump"></i></a>
+                                                <?php else: ?>
+                                                    <span style="margin-right:8px; color:#6b7280; font-size:11px; font-weight:700;">Bloqueado</span>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+                                            <a href="?doc=os&id=<?= (int) $os['id'] ?>&fmt=download" target="_blank" title="Baixar PDF" style="margin-right:8px; color:#2c3e50;"><i class="fas fa-file-pdf"></i></a>
+                                        </td>
+                                    <?php endif; ?>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="5" style="text-align:center; color:#777;">Sem registos para esta vista.</td>
+                                <td colspan="<?= ($tab == 'gestao_frota' && $view == 'relatorio_consumo') ? '10' : (($tab == 'frentista' && $view == 'tarefas') ? '7' : (($tab == 'frentista' && $view == 'abastecimentos') ? '8' : (((($tab == 'transporte' && $view == 'entrada') || ($tab == 'gestao_frota' && $view == 'recebidos')) ? '6' : '5')))) ?>" style="text-align:center; color:#777;">
+                                    <?php if($tab == 'aluguer' && false): ?>
+                                        Sem registos de aluguer nesta vista. Crie uma Ordem de ServiÃ§o com tipo de serviÃ§o "Aluguer" para alimentar esta lista.
+                                    <?php elseif($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
+                                        Sem registos para o RelatÃ³rio Geral com os filtros aplicados.
+                                    <?php else: ?>
+                                        Sem registos para esta vista.
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
+                <?php endif; ?>
                 <?php endif; ?>
             </div>
         </div>
@@ -5223,7 +8873,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             <div class="section-title">DecisÃ£o do Gestor para Gerar OS</div>
                             <div class="form-group"><label>Viatura/MÃ¡quina</label><input type="text" name="viatura_id_os" required placeholder="Ex: CAT-320D / AF-582-MC"></div>
                             <div class="form-group"><label>MatrÃ­cula</label><input type="text" name="matricula_os" placeholder="Opcional"></div>
-                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">CamiÃ£o</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">PÃ¡ Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
+                            <div class="form-group"><label>Tipo Equipamento</label><select name="tipo_equipamento_os" required><option value="camiao">CamiÃ£o</option><option value="pickup">Pickup</option><option value="escavadora">Escavadora</option><option value="pa_carregadora">P? Carregadora</option><option value="gerador">Gerador</option><option value="outro" selected>Outro</option></select></div>
                             <div class="form-group"><label>Condutor</label><input type="text" name="condutor_os" value="A Definir"></div>
                             <div class="form-group"><label>Gestor de Transporte</label><input type="text" name="gestor_transporte_os" value="<?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? '')) ?>" required></div>
                             <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
@@ -5291,124 +8941,152 @@ if($tab === 'transporte' && $view === 'presencas') {
             <div class="white-card">
                 <div class="inner-nav">
                     <h3 style="text-transform: uppercase;">Ordem de ServiÃ§o - Gestor de Transporte</h3>
-                    <div style="display:flex; gap:8px;"><a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar Ã  Lista</a><button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button></div>
+                    <div style="display:flex; gap:8px;">
+                        <a href="?tab=transporte&view=entrada&mode=list" class="btn-mode">Voltar Ã  Lista</a>
+                        <?php if(!empty($os_form) && (int) ($os_form['id'] ?? 0) > 0): ?>
+                            <a href="?doc=os&id=<?= (int) $os_form['id'] ?>&fmt=download" target="_blank" class="btn-mode"><i class="fas fa-file-pdf"></i> Baixar PDF</a>
+                        <?php else: ?>
+                            <button type="button" class="btn-mode" disabled title="Salve a ordem primeiro para baixar o PDF"><i class="fas fa-file-pdf"></i> Baixar PDF</button>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
                 <form method="POST" class="form-grid">
+                    <?php if(!empty($os_form) && (int) ($os_form['id'] ?? 0) > 0): ?>
+                        <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
+                    <?php endif; ?>
                     <div class="section-title">1. Detalhes - Gestor de Transporte</div>
                     <div class="form-group">
                         <label>NÃºmero OS</label>
-                        <input type="text" value="<?= htmlspecialchars($proximo_id_os) ?>" readonly>
+                        <input type="text" value="<?= !empty($os_form) && (int) ($os_form['id'] ?? 0) > 0 ? ('OS-' . date('Y') . '-' . str_pad((string) ((int) $os_form['id']), 4, '0', STR_PAD_LEFT)) : htmlspecialchars($proximo_id_os) ?>" readonly>
                     </div>
                     <div class="form-group">
                         <label>Hora da SolicitaÃ§Ã£o</label>
-                        <input type="datetime-local" name="data_saida" required value="<?= date('Y-m-d\TH:i') ?>">
+                        <input type="datetime-local" name="data_saida" value="<?= !empty($os_form['data_saida']) ? htmlspecialchars(date('Y-m-d\TH:i', strtotime((string) $os_form['data_saida']))) : date('Y-m-d\TH:i') ?>">
                     </div>
                     <div class="form-group">
                         <label>Empresa/Cliente</label>
-                        <input type="text" name="empresa_cliente" required placeholder="Ex: CIMPOR / Cliente X">
+                        <input type="text" name="empresa_cliente" value="<?= htmlspecialchars((string) ($os_form['empresa_cliente'] ?? '')) ?>" placeholder="Ex: CIMPOR / Cliente X">
                     </div>
                     <div class="form-group">
                         <label>Projeto</label>
-                        <input type="text" name="projeto_os" required placeholder="Ex: PROJ-001">
+                        <input type="text" name="projeto_os" value="<?= htmlspecialchars((string) ($os_form['projeto'] ?? '')) ?>" placeholder="Preenchido pelo Gestor de Frotas" readonly>
+                        <small style="color:#6b7280; display:block; margin-top:4px;">Campo para preenchimento do Gestor de Frotas.</small>
                     </div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
-                        <input type="text" name="viatura_id" required placeholder="Ex: CAT-320D">
+                        <input type="text" name="viatura_id" value="<?= htmlspecialchars((string) ($os_form['viatura_id'] ?? '')) ?>" placeholder="Ex: CAT-320D">
                     </div>
                     <div class="form-group">
                         <label>MatrÃ­cula</label>
-                        <input type="text" name="matricula" required placeholder="Ex: AF-582-MC">
+                        <input type="text" name="matricula" value="<?= htmlspecialchars((string) ($os_form['matricula'] ?? '')) ?>" placeholder="Ex: AF-582-MC">
                     </div>
                     <div class="form-group">
                         <label>Tipo de MÃ¡quina / Viatura</label>
-                        <select id="tipo_equipamento" name="tipo_equipamento" required>
+                        <select id="tipo_equipamento" name="tipo_equipamento">
                             <option value="">Selecionar</option>
-                            <option value="camiao">CamiÃ£o</option>
-                            <option value="pickup">Pickup</option>
-                            <option value="escavadora">Escavadora</option>
-                            <option value="pa_carregadora">PÃ¡ Carregadora</option>
-                            <option value="gerador">Gerador</option>
-                            <option value="outro">Outro</option>
+                            <option value="camiao" <?= (($os_form['tipo_equipamento'] ?? '') === 'camiao') ? 'selected' : '' ?>>CamiÃ£o</option>
+                            <option value="pickup" <?= (($os_form['tipo_equipamento'] ?? '') === 'pickup') ? 'selected' : '' ?>>Pickup</option>
+                            <option value="escavadora" <?= (($os_form['tipo_equipamento'] ?? '') === 'escavadora') ? 'selected' : '' ?>>Escavadora</option>
+                            <option value="pa_carregadora" <?= (($os_form['tipo_equipamento'] ?? '') === 'pa_carregadora') ? 'selected' : '' ?>>PÃ¡ Carregadora</option>
+                            <option value="gerador" <?= (($os_form['tipo_equipamento'] ?? '') === 'gerador') ? 'selected' : '' ?>>Gerador</option>
+                            <option value="outro" <?= (($os_form['tipo_equipamento'] ?? '') === 'outro') ? 'selected' : '' ?>>Outro</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Condutor / Motorista</label>
-                        <input type="text" name="condutor" required>
+                        <input type="text" name="condutor" value="<?= htmlspecialchars((string) ($os_form['condutor'] ?? '')) ?>">
                     </div>
                     <div class="section-title">SaÃ­da</div>
                     <div class="form-group">
                         <label>Local de SaÃ­da</label>
-                        <input type="text" id="local_saida_os" name="local_saida" required>
+                        <input type="text" id="local_saida_os" name="local_saida" value="<?= htmlspecialchars((string) ($os_form['local_saida'] ?? '')) ?>">
                     </div>
                     <div class="form-group">
                         <label>Hora de SaÃ­da</label>
-                        <input type="time" name="hora_saida" required>
+                        <input type="time" name="hora_saida" value="<?= !empty($os_form['hora_saida']) ? htmlspecialchars(substr((string) $os_form['hora_saida'], 0, 5)) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>KM inicial</label>
-                        <input type="number" name="km_saida" min="0" required>
+                        <input type="number" name="km_saida" min="0" value="<?= htmlspecialchars((string) ($os_form['km_saida'] ?? '')) ?>">
                     </div>
                     <div class="section-title">Chegada</div>
                     <div class="form-group">
                         <label>Ponto de Chegada / Destino</label>
-                        <input type="text" id="destino_os" name="destino" required>
+                        <input type="text" id="destino_os" name="destino" value="<?= htmlspecialchars((string) ($os_form['destino'] ?? '')) ?>">
                     </div>
                     <div class="form-group">
                         <label>Hora de Chegada</label>
-                        <input type="time" name="hora_chegada" required>
+                        <input type="time" name="hora_chegada" value="<?= !empty($os_form['hora_chegada']) ? htmlspecialchars(substr((string) $os_form['hora_chegada'], 0, 5)) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>KM final (na chegada)</label>
-                        <input type="number" name="km_chegada_os" min="0" required>
+                        <input type="number" name="km_chegada_os" min="0" placeholder="Preenchido pelo Gestor de Frotas" value="<?= htmlspecialchars((string) ($os_form['km_chegada'] ?? '')) ?>" readonly>
+                        <small style="color:#6b7280; display:block; margin-top:4px;">Campo para preenchimento do Gestor de Frotas.</small>
                     </div>
                     <div class="section-title">ServiÃ§o</div>
                     <div class="form-group">
                         <label>Tipo de ServiÃ§o</label>
-                        <select name="tipo_servico" required>
+                        <select name="tipo_servico">
                             <option value="">Selecionar</option>
-                            <option value="Interno">Interno</option>
-                            <option value="PrestaÃ§Ã£o de ServiÃ§o">PrestaÃ§Ã£o de ServiÃ§o</option>
-                            <option value="Aluguer">Aluguer</option>
+                            <option value="Interno" <?= (($os_form['tipo_servico'] ?? '') === 'Interno') ? 'selected' : '' ?>>Interno</option>
+                            <option value="PrestaÃ§Ã£o de ServiÃ§o" <?= (($os_form['tipo_servico'] ?? '') === 'PrestaÃ§Ã£o de ServiÃ§o') ? 'selected' : '' ?>>PrestaÃ§Ã£o de ServiÃ§o</option>
+                            <option value="Aluguer" <?= (($os_form['tipo_servico'] ?? '') === 'Aluguer') ? 'selected' : '' ?>>Aluguer</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Hora de InÃ­cio do ServiÃ§o</label>
-                        <input type="time" name="servico_inicio" required>
+                        <input type="time" name="servico_inicio" value="<?= !empty($os_form['servico_inicio']) ? htmlspecialchars(substr((string) $os_form['servico_inicio'], 0, 5)) : '' ?>">
                     </div>
                     <div class="form-group">
                         <label>Hora de Fim do ServiÃ§o</label>
-                        <input type="time" name="servico_fim" required>
+                        <input type="time" name="servico_fim" value="<?= !empty($os_form['servico_fim']) ? htmlspecialchars(substr((string) $os_form['servico_fim'], 0, 5)) : '' ?>">
                     </div>
                     <div class="form-group">
-                        <label>Quantidade Inicial Abastecida (L)</label>
-                        <input type="number" name="quantidade_inicial_l" min="0" step="0.01" required>
+                        <label>Quantidade a ser Abastecida (L)</label>
+                        <input type="number" name="quantidade_inicial_l" min="0" step="0.01" placeholder="Preenchido pelo Gestor de Frotas" value="<?= htmlspecialchars((string) ($os_form['quantidade_inicial_l'] ?? '')) ?>">
+                        <small style="color:#6b7280; display:block; margin-top:4px;">Campo para preenchimento do Gestor de Frotas.</small>
                     </div>
                     <div class="form-group">
                         <label>Gestor de Transporte</label>
-                        <input type="text" name="autorizado_por" required>
+                        <input type="text" name="autorizado_por" value="<?= htmlspecialchars((string) (($os_form['autorizado_por'] ?? '') !== '' ? $os_form['autorizado_por'] : ($_SESSION['usuario_nome'] ?? ''))) ?>">
                     </div>
                     <div class="section-title">2. DescriÃ§Ã£o do ServiÃ§o a ser Realizado</div>
                     <div class="form-group" style="grid-column: span 4;">
                         <label>DescriÃ§Ã£o</label>
-                        <textarea name="atividade_prevista" rows="4" required placeholder="Descreva a atividade da ordem de serviÃ§o..."></textarea>
+                        <textarea name="atividade_prevista" rows="4" placeholder="Descreva a atividade da ordem de serviÃ§o..."><?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '')) ?></textarea>
                     </div>
-                    <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de ServiÃ§o</button>
+                    <?php
+                        $isFinalizadaForm = !empty($os_form) && ((string) ($os_form['status'] ?? '') === 'Finalizada');
+                        $podeFinalizarForm = !empty($os_form) && !empty($os_form['abastecido_em']) && !$isFinalizadaForm;
+                    ?>
+                    <div style="grid-column: span 4; display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+                        <small style="color:#6b7280; font-weight:600;">Pode salvar com dados parciais e completar depois.</small>
+                        <div style="display:flex; gap:8px;">
+                            <?php if($podeFinalizarForm): ?>
+                                <button type="submit" name="finalizar_os" class="btn-save" style="background:#166534;">Finalizar Ordem</button>
+                            <?php endif; ?>
+                            <?php if(!$isFinalizadaForm): ?>
+                                <button type="submit" name="salvar_os" class="btn-save" style="background:var(--success);">Salvar Ordem de ServiÃ§o</button>
+                            <?php else: ?>
+                                <button type="button" class="btn-save" style="background:#6b7280; cursor:not-allowed;" disabled>Ordem Finalizada</button>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </form>
             </div>
         </div>
     <?php endif; ?>
-    <?php if($mode == 'form' && $tab == 'hse' && $view == 'checklist'): ?>
+    <?php if($mode == 'form' && ($tab == 'hse' || $tab == 'transporte') && $view == 'checklist'): ?>
+        <?php $tabChecklistUi = ($tab === 'hse') ? 'hse' : 'transporte'; ?>
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">Checklist - Validacao</h3>
+                    <h3 style="text-transform: uppercase;">Checklist - ValidaÃ§Ã£o</h3>
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=hse&view=checklist&mode=list" class="btn-mode">Voltar a Lista</a>
+                        <a href="?tab=<?= $tabChecklistUi ?>&view=checklist&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -5417,76 +9095,21 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php elseif(!$template_checklist_form): ?>
                     <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione um checklist para preencher.</div>
                 <?php else: ?>
-                    <?php
-                        $codigoChecklistAtual = strtoupper((string) ($template_checklist_form['codigo'] ?? ''));
-                        $isHammerChecklist = $codigoChecklistAtual === 'VIL.F.QAS.34';
-                        $isBulldozerChecklist = $codigoChecklistAtual === 'VIL.F.QAS.35';
-                        $isBasculanteChecklist = $codigoChecklistAtual === 'VIL.F.QAS.41';
-                    ?>
-                    <?php if(!$isBasculanteChecklist && !$isBulldozerChecklist): ?>
                     <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:18px;">
                         <div><strong>Checklist:</strong> <?= htmlspecialchars(codigoChecklistVisivel($template_checklist_form['id'] ?? 0)) ?></div>
                         <div><strong>Tipo:</strong> <?= htmlspecialchars((string) ($template_checklist_form['tipo_equipamento'] ?? '')) ?></div>
                         <div><strong>Periodicidade:</strong> <?= htmlspecialchars((string) ($template_checklist_form['periodicidade'] ?? '')) ?></div>
                         <div><strong>Nome:</strong> <?= htmlspecialchars(limparTituloChecklist((string) ($template_checklist_form['nome'] ?? ''))) ?></div>
                     </div>
-                    <?php endif; ?>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="template_id" value="<?= (int) $template_checklist_form['id'] ?>">
-                        <input type="hidden" name="codigo_template_chk" value="<?= htmlspecialchars(strtoupper((string) ($template_checklist_form['codigo'] ?? ''))) ?>">
-                        <?php if($isBasculanteChecklist || $isBulldozerChecklist): ?>
-                        <div style="grid-column: span 4; border:2px solid #666; background:#e4e4e4; margin-bottom:10px;">
-                            <div style="display:grid; grid-template-columns: 1.2fr 2.6fr 0.9fr; border-bottom:2px solid #666;">
-                                <div style="padding:8px; border-right:2px solid #666; display:flex; align-items:center; justify-content:center;">
-                                    <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon" style="max-width:180px; width:100%; height:auto;">
-                                </div>
-                                <div style="padding:8px; border-right:2px solid #666; text-align:center;">
-                                    <?php if($isBasculanteChecklist): ?>
-                                    <div style="font-size:36px; font-weight:800; line-height:1.1;">CAMIAO BASCULANTE</div>
-                                    <div style="font-size:36px; font-weight:800; color:#006fc4; line-height:1.1;">TIPPER TRUCK</div>
-                                    <?php else: ?>
-                                    <div style="font-size:36px; font-weight:800; line-height:1.1;">BULLDOZER</div>
-                                    <div style="font-size:28px; font-weight:800; color:#006fc4; line-height:1.1;">WEEKLY CHECKLIST</div>
-                                    <?php endif; ?>
-                                </div>
-                                <div style="padding:8px; display:flex; align-items:center; justify-content:center;">
-                                    <img src="/vilcon-systemon/public/assets/img/vilcon-truck.jpg" alt="Truck" style="max-width:170px; width:100%; height:auto;">
-                                </div>
-                            </div>
-                            <div style="display:grid; grid-template-columns: 1fr; border-bottom:1px solid #666;">
-                                <div style="background:#ffc400; font-weight:800; padding:4px 8px; text-align:center;">SHE MANAGEMENT SYSTEM</div>
-                            </div>
-                            <div style="display:grid; grid-template-columns: 1.5fr 2.5fr;">
-                                <div style="padding:6px 8px; border-right:1px solid #666; text-align:center; font-weight:800;">
-                                    <?php if($isBasculanteChecklist): ?>
-                                    LISTA DE VERIFICACAO DE PRE-UTILIZACAO DO BASCULANTE / TIPPING TRUCK PRE-USE CHECKLIST
-                                    <?php else: ?>
-                                    LISTA DE VERIFICACAO DE PRE-UTILIZACAO DO BULLDOZER / BULLDOZER WEEKLY CHECKLIST
-                                    <?php endif; ?>
-                                </div>
-                                <div style="padding:6px 8px;"></div>
-                            </div>
-                        </div>
-                        <?php endif; ?>
-                        <div class="section-title">Dados da Inspecao</div>
+                        <div class="section-title">Dados da InspecÃ§Ã£o</div>
                         <div class="form-group">
-                            <label>Data da Inspecao</label>
+                            <label>Data da InspecÃ§Ã£o</label>
                             <input type="date" name="data_inspecao_chk" value="<?= date('Y-m-d') ?>" required>
                         </div>
                         <div class="form-group">
-                            <label>Ordem</label>
-                            <input type="text" name="ordem_chk" placeholder="Referencia da ordem">
-                        </div>
-                        <div class="form-group">
-                            <label>Data da Ordem</label>
-                            <input type="text" name="data_ordem_chk" placeholder="dd/mm/aaaa">
-                        </div>
-                        <div class="form-group">
-                            <label>Validade</label>
-                            <input type="text" name="validade_chk" placeholder="dd/mm/aaaa">
-                        </div>
-                        <div class="form-group">
-                            <label>Viatura / Maquina</label>
+                            <label>Viatura / MÃ¡quina</label>
                             <input type="text" name="viatura_id_chk" required>
                         </div>
                         <div class="form-group">
@@ -5499,462 +9122,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </div>
                         <div class="form-group">
                             <label>Condutor</label>
-                            <input type="text" name="condutor_chk" placeholder="Se nao tiver, deixar vazio">
-                            <div class="calc-note">Se nao houver condutor, fica como "Nao informado".</div>
-                        </div>
-                        <div class="form-group">
-                            <label>Motorista/Operador</label>
-                            <input type="text" name="motorista_operador_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>Data Partida</label>
-                            <input type="text" name="data_partida_chk" placeholder="dd/mm/aaaa">
-                        </div>
-                        <div class="form-group">
-                            <label>Data Regresso</label>
-                            <input type="text" name="data_regresso_chk" placeholder="dd/mm/aaaa">
-                        </div>
-                        <div class="form-group">
-                            <label>Cliente</label>
-                            <input type="text" name="cliente_chk">
-                        </div>
-                        <div class="form-group" style="grid-column: span 4;">
-                            <label>Servico / Descricoes</label>
-                            <textarea name="servico_chk" rows="2" placeholder="Descricao do servico"></textarea>
+                            <input type="text" name="condutor_chk">
                         </div>
                         <div class="form-group">
                             <label>Inspector</label>
                             <input type="text" name="inspector_chk" required>
                         </div>
-                        <?php if($isHammerChecklist): ?>
-                        <div class="section-title">Cabecalho do Formulario</div>
-                        <div class="form-group">
-                            <label>CONTRACTOR / CONTRATANTE</label>
-                            <input type="text" name="contractor_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>SUBCONTRATOR / SUBCONTRATANTE</label>
-                            <input type="text" name="subcontractor_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>LOCATION / LOCALIZACAO</label>
-                            <input type="text" name="location_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>SUPERVISOR NAME / NOME DO SUPERVISOR</label>
-                            <input type="text" name="supervisor_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>FRONT OF SERVICE / FRENTE DO SERVICO</label>
-                            <input type="text" name="front_service_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>SERIAL NUMBER / NUMERO DA SERIE</label>
-                            <input type="text" name="serial_number_chk">
-                        </div>
-                        <div class="form-group">
-                            <label>FREQUENCY OF INSPECTION / FREQUENCIA DA INSPECAO</label>
-                            <input type="text" name="frequencia_inspecao_chk">
-                        </div>
-
-                        <div class="section-title">Descricao - Semana (Monday to Sunday)</div>
-                        <div style="grid-column: span 4; overflow:auto;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th rowspan="3">#</th>
-                                        <th rowspan="3">DESCRIPTION / DESCRICAO</th>
-                                        <th colspan="3">MONDAY</th>
-                                        <th colspan="3">TUESDAY</th>
-                                        <th colspan="3">WEDNESDAY</th>
-                                        <th colspan="3">THURSDAY</th>
-                                        <th colspan="3">FRIDAY</th>
-                                        <th colspan="3">SATURDAY</th>
-                                        <th colspan="3">SUNDAY</th>
-                                        <th rowspan="3">Observacao</th>
-                                    </tr>
-                                    <tr>
-                                        <th colspan="3">Segunda-feira</th>
-                                        <th colspan="3">Terca-feira</th>
-                                        <th colspan="3">Quarta-feira</th>
-                                        <th colspan="3">Quinta-feira</th>
-                                        <th colspan="3">Sexta-feira</th>
-                                        <th colspan="3">Sabado</th>
-                                        <th colspan="3">Domingo</th>
-                                    </tr>
-                                    <tr>
-                                        <th colspan="21">Validacao</th>
-                                    </tr>
-                                    <tr>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>Y</th><th>N</th><th>N/A</th>
-                                        <th>Y</th><th>N</th><th>N/A</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                        $diasSemana = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-                                        $itensLista = array_values($itens_checklist_form);
-                                        for($linha = 1; $linha <= 46; $linha++):
-                                            $it = $itensLista[$linha - 1] ?? null;
-                                            $itemId = (int) ($it['id'] ?? 0);
-                                            $descricaoItem = (string) ($it['descricao'] ?? '');
-                                    ?>
-                                        <tr>
-                                            <td><?= $linha ?></td>
-                                            <td><?= htmlspecialchars($descricaoItem) ?></td>
-                                            <?php foreach($diasSemana as $dia): ?>
-                                                <?php if($itemId > 0): ?>
-                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="Y"></td>
-                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="N"></td>
-                                                    <td><input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="NA" checked></td>
-                                                <?php else: ?>
-                                                    <td><input type="radio" disabled></td>
-                                                    <td><input type="radio" disabled></td>
-                                                    <td><input type="radio" checked disabled></td>
-                                                <?php endif; ?>
-                                            <?php endforeach; ?>
-                                            <?php if($itemId > 0): ?>
-                                                <td><input type="text" name="observacao_item[<?= $itemId ?>]" placeholder="Observacao"></td>
-                                            <?php else: ?>
-                                                <td><input type="text" placeholder="Observacao" disabled></td>
-                                            <?php endif; ?>
-                                        </tr>
-                                    <?php endfor; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div style="grid-column: span 4; background:#f8fbff; border:1px solid #d9e4f2; border-radius:8px; padding:10px; color:#2c3e50; font-size:12px;">
-                            <div><strong>RESPONSAVEL PELA INSPECAO / RESPONSIBLE FOR INSPECTION</strong></div>
-                            <div>DATE: DATE: DATE: DATE: DATE: DATE: DATE:</div>
-                            <div>Signature: Signature: Signature: Signature: Signature: Signature: Signature:</div>
-                            <div style="margin-top:8px;">NOTE: If there is an answer of no to any item, do not perform the service until Safety assessment.</div>
-                            <div>NA: Not Applicable / Nao Aplicavel</div>
-                            <div style="margin-top:8px;">RECOMMENDATIONS AND COMMENTS / RECOMENDACOES E COMENTARIOS</div>
-                        </div>
-                        <?php elseif($isBulldozerChecklist): ?>
-                        <?php $diasSemanaBulldozer = ['monday','tuesday','wednesday','thursday','friday','saturday']; ?>
-                        <div class="section-title">Bulldozer Weekly Checklist</div>
-                        <div style="grid-column: span 4; overflow:auto; page-break-after: always;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th rowspan="2">Item</th>
-                                        <th rowspan="2">Description / Descricao</th>
-                                        <th colspan="3">SEGUNDA / MONDAY</th>
-                                        <th colspan="3">TERCA / TUESDAY</th>
-                                        <th colspan="3">QUARTA / WEDNESDAY</th>
-                                        <th colspan="3">QUINTA / THURSDAY</th>
-                                        <th colspan="3">SEXTA / FRIDAY</th>
-                                        <th colspan="3">SABADO / SATURDAY</th>
-                                        <th rowspan="2">Obs.</th>
-                                    </tr>
-                                    <tr>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach($itens_checklist_form as $it): ?>
-                                        <?php
-                                            $itemId = (int) ($it['id'] ?? 0);
-                                            $descricaoFull = trim((string) ($it['descricao'] ?? ''));
-                                            $itemCodigo = '';
-                                            $itemDescricao = $descricaoFull;
-                                            if(preg_match('/^([0-9]+(?:\.[0-9]+)?)\s+(.+)$/', $descricaoFull, $mBul)) {
-                                                $itemCodigo = (string) $mBul[1];
-                                                $itemDescricao = (string) $mBul[2];
-                                            }
-                                            $isSubtitulo = preg_match('/^[0-9]+$/', $itemCodigo) === 1;
-                                            $subtituloTexto = preg_replace('/^[0-9]+\s*/', '', $descricaoFull);
-                                        ?>
-                                        <?php if($isSubtitulo): ?>
-                                            <tr>
-                                                <td colspan="21" style="background:#ffc400; font-weight:800; color:#111; text-transform:uppercase;">
-                                                    <?= htmlspecialchars($subtituloTexto) ?>
-                                                </td>
-                                            </tr>
-                                        <?php else: ?>
-                                            <tr>
-                                                <td><?= htmlspecialchars($itemCodigo !== '' ? $itemCodigo : '-') ?></td>
-                                                <td><?= htmlspecialchars($itemDescricao) ?></td>
-                                                <?php foreach($diasSemanaBulldozer as $dia): ?>
-                                                    <td>
-                                                        <label class="week-choice">
-                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="Y">
-                                                            <span class="week-mark">&#10004;</span>
-                                                        </label>
-                                                    </td>
-                                                    <td>
-                                                        <label class="week-choice">
-                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="N">
-                                                            <span class="week-mark">X</span>
-                                                        </label>
-                                                    </td>
-                                                    <td>
-                                                        <label class="week-choice">
-                                                            <input type="radio" name="resultado_semana[<?= $itemId ?>][<?= $dia ?>]" value="NA">
-                                                            <span class="week-mark">A</span>
-                                                        </label>
-                                                    </td>
-                                                <?php endforeach; ?>
-                                                <td><input type="text" name="observacao_item[<?= $itemId ?>]" placeholder="Observacao"></td>
-                                            </tr>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="section-title">Registos e Assinaturas</div>
-                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px;">
-                            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
-                                <div class="form-group"><label>Operator's Name and Signature / Nome & Assinatura do Operador</label><input type="text" name="operator_name_signature_chk"></div>
-                                <div class="form-group"><label>Construction Supervisor (CS) Name and Signature / Assinatura do Supervisor (CS)</label><input type="text" name="cs_name_signature_chk"></div>
-                                <div class="form-group"><label>SHE Name and Signature / Nome & Assinatura do SHE</label><input type="text" name="she_name_signature_chk"></div>
-                                <div class="form-group"><label>Date / Data</label><input type="text" name="registo_date_chk" placeholder="dd/mm/aaaa"></div>
-                            </div>
-                            <div style="margin-top:8px; font-size:12px; color:#2c3e50;">
-                                Observe todos os desvios no registo de accao correctiva, corrija os desvios e arquive para auditoria.
-                            </div>
-                        </div>
-
-                        <div class="section-title">Faults found / Deficiencias encontradas</div>
-                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; page-break-after: always;">
-                            <div class="form-group"><label>Faults found / Deficiencias encontradas</label><textarea name="faults_found_chk" rows="4"></textarea></div>
-                            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
-                                <div class="form-group"><label>Date / Data</label><input type="text" name="faults_datetime_chk" placeholder="dd/mm/aaaa"></div>
-                                <div class="form-group"><label>Risk Level / Nivel de risco</label><input type="text" name="faults_reported_workshop_chk" placeholder="HIGH / MEDIUM / LOW"></div>
-                                <div class="form-group"><label>Signature (CS) / Assinatura (CS)</label><input type="text" name="faults_signature_chk"></div>
-                            </div>
-                        </div>
-
-                        <div class="section-title">Risk Level / Control Measure</div>
-                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; font-size:12px; color:#2c3e50;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th style="background:#d9d9d9; color:#111; font-weight:700;">Risk Level</th>
-                                        <th>Control Measure</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td style="background:#ff0000; color:#003a9a; font-weight:700; text-align:center;"><strong>HIGH/ALTO</strong></td>
-                                        <td>Do not operate. Remove from service. Store as Out of Order. Nao operar ate reparacao e analise 5-Porque.</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="background:#ffff00; color:#003a9a; font-weight:700; text-align:center;"><strong>MEDIUM/MEDIO</strong></td>
-                                        <td>Could be used until end of shift, but repair before next shift. Supervisor faz analise informal das causas.</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="background:#00cc66; color:#003a9a; font-weight:700; text-align:center;"><strong>LOW/BAIXO</strong></td>
-                                        <td>Can be fixed in next scheduled maintenance. Reportar condicao ao supervisor.</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <?php elseif($isBasculanteChecklist): ?>
-                        <?php
-                            $pagina1 = []; // 1.x ate 4.8
-                            $pagina2 = []; // 5.x ate 6.4
-                            $outros = [];
-                            foreach($itens_checklist_form as $itTmp) {
-                                $descTmp = (string) ($itTmp['descricao'] ?? '');
-                                if(preg_match('/^([1-9])\.(\d+)/', $descTmp, $mTmp)) {
-                                    $sec = (int) $mTmp[1];
-                                    if($sec >= 1 && $sec <= 4) $pagina1[] = $itTmp;
-                                    elseif($sec === 5 || $sec === 6) $pagina2[] = $itTmp;
-                                    else $outros[] = $itTmp;
-                                } else {
-                                    $outros[] = $itTmp;
-                                }
-                            }
-                        ?>
-                        <div class="section-title">1. OPERATOR CERTIFCATION / CERTIFICACAO DE OPERADOR</div>
-                        <?php $diasSemanaBasculante = ['monday','tuesday','wednesday','thursday','friday','saturday']; ?>
-                        <div style="grid-column: span 4; page-break-after: always;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th rowspan="2">Item</th>
-                                        <th colspan="3">SEGUNDA / MONDAY</th>
-                                        <th colspan="3">TERCA / TUESDAY</th>
-                                        <th colspan="3">QUARTA / WEDNESDAY</th>
-                                        <th colspan="3">QUINTA / THURSDAY</th>
-                                        <th colspan="3">SEXTA / FRIDAY</th>
-                                        <th colspan="3">SABADO / SATURDAY</th>
-                                        <th rowspan="2">Obs.</th>
-                                    </tr>
-                                    <tr>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach($pagina1 as $it): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars((string) ($it['descricao'] ?? '')) ?></td>
-                                            <?php foreach($diasSemanaBasculante as $dia): ?>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="Y">
-                                                        <span class="week-mark">&#10004;</span>
-                                                    </label>
-                                                </td>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="N">
-                                                        <span class="week-mark">X</span>
-                                                    </label>
-                                                </td>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="NA">
-                                                        <span class="week-mark">A</span>
-                                                    </label>
-                                                </td>
-                                            <?php endforeach; ?>
-                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="section-title">5. FLUIDS / FLUIDOS e 6. LIGHT / LUZES</div>
-                        <div style="grid-column: span 4; page-break-after: always;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th rowspan="2">Item</th>
-                                        <th colspan="3">SEGUNDA / MONDAY</th>
-                                        <th colspan="3">TERCA / TUESDAY</th>
-                                        <th colspan="3">QUARTA / WEDNESDAY</th>
-                                        <th colspan="3">QUINTA / THURSDAY</th>
-                                        <th colspan="3">SEXTA / FRIDAY</th>
-                                        <th colspan="3">SABADO / SATURDAY</th>
-                                        <th rowspan="2">Obs.</th>
-                                    </tr>
-                                    <tr>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                        <th>&#10004;</th><th>X</th><th>N/A</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach($pagina2 as $it): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars((string) ($it['descricao'] ?? '')) ?></td>
-                                            <?php foreach($diasSemanaBasculante as $dia): ?>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="Y">
-                                                        <span class="week-mark">&#10004;</span>
-                                                    </label>
-                                                </td>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="N">
-                                                        <span class="week-mark">X</span>
-                                                    </label>
-                                                </td>
-                                                <td>
-                                                    <label class="week-choice">
-                                                        <input type="radio" name="resultado_semana[<?= (int) $it['id'] ?>][<?= $dia ?>]" value="NA">
-                                                        <span class="week-mark">A</span>
-                                                    </label>
-                                                </td>
-                                            <?php endforeach; ?>
-                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="section-title">6. HSE Officer, Deficiencias e Reporte</div>
-                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; page-break-after: always;">
-                            <div class="form-group" style="margin-bottom:8px;">
-                                <label>HSE Officer Name and Signature / Nome e Assinatura do official de Seguranca</label>
-                                <input type="text" name="hse_officer_name_chk">
-                            </div>
-                            <div class="form-group" style="margin-bottom:12px;">
-                                <label>Date / Data</label>
-                                <input type="text" name="hse_officer_date_chk" placeholder="dd/mm/aaaa">
-                            </div>
-
-                            <div style="font-weight:700; margin-bottom:8px;">Deficiencias encontradas / Faults found</div>
-                            <div class="form-group"><label>Faults found</label><textarea name="faults_found_chk" rows="3"></textarea></div>
-                            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
-                                <div class="form-group"><label>Data/hora</label><input type="text" name="faults_datetime_chk" placeholder="dd/mm/aaaa hh:mm"></div>
-                                <div class="form-group"><label>Date/time reported to workshop</label><input type="text" name="faults_reported_workshop_chk" placeholder="dd/mm/aaaa hh:mm"></div>
-                                <div class="form-group"><label>Report From / Reportado por</label><input type="text" name="faults_report_from_chk"></div>
-                                <div class="form-group"><label>Signature / Assinatura</label><input type="text" name="faults_signature_chk"></div>
-                            </div>
-                        </div>
-
-                        <div class="section-title">7. Risk Level / Control Measure</div>
-                        <div style="grid-column: span 4; border:1px solid #d9e4f2; border-radius:8px; padding:10px; font-size:12px; color:#2c3e50;">
-                            <table class="history-table">
-                                <thead>
-                                    <tr>
-                                        <th style="background:#d9d9d9; color:#111; font-weight:700;">Risk Level / Control Measure</th>
-                                        <th>Control Measure/Medidas de control</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td style="background:#ff0000; color:#003a9a; font-weight:700; text-align:center;"><strong>HIGH/ALTO</strong></td>
-                                        <td>
-                                            Do not operate. Remove from Service. Store in designated damaged - mark "Out of Order".<br>
-                                            Nao opere. Retire imediatamente da actividade. Armazene no local designado para maquinas avariadas e marque "Avariado".<br>
-                                            Nao pode ser usado ate a reparacao dos problemas. O supervisor tem de fazer uma Analize de 5-Porque.
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="background:#fff200; color:#003a9a; font-weight:700; text-align:center;"><strong>MEDIUM/MEDIO</strong></td>
-                                        <td>
-                                            Could be used until end of current shift, but needs to be repaired before start of next shift.<br>
-                                            Reporte ao supervisor para a verificacao. Pode ser usado para o turno corrente, mas deve ser reparado antes do inicio do proximo turno.<br>
-                                            O supervisor deve fazer uma Analise Informal das Causas.
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="background:#00c853; color:#003a9a; font-weight:700; text-align:center;"><strong>LOW/BAIXO</strong></td>
-                                        <td>
-                                            Can be fixed with next scheduled maintenance.<br>
-                                            Continue a trabalhar mas tem de relatar as condicoes ao supervisor no final do turno.<br>
-                                            O supervisor faz uma Analise Informal das Causas para decidir se a maquina pode ser usada ate a reparacao ou ate a proxima revisao marcada.
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <?php else: ?>
-                        <div class="section-title">Itens do Checklist (&#10004; / &#10006; / N/A)</div>
+                        <div class="section-title">Itens do Checklist (? / ? / N/A)</div>
                         <div style="grid-column: span 4;">
                             <table class="history-table">
                                 <thead>
                                     <tr>
                                         <th>#</th>
                                         <th>Item</th>
-                                        <th>Validacao</th>
+                                        <th>ValidaÃ§Ã£o</th>
                                         <th>Obs.</th>
                                     </tr>
                                 </thead>
@@ -5966,21 +9147,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                                             <td>
                                                 <input type="hidden" name="resultado_item[<?= (int) $it['id'] ?>]" id="resultado_item_<?= (int) $it['id'] ?>" value="na">
                                                 <div style="display:flex; gap:6px; align-items:center;">
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">&#10004;</button>
-                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">&#10006;</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'ok')" id="btn_ok_<?= (int) $it['id'] ?>">?</button>
+                                                    <button type="button" class="btn-mode" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'nok')" id="btn_nok_<?= (int) $it['id'] ?>">?</button>
                                                     <button type="button" class="btn-mode active" onclick="setChecklistResultado(<?= (int) $it['id'] ?>, 'na')" id="btn_na_<?= (int) $it['id'] ?>">N/A</button>
                                                 </div>
                                             </td>
-                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="Observacao"></td>
+                                            <td><input type="text" name="observacao_item[<?= (int) $it['id'] ?>]" placeholder="ObservaÃ§Ã£o"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
                         </div>
-                        <?php endif; ?>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Observacoes Gerais</label>
-                            <textarea name="observacoes_chk" rows="3" placeholder="Observacoes gerais da inspecao..."></textarea>
+                            <label>ObservaÃ§Ãµes Gerais</label>
+                            <textarea name="observacoes_chk" rows="3" placeholder="ObservaÃ§Ãµes gerais da inspeÃ§Ã£o..."></textarea>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                             <button type="submit" name="salvar_checklist" class="btn-save" style="background:var(--vilcon-orange);">Salvar Checklist</button>
@@ -5991,6 +9171,12 @@ if($tab === 'transporte' && $view === 'presencas') {
         </div>
     <?php endif; ?>
     <?php if($mode == 'form' && $tab == 'transporte' && $view == 'pedido_reparacao'): ?>
+        <?php
+            $veiculosReparacaoJson = json_encode(
+                $veiculos_reparacao,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+            ) ?: '[]';
+        ?>
         <div class="container">
             <div class="white-card">
                 <div class="inner-nav">
@@ -6007,7 +9193,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <div class="section-title">Dados da Viatura / MÃ¡quina</div>
                     <div class="form-group">
                         <label>Viatura / Equipamento</label>
-                        <input type="text" id="viatura_id_rep" name="viatura_id_rep" required placeholder="Ex: AF-582-MC">
+                        <input type="text" id="viatura_id_rep" name="viatura_id_rep" list="viatura_id_rep_list" required placeholder="Ex: AF-582-MC" autocomplete="off">
+                        <datalist id="viatura_id_rep_list">
+                            <?php foreach($viaturas_reparacao as $viaturaSug): ?>
+                                <option value="<?= htmlspecialchars((string) $viaturaSug) ?>"></option>
+                            <?php endforeach; ?>
+                        </datalist>
                     </div>
                     <div class="form-group">
                         <label>MatrÃ­cula</label>
@@ -6020,7 +9211,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <div class="form-group">
                         <label>Condutor</label>
-                        <input type="text" id="condutor_rep" name="condutor_rep" required>
+                        <input type="text" id="condutor_rep" name="condutor_rep" list="condutor_rep_list" autocomplete="off" required>
+                        <datalist id="condutor_rep_list">
+                            <?php foreach($condutores_reparacao as $condutorSug): ?>
+                                <option value="<?= htmlspecialchars((string) $condutorSug) ?>"></option>
+                            <?php endforeach; ?>
+                        </datalist>
                     </div>
                     <div class="form-group">
                         <label>KM Atual</label>
@@ -6035,9 +9231,10 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <div class="form-group">
                         <label>Prioridade</label>
                         <select name="prioridade_rep" required>
-                            <option value="Alta">Alta</option>
-                            <option value="Media" selected>MÃ©dia</option>
                             <option value="Baixa">Baixa</option>
+                            <option value="Media" selected>Media</option>
+                            <option value="Alta">Alta</option>
+                            <option value="Critica">Critica</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -6050,6 +9247,186 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
                         <button type="submit" name="salvar_pedido_reparacao" class="btn-save" style="background:var(--vilcon-orange);">Salvar e Enviar para Oficina</button>
+                    </div>
+                </form>
+                <script>
+                ;(function() {
+                    var dados = <?= $veiculosReparacaoJson ?>;
+                    if (!Array.isArray(dados) || dados.length === 0) return;
+
+                    var campoViatura = document.getElementById('viatura_id_rep');
+                    var campoMatricula = document.getElementById('matricula_rep');
+                    var campoCondutor = document.getElementById('condutor_rep');
+                    if (!campoViatura || !campoMatricula || !campoCondutor) return;
+
+                    function norm(v) {
+                        return String(v || '').trim().toUpperCase();
+                    }
+
+                    function procurarPorMatricula(valor) {
+                        var alvo = norm(valor);
+                        if (!alvo) return null;
+                        for (var i = 0; i < dados.length; i++) {
+                            if (norm(dados[i].matricula) === alvo) return dados[i];
+                        }
+                        return null;
+                    }
+
+                    function procurarPorViatura(valor) {
+                        var alvo = norm(valor);
+                        if (!alvo) return null;
+                        for (var i = 0; i < dados.length; i++) {
+                            if (norm(dados[i].viatura_id) === alvo) return dados[i];
+                        }
+                        return null;
+                    }
+
+                    function procurarPrefixoUnico(chave, valor) {
+                        var alvo = norm(valor);
+                        if (!alvo) return null;
+                        var hit = null;
+                        for (var i = 0; i < dados.length; i++) {
+                            var atual = norm(dados[i][chave]);
+                            if (!atual || atual.indexOf(alvo) !== 0) continue;
+                            if (hit) return null;
+                            hit = dados[i];
+                        }
+                        return hit;
+                    }
+
+                    function aplicar(reg, origem) {
+                        if (!reg) return;
+                        if (origem !== 'viatura' && reg.viatura_id && !campoViatura.value) {
+                            campoViatura.value = reg.viatura_id;
+                        }
+                        if (origem !== 'matricula' && reg.matricula && !campoMatricula.value) {
+                            campoMatricula.value = reg.matricula;
+                        }
+                        if (reg.condutor && !campoCondutor.value) {
+                            campoCondutor.value = reg.condutor;
+                        }
+                    }
+
+                    campoMatricula.addEventListener('change', function() {
+                        campoMatricula.value = campoMatricula.value.toUpperCase();
+                        aplicar(procurarPorMatricula(campoMatricula.value), 'matricula');
+                    });
+                    campoMatricula.addEventListener('blur', function() {
+                        campoMatricula.value = campoMatricula.value.toUpperCase();
+                        var reg = procurarPorMatricula(campoMatricula.value) || procurarPrefixoUnico('matricula', campoMatricula.value);
+                        aplicar(reg, 'matricula');
+                    });
+
+                    campoViatura.addEventListener('change', function() {
+                        aplicar(procurarPorViatura(campoViatura.value), 'viatura');
+                    });
+                    campoViatura.addEventListener('blur', function() {
+                        var reg = procurarPorViatura(campoViatura.value) || procurarPrefixoUnico('viatura_id', campoViatura.value);
+                        aplicar(reg, 'viatura');
+                    });
+                })();
+                </script>
+            </div>
+        </div>
+    <?php endif; ?>
+    <?php if($mode == 'form' && $tab == 'transporte' && $view == 'plano_manutencao'): ?>
+        <?php
+            $ativosPlano = [];
+            try {
+                $stPlanoAtivos = $pdo->query("
+                    SELECT
+                        TRIM(COALESCE(NULLIF(codigo, ''), NULLIF(matricula, ''))) AS viatura_id,
+                        TRIM(COALESCE(NULLIF(matricula, ''), NULLIF(codigo, ''))) AS matricula,
+                        TRIM(COALESCE(descricao, '')) AS descricao
+                    FROM transporte_frota_ativos
+                    WHERE COALESCE(ativo, 1) = 1
+                    ORDER BY descricao ASC
+                    LIMIT 400
+                ");
+                $ativosPlano = $stPlanoAtivos ? ($stPlanoAtivos->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+            } catch (Throwable $e) {
+                $ativosPlano = [];
+            }
+        ?>
+        <div class="container">
+            <div class="white-card">
+                <div class="inner-nav">
+                    <h3 style="text-transform: uppercase;">Plano de ManutenÃ§Ã£o - Envio para Oficina</h3>
+                    <div style="display:flex; gap:8px;">
+                        <a href="?tab=transporte&view=plano_manutencao&mode=list" class="btn-mode">Voltar Ã  Lista</a>
+                        <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
+                    </div>
+                </div>
+                <?php if(!empty($erro_form)): ?>
+                    <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
+                <?php endif; ?>
+                <form method="POST" class="form-grid">
+                    <div class="section-title">Dados do Equipamento</div>
+                    <div class="form-group">
+                        <label>Viatura / Equipamento</label>
+                        <input type="text" name="viatura_id_pm" list="pm_viatura_list" placeholder="Ex: TRK-204">
+                        <datalist id="pm_viatura_list">
+                            <?php foreach($ativosPlano as $ap): ?>
+                                <option value="<?= htmlspecialchars((string) ($ap['viatura_id'] ?? '')) ?>"><?= htmlspecialchars((string) ($ap['descricao'] ?? '')) ?></option>
+                            <?php endforeach; ?>
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>MatrÃ­cula / TAG</label>
+                        <input type="text" name="matricula_pm" list="pm_matricula_list" placeholder="Ex: AIU-769-MC" oninput="this.value = this.value.toUpperCase()">
+                        <datalist id="pm_matricula_list">
+                            <?php foreach($ativosPlano as $ap): ?>
+                                <option value="<?= htmlspecialchars((string) ($ap['matricula'] ?? '')) ?>"><?= htmlspecialchars((string) ($ap['descricao'] ?? '')) ?></option>
+                            <?php endforeach; ?>
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo Equipamento</label>
+                        <input type="text" name="tipo_equipamento_pm" required placeholder="Ex: CamiÃ£o / Gerador / Escavadora">
+                    </div>
+                    <div class="form-group">
+                        <label>LocalizaÃ§Ã£o</label>
+                        <input type="text" name="localizacao_pm" placeholder="Ex: Vilankulos">
+                    </div>
+
+                    <div class="section-title">Detalhes da ManutenÃ§Ã£o</div>
+                    <div class="form-group">
+                        <label>Tipo de ManutenÃ§Ã£o</label>
+                        <select name="tipo_manutencao_pm" required>
+                            <option value="Preventiva">Preventiva</option>
+                            <option value="Corretiva">Corretiva</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Data da ManutenÃ§Ã£o</label>
+                        <input type="date" name="data_manutencao_pm" value="<?= date('Y-m-d') ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Prioridade</label>
+                        <select name="prioridade_pm" required>
+                            <option value="Baixa">Baixa</option>
+                            <option value="Media" selected>Media</option>
+                            <option value="Alta">Alta</option>
+                            <option value="Critica">Critica</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>ResponsÃ¡vel TÃ©cnico</label>
+                        <input type="text" name="responsavel_pm" placeholder="Ex: Equipa MecÃ¢nica">
+                    </div>
+                    <div class="form-group">
+                        <label>Solicitante</label>
+                        <input type="text" name="solicitante_pm" value="<?= htmlspecialchars((string) ($_SESSION['usuario_nome'] ?? 'Transporte')) ?>" required>
+                    </div>
+                    <div class="form-group" style="grid-column: span 3;">
+                        <label>DescriÃ§Ã£o do Plano / Trabalho</label>
+                        <textarea name="descricao_trabalho_pm" rows="4" placeholder="Descreva a intervenÃ§Ã£o, itens a verificar e orientaÃ§Ãµes para a Oficina." required></textarea>
+                    </div>
+
+                    <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
+                        <button type="submit" name="salvar_plano_manutencao" class="btn-save" style="background:var(--vilcon-orange);">
+                            Salvar e Enviar para Oficina
+                        </button>
                     </div>
                 </form>
             </div>
@@ -6080,7 +9457,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <div class="calc-note">O relatÃ³rio serÃ¡ preenchido automaticamente com base na OS selecionada.</div>
+                        <div class="calc-note">O relatÃ³rio ser? preenchido automaticamente com base na OS selecionada.</div>
                     </div>
                     <div class="ra-form-fields form-group">
                         <label>Status da OS</label>
@@ -6253,6 +9630,150 @@ if($tab === 'transporte' && $view === 'presencas') {
             </div>
         </div>
     <?php endif; ?>
+    <?php if($mode == 'form' && $tab == 'gestao_frota' && $view == 'projectos'): ?>
+        <div class="container">
+            <div class="white-card">
+                <div class="inner-nav">
+                    <h3 style="text-transform: uppercase;">Projectos - GestÃ£o de CombustÃ­vel</h3>
+                    <div style="display:flex; gap:8px;">
+                        <a href="?tab=gestao_frota&view=projectos&mode=list" class="btn-mode">Voltar Ã  Lista</a>
+                    </div>
+                </div>
+                <?php if(!empty($erro_form)): ?>
+                    <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
+                <?php endif; ?>
+                <form method="POST" class="form-grid">
+                    <input type="hidden" name="projecto_id" value="<?= (int) ($projecto_form['id'] ?? 0) ?>">
+                    <div class="section-title">1. Dados Principais do Projecto</div>
+                    <div class="form-group">
+                        <label>CÃ³digo do Projecto</label>
+                        <input type="text" name="codigo_projecto" value="<?= htmlspecialchars((string) ($projecto_form['codigo'] ?? '')) ?>" placeholder="Ex: PROJ-2026-001">
+                    </div>
+                    <div class="form-group">
+                        <label>Nome do Projecto</label>
+                        <input type="text" name="nome_projecto" value="<?= htmlspecialchars((string) ($projecto_form['nome'] ?? '')) ?>" placeholder="Ex: Obras Vilanculos" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Cliente</label>
+                        <input type="text" name="cliente_projecto" value="<?= htmlspecialchars((string) ($projecto_form['cliente'] ?? '')) ?>" placeholder="Ex: Cliente X">
+                    </div>
+                    <div class="form-group">
+                        <label>LocalizaÃ§Ã£o</label>
+                        <input type="text" name="localizacao_projecto" value="<?= htmlspecialchars((string) ($projecto_form['localizacao'] ?? '')) ?>" placeholder="Ex: Pambarra, Vilanculos">
+                    </div>
+                    <div class="form-group">
+                        <label>Gestor ResponsÃ¡vel</label>
+                        <input type="text" name="gestor_projecto" value="<?= htmlspecialchars((string) ($projecto_form['gestor'] ?? '')) ?>" placeholder="Nome do gestor">
+                    </div>
+                    <div class="form-group">
+                        <label>CombustÃ­vel Planeado (L)</label>
+                        <input type="number" name="combustivel_previsto_projecto" min="0" step="0.01" value="<?= htmlspecialchars((string) ($projecto_form['combustivel_previsto_l'] ?? '')) ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Data InÃ­cio</label>
+                        <input type="date" name="data_inicio_projecto" value="<?= htmlspecialchars((string) ($projecto_form['data_inicio'] ?? '')) ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Data Fim</label>
+                        <input type="date" name="data_fim_projecto" value="<?= htmlspecialchars((string) ($projecto_form['data_fim'] ?? '')) ?>">
+                    </div>
+                    <div class="form-group">
+                        <label>Status</label>
+                        <select name="status_projecto">
+                            <option value="Ativo" <?= (($projecto_form['status'] ?? 'Ativo') === 'Ativo') ? 'selected' : '' ?>>Ativo</option>
+                            <option value="Planeado" <?= (($projecto_form['status'] ?? '') === 'Planeado') ? 'selected' : '' ?>>Planeado</option>
+                            <option value="Em Pausa" <?= (($projecto_form['status'] ?? '') === 'Em Pausa') ? 'selected' : '' ?>>Em Pausa</option>
+                            <option value="Concluido" <?= (($projecto_form['status'] ?? '') === 'Concluido') ? 'selected' : '' ?>>ConcluÃ­do</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column: span 4;">
+                        <label>DescriÃ§Ã£o</label>
+                        <textarea name="descricao_projecto" rows="3" placeholder="Escopo principal, metas e observaÃ§Ãµes do projecto..."><?= htmlspecialchars((string) ($projecto_form['descricao'] ?? '')) ?></textarea>
+                    </div>
+                    <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
+                        <button type="submit" name="salvar_projecto_frota" class="btn-save" style="background:var(--success);"><?= !empty($projecto_form['id']) ? 'Atualizar Projecto' : 'Criar Projecto' ?></button>
+                    </div>
+                </form>
+
+                <?php if(!empty($projecto_form['id'])): ?>
+                    <?php
+                        $litrosPrevDet = (float) ($projecto_form['combustivel_previsto_l'] ?? 0);
+                        $litrosConsDet = (float) ($projecto_resumo['litros_consumidos'] ?? 0);
+                        $saldoDet = $litrosPrevDet - $litrosConsDet;
+                    ?>
+                    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-top:16px; background:#f8fbff; border:1px solid #d9e4f2; border-radius:10px; padding:12px;">
+                        <div><strong>Planeado:</strong> <?= number_format($litrosPrevDet, 2, ',', '.') ?> L</div>
+                        <div><strong>Consumido:</strong> <?= number_format($litrosConsDet, 2, ',', '.') ?> L</div>
+                        <div><strong>Saldo:</strong> <?= number_format($saldoDet, 2, ',', '.') ?> L</div>
+                        <div><strong>Abastecimentos:</strong> <?= (int) ($projecto_resumo['total_abastecimentos'] ?? 0) ?></div>
+                    </div>
+                    <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+                        <a href="?tab=gestao_frota&view=combustivel&mode=list&list_range=all&project=<?= urlencode((string) ($projecto_form['codigo'] ?? '')) ?>&project_nome=<?= urlencode((string) ($projecto_form['nome'] ?? '')) ?>" class="btn-mode" style="background:#0f766e; color:#fff;"><i class="fas fa-gas-pump"></i> Controlar CombustÃ­vel deste Projecto</a>
+                    </div>
+
+                    <div class="section-title" style="margin-top:18px;">2. Abastecimentos do Projecto</div>
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>CÃ³digo</th>
+                                <th>Data</th>
+                                <th>OS / Viatura</th>
+                                <th>Litros</th>
+                                <th>Valor</th>
+                                <th>ResponsÃ¡vel</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if(empty($projecto_abastecimentos)): ?>
+                                <tr><td colspan="6" style="text-align:center; color:#6b7280;">Sem abastecimentos registados para este projecto.</td></tr>
+                            <?php else: ?>
+                                <?php foreach($projecto_abastecimentos as $abProj): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string) ($abProj['codigo'] ?? ('DIE-' . (int) $abProj['id']))) ?></td>
+                                        <td><?= !empty($abProj['data_movimento']) ? date('d/m/Y', strtotime((string) $abProj['data_movimento'])) : '-' ?></td>
+                                        <td><?= ((int) ($abProj['ordem_servico_id'] ?? 0) > 0 ? 'OS-' . str_pad((string) ((int) $abProj['ordem_servico_id']), 4, '0', STR_PAD_LEFT) : '-') . ' / ' . htmlspecialchars((string) ($abProj['viatura_id'] ?? '-')) ?></td>
+                                        <td><?= number_format((float) ($abProj['litros'] ?? 0), 2, ',', '.') ?> L</td>
+                                        <td><?= number_format((float) ($abProj['valor_total'] ?? 0), 2, ',', '.') ?></td>
+                                        <td><?= htmlspecialchars((string) ($abProj['responsavel'] ?? '-')) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+
+                    <div class="section-title" style="margin-top:18px;">3. RelatÃ³rios do Projecto</div>
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>RelatÃ³rio</th>
+                                <th>Data</th>
+                                <th>Viatura</th>
+                                <th>Condutor</th>
+                                <th>DistÃ¢ncia / CombustÃ­vel</th>
+                                <th>AÃ§Ã£o</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if(empty($projecto_relatorios)): ?>
+                                <tr><td colspan="6" style="text-align:center; color:#6b7280;">Sem relatÃ³rios associados a este projecto.</td></tr>
+                            <?php else: ?>
+                                <?php foreach($projecto_relatorios as $relProj): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars((string) ($relProj['codigo'] ?? ('RA-' . (int) $relProj['id']))) ?></td>
+                                        <td><?= !empty($relProj['data_relatorio']) ? date('d/m/Y', strtotime((string) $relProj['data_relatorio'])) : '-' ?></td>
+                                        <td><?= htmlspecialchars((string) ($relProj['viatura_id'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string) ($relProj['condutor'] ?? '-')) ?></td>
+                                        <td><?= number_format((float) ($relProj['distancia_km'] ?? 0), 2, ',', '.') ?> KM / <?= number_format((float) ($relProj['combustivel_l'] ?? 0), 2, ',', '.') ?> L</td>
+                                        <td><a href="?tab=transporte&view=relatorio_atividades&mode=form&id=<?= (int) ($relProj['ordem_servico_id'] ?? 0) ?>" class="btn-mode" style="font-size:11px;">Ver</a></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+        </div>
+    <?php endif; ?>
     <?php if($mode == 'form' && $tab == 'gestao_frota' && $view == 'operacional'): ?>
         <div class="container">
             <div class="white-card">
@@ -6340,7 +9861,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                     <?php endif; ?>
                     <div class="section-title">2. Registro de IntervenÃ§Ã£o / Falha</div>
                     <div class="form-group" style="grid-column: span 2;">
-                        <label>Viatura / Maquina</label>
+                        <label>Viatura / MÃ¡quina</label>
                         <select name="ativo_id_evento" required>
                             <option value="">Selecionar ativo</option>
                             <?php foreach($lista_operacional_ativos as $atvEvt): ?>
@@ -6595,8 +10116,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php if(!empty($erro_form)): ?>
                     <div style="background:#ffe5e5; color:#c0392b; padding:10px; border-radius:6px; margin-bottom:15px; font-weight:700;"><?= htmlspecialchars($erro_form) ?></div>
                 <?php endif; ?>
+                <?php $modoAbastecimentoForm = (trim((string) ($_GET['abastecimento'] ?? '')) === 'externo') ? 'externo' : 'os'; ?>
                 <form method="POST" class="form-grid">
                     <div class="section-title">Mapa de Diesel</div>
+                    <div class="form-group" style="grid-column: span 4;">
+                        <label>Origem do Abastecimento</label>
+                        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#fafafa;">
+                            <label style="margin:0; font-size:12px; font-weight:700; text-transform:none; color:#1f2937;">
+                                <input type="radio" name="modo_abastecimento_diesel" value="os" <?= $modoAbastecimentoForm === 'os' ? 'checked' : '' ?> onchange="toggleModoAbastecimentoDiesel()"> Com OS do Transporte
+                            </label>
+                            <label style="margin:0; font-size:12px; font-weight:700; text-transform:none; color:#1f2937;">
+                                <input type="radio" name="modo_abastecimento_diesel" value="externo" <?= $modoAbastecimentoForm === 'externo' ? 'checked' : '' ?> onchange="toggleModoAbastecimentoDiesel()"> Sem OS do Transporte (pedido externo)
+                            </label>
+                        </div>
+                    </div>
                     <div class="form-group" style="grid-column: span 2;">
                         <label>Ordem de ServiÃ§o</label>
                         <select name="ordem_servico_diesel" id="ordem_servico_diesel" onchange="preencherMapaDieselPorOs(this)">
@@ -6618,12 +10151,12 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div class="calc-note">Selecionando a OS, os campos principais sÃ£o preenchidos automaticamente.</div>
                     </div>
                     <div class="form-group">
-                        <label>Data do Movimento</label>
+                        <label id="label_data_movimento_diesel">Data do Movimento</label>
                         <input type="date" name="data_movimento_diesel" value="<?= date('Y-m-d') ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Projeto</label>
-                        <input type="text" id="projeto_diesel" name="projeto_diesel" placeholder="Ex: PROJ-001" required>
+                        <input type="text" id="projeto_diesel" name="projeto_diesel" value="<?= htmlspecialchars((string) ($filtro_projeto_diesel_nome !== '' ? $filtro_projeto_diesel_nome : ($filtro_projeto_diesel !== '' ? $filtro_projeto_diesel : ($_GET['project'] ?? '')))) ?>" placeholder="Ex: PROJ-001" required>
                     </div>
                     <div class="form-group">
                         <label>Tipo de Movimento</label>
@@ -6648,7 +10181,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <input type="hidden" id="km_horimetro_diesel" name="km_horimetro_diesel">
                     <div class="form-group">
-                        <label>Litros</label>
+                        <label id="label_litros_diesel">Litros</label>
                         <input type="number" id="litros_diesel" name="litros_diesel" min="0" step="0.01" oninput="atualizarTotalDiesel()" required>
                     </div>
                     <div class="form-group">
@@ -6665,7 +10198,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                     </div>
                     <div class="form-group">
                         <label>Fornecedor</label>
-                        <input type="text" name="fornecedor_diesel">
+                        <input type="text" id="fornecedor_diesel" name="fornecedor_diesel">
                     </div>
                     <div class="form-group">
                         <label>ResponsÃ¡vel</label>
@@ -6878,13 +10411,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         $tipoServicoResumo = trim((string) ($os_form['tipo_servico'] ?? ''));
                         $empresaClienteResumo = trim((string) ($os_form['empresa_cliente'] ?? ''));
                         $projetoResumo = trim((string) ($os_form['projeto'] ?? ''));
+                        $gestorRecebidosBloqueado = !empty($os_form['abastecido_em']);
                         $empresaProjetoResumo = trim($empresaClienteResumo . ($empresaClienteResumo !== '' && $projetoResumo !== '' ? ' / ' : '') . $projetoResumo);
                         $quantidadeInicialResumo = (string) ($os_form['quantidade_inicial_l'] ?? '');
                         if($quantidadeInicialResumo === '' && !empty($comb_ultimo_os['media_esperada'])) {
                             $quantidadeInicialResumo = (string) $comb_ultimo_os['media_esperada'];
-                        }
-                        if($quantidadeInicialResumo === '') {
-                            $quantidadeInicialResumo = '0.00';
                         }
                         $consumoResumo = (string) ($os_form['consumo_l_100km'] ?? '');
                         if($consumoResumo === '' && !empty($os_form['tipo_equipamento'])) {
@@ -6900,9 +10431,14 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Condutor:</strong> <?= htmlspecialchars((string) ($os_form['condutor'] ?? '-')) ?></div>
                         <div style="padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Tipo de ServiÃ§o:</strong> <?= htmlspecialchars($tipoServicoResumo !== '' ? $tipoServicoResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Empresa/Cliente/Projeto:</strong> <?= htmlspecialchars($empresaProjetoResumo !== '' ? $empresaProjetoResumo : '-') ?></div>
-                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Quantidade Inicial Abastecida (L):</strong> <?= htmlspecialchars($quantidadeInicialResumo) ?></div>
+                        <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>Quantidade a ser Abastecida (L):</strong> <?= htmlspecialchars($quantidadeInicialResumo !== '' ? $quantidadeInicialResumo : '-') ?></div>
                         <div style="grid-column: span 2; padding:10px; background:#fff; border:1px solid #e7edf5; border-radius:8px;"><strong>DescriÃ§Ã£o do ServiÃ§o a ser Realizado:</strong> <?= htmlspecialchars((string) ($os_form['atividade_prevista'] ?? '-')) ?></div>
                     </div>
+                    <?php if($gestorRecebidosBloqueado): ?>
+                        <div style="background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:10px; border-radius:8px; margin-bottom:12px; font-weight:700;">
+                            Abastecimento confirmado pelo Frentista. Edicao bloqueada para o Gestor de Frota.
+                        </div>
+                    <?php endif; ?>
                     <form method="POST" class="form-grid">
                         <input type="hidden" name="id" value="<?= (int) $os_form['id'] ?>">
                         <input type="hidden" id="km_saida_base" value="<?= (int) ($os_form['km_saida'] ?? 0) ?>">
@@ -6921,11 +10457,11 @@ if($tab === 'transporte' && $view === 'presencas') {
                         </div>
                         <div class="form-group">
                             <label>Quantidade Inicial (L)</label>
-                            <input type="number" id="quantidade_inicial_os" name="quantidade_inicial" min="0" step="0.01" value="<?= htmlspecialchars($quantidadeInicialResumo) ?>" readonly required>
+                            <input type="number" id="quantidade_inicial_os" name="quantidade_inicial" min="0.01" step="0.01" value="<?= htmlspecialchars($quantidadeInicialResumo) ?>" required <?= $gestorRecebidosBloqueado ? 'readonly' : '' ?>>
                         </div>
                         <div class="form-group">
                             <label>Quantidade Abastecida (L)</label>
-                            <input type="number" id="quantidade_abastecida_manual" name="quantidade_abastecida" min="0" step="0.01" required>
+                            <input type="number" id="quantidade_abastecida_manual" name="quantidade_abastecida" min="0" step="0.01" required <?= $gestorRecebidosBloqueado ? 'readonly' : '' ?>>
                         </div>
                         <input type="hidden" id="consumo_estimado_final" name="consumo_estimado_final" value="">
                         <input type="hidden" id="litros_recomendados_manual" name="litros_recomendados_manual" value="">
@@ -7032,11 +10568,15 @@ if($tab === 'transporte' && $view === 'presencas') {
 
                         <div class="form-group">
                             <label>Gestor de Frota</label>
-                            <input type="text" name="gestor_frota" required>
+                            <input type="text" name="gestor_frota" required <?= $gestorRecebidosBloqueado ? 'readonly' : '' ?>>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button type="submit" name="finalizar_os" class="btn-save" style="background:var(--vilcon-orange);">Salvar Abastecimento</button>
-                            <button type="submit" name="rejeitar_abastecimento" class="btn-save" style="background:#c0392b; margin-left:10px;" onclick="prepararRejeicaoAbastecimento(this.form)">Rejeitar Abastecimento</button>
+                            <?php if($gestorRecebidosBloqueado): ?>
+                                <button type="button" class="btn-save" style="background:#6b7280; cursor:not-allowed;" disabled>Bloqueado apos confirmacao</button>
+                            <?php else: ?>
+                                <button type="submit" name="salvar_abastecimento_os" class="btn-save" style="background:var(--vilcon-orange);">Salvar Abastecimento</button>
+                                <button type="submit" name="rejeitar_abastecimento" class="btn-save" style="background:#c0392b; margin-left:10px;" onclick="prepararRejeicaoAbastecimento(this.form)">Rejeitar Abastecimento</button>
+                            <?php endif; ?>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
                             <label>Motivo da RejeiÃ§Ã£o (obrigatÃ³rio para rejeitar)</label>
@@ -7060,6 +10600,13 @@ if($tab === 'transporte' && $view === 'presencas') {
                 <?php if(empty($os_form)): ?>
                     <div style="background:#fff5d6; color:#8a6d3b; padding:10px; border-radius:6px; font-weight:700;">Selecione uma OS pendente para confirmaÃ§Ã£o.</div>
                 <?php else: ?>
+                    <?php
+                        $frentistaJaConfirmou = !empty($os_form['abastecido_em']);
+                        $frentistaNomeSessaoForm = trim((string) ($_SESSION['usuario_nome'] ?? ''));
+                        $frentistaNomeValor = $frentistaJaConfirmou
+                            ? trim((string) ($os_form['abastecido_por'] ?? ''))
+                            : $frentistaNomeSessaoForm;
+                    ?>
                     <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:18px;">
                         <div><strong>OS:</strong> OS-<?= str_pad((string) $os_form['id'], 4, '0', STR_PAD_LEFT) ?></div>
                         <div><strong>Viatura:</strong> <?= htmlspecialchars($os_form['viatura_id'] ?? '-') ?></div>
@@ -7077,14 +10624,19 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div class="section-title">ConfirmaÃ§Ã£o do Frentista</div>
                         <div class="form-group">
                             <label>Nome do Frentista</label>
-                            <input type="text" name="frentista_nome" required>
+                            <input type="text" name="frentista_nome" value="<?= htmlspecialchars($frentistaNomeValor) ?>" <?= $frentistaJaConfirmou ? 'readonly' : 'required' ?>>
                         </div>
                         <div class="form-group" style="grid-column: span 3;">
                             <label>ObservaÃ§Ã£o (Opcional)</label>
-                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem divergÃªncias">
+                            <input type="text" name="frentista_obs" placeholder="Ex: abastecimento efetuado sem divergÃªncias" <?= $frentistaJaConfirmou ? 'readonly' : '' ?>>
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button type="submit" name="confirmar_abastecimento_frentista" class="btn-save" style="background:var(--success);">Confirmar e Encerrar Fluxo</button>
+                            <?php if($frentistaJaConfirmou): ?>
+                                <a href="?tab=frentista&view=abastecimentos&mode=list" class="btn-mode" style="margin-right:10px;"><i class="fas fa-list-check"></i> Ver Abastecimentos</a>
+                                <button type="button" class="btn-save" style="background:#6b7280; cursor:not-allowed;" disabled>JÃ¡ Confirmado</button>
+                            <?php else: ?>
+                                <button type="submit" name="confirmar_abastecimento_frentista" class="btn-save" style="background:var(--success);">Confirmar e Encerrar Fluxo</button>
+                            <?php endif; ?>
                         </div>
                     </form>
                 <?php endif; ?>
@@ -7134,12 +10686,31 @@ if($tab === 'transporte' && $view === 'presencas') {
             window.location.search = params.toString();
         }
 
+        function setRangeRelatorioConsumo(range){
+            const hiddenRange = document.getElementById('relatorio-range');
+            if(hiddenRange){
+                hiddenRange.value = (range === 'weekly') ? 'weekly' : 'monthly';
+            }
+            const buttons = document.querySelectorAll('.rc-seg-btn[data-range]');
+            buttons.forEach(function(btn){
+                if(btn.getAttribute('data-range') === ((range === 'weekly') ? 'weekly' : 'monthly')){
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
         function aplicarFiltrosRelatorioConsumo(){
             const params = new URLSearchParams(window.location.search);
             const ordemEl = document.getElementById('filtro-ordem');
             const qEl = document.getElementById('search-q');
-            const rangeEl = document.getElementById('list-range');
+            const projetoEl = document.getElementById('filtro-projeto-consumo');
+            const viaturaEl = document.getElementById('filtro-viatura-consumo');
+            const rangeEl = document.getElementById('relatorio-range') || document.getElementById('list-range');
             const customEl = document.getElementById('custom-number');
+            const btnFiltrar = document.getElementById('btn-filtrar-consumo');
+            const feedback = document.getElementById('filtro-feedback-consumo');
 
             params.set('tab', 'gestao_frota');
             params.set('view', 'relatorio_consumo');
@@ -7155,13 +10726,61 @@ if($tab === 'transporte' && $view === 'presencas') {
             if(!Number.isNaN(ordem) && ordem > 0) params.set('ordem', String(ordem)); else params.delete('ordem');
             const q = qEl ? qEl.value.trim() : '';
             if(q) params.set('q', q); else params.delete('q');
+            const projeto = projetoEl ? projetoEl.value.trim() : '';
+            if(projeto) params.set('project', projeto); else params.delete('project');
+            const viatura = viaturaEl ? viaturaEl.value.trim() : '';
+            if(viatura) params.set('viatura', viatura); else params.delete('viatura');
 
+            if(btnFiltrar){
+                btnFiltrar.disabled = true;
+                btnFiltrar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Aplicando...';
+            }
+            if(feedback){
+                feedback.classList.add('show');
+            }
+            window.location.search = params.toString();
+        }
+
+        function baixarRelatorioConsumo(formato){
+            const params = new URLSearchParams(window.location.search);
+            const ordemEl = document.getElementById('filtro-ordem');
+            const qEl = document.getElementById('search-q');
+            const projetoEl = document.getElementById('filtro-projeto-consumo');
+            const viaturaEl = document.getElementById('filtro-viatura-consumo');
+            const rangeEl = document.getElementById('relatorio-range') || document.getElementById('list-range');
+            const customEl = document.getElementById('custom-number');
+
+            params.set('tab', 'gestao_frota');
+            params.set('view', 'relatorio_consumo');
+            params.set('mode', 'list');
+
+            const rangeVal = rangeEl && rangeEl.value ? rangeEl.value : 'monthly';
+            params.set('list_range', rangeVal);
+            if(customEl && rangeVal === 'custom' && customEl.value) {
+                params.set('list_custom', customEl.value);
+            } else {
+                params.delete('list_custom');
+            }
+
+            const ordem = ordemEl ? parseInt(ordemEl.value || '0', 10) : 0;
+            if(!Number.isNaN(ordem) && ordem > 0) params.set('ordem', String(ordem)); else params.delete('ordem');
+
+            const q = qEl ? qEl.value.trim() : '';
+            if(q) params.set('q', q); else params.delete('q');
+
+            const projeto = projetoEl ? projetoEl.value.trim() : '';
+            if(projeto) params.set('project', projeto); else params.delete('project');
+
+            const viatura = viaturaEl ? viaturaEl.value.trim() : '';
+            if(viatura) params.set('viatura', viatura); else params.delete('viatura');
+
+            params.set('doc', formato === 'excel' ? 'relatorio_consumo_excel' : 'relatorio_consumo_pdf');
             window.location.search = params.toString();
         }
 
         function filterByMachineChecklist(tipo){
             const params = new URLSearchParams(window.location.search);
-            params.set('tab', 'hse');
+            params.set('tab', 'transporte');
             params.set('view', 'checklist');
             params.set('mode', 'list');
             if(tipo) params.set('tipo_equipamento', tipo); else params.delete('tipo_equipamento');
@@ -7175,7 +10794,7 @@ if($tab === 'transporte' && $view === 'presencas') {
 
         function filterByChecklistProject(projeto){
             const params = new URLSearchParams(window.location.search);
-            params.set('tab', 'hse');
+            params.set('tab', 'transporte');
             params.set('view', 'checklist');
             params.set('mode', 'list');
             if(projeto && projeto.trim()){
@@ -7239,6 +10858,7 @@ if($tab === 'transporte' && $view === 'presencas') {
 
         function preencherMapaDieselPorOs(selectEl){
             if(!selectEl) return;
+            if(selectEl.disabled) return;
             const opt = selectEl.options[selectEl.selectedIndex];
             if(!opt) return;
 
@@ -7265,6 +10885,23 @@ if($tab === 'transporte' && $view === 'presencas') {
             setForce('km_horimetro_diesel', km);
             setForce('litros_diesel', litros);
             atualizarTotalDiesel();
+        }
+
+        function toggleModoAbastecimentoDiesel(){
+            const osSel = document.getElementById('ordem_servico_diesel');
+            const modoEl = document.querySelector('input[name="modo_abastecimento_diesel"]:checked');
+            const labelData = document.getElementById('label_data_movimento_diesel');
+            const labelLitros = document.getElementById('label_litros_diesel');
+            const fornecedorEl = document.getElementById('fornecedor_diesel');
+            if(!osSel || !modoEl) return;
+            const externo = modoEl.value === 'externo';
+            osSel.disabled = externo;
+            if(labelData) labelData.textContent = externo ? 'Data de Entrega' : 'Data do Movimento';
+            if(labelLitros) labelLitros.textContent = externo ? 'Quantidade Abastecida (L)' : 'Litros';
+            if(fornecedorEl) fornecedorEl.required = externo;
+            if(externo){
+                osSel.value = '';
+            }
         }
 
         function atualizarTotalMovStock(){
@@ -8022,19 +11659,17 @@ val
             sincronizarTempoMinParaHumano();
             atualizarCustoRequisicao();
             guardarLocaisAutomaticamente();
+            toggleModoAbastecimentoDiesel();
         });
         // aÃ§Ãµes existentes (mantidas)
         function aprovarPedido(id){ if(confirm('Tem certeza que deseja aprovar este pedido?')) window.location.href = `aprovar_pedido.php?id=${id}`; }
         function rejeitarPedido(id){ const justificativa = prompt('Justificativa para rejeitar:'); if(justificativa) window.location.href = `rejeitar_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
         function pendentePedido(id){ const justificativa = prompt('Justificativa para pendente:'); if(justificativa) window.location.href = `pendente_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
     </script>
+    <script src="/vilcon-systemon/public/assets/js/dynamic-fields.js"></script>
 
 </body>
 </html>
-
-
-
-
 
 
 

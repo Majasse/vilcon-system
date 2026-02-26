@@ -2,6 +2,10 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+
+require_once __DIR__ . '/mojibake_fix.php';
+vilcon_bootstrap_mojibake_fix();
+
 require_once __DIR__ . '/user_profile_widget.php';
 require_once dirname(__DIR__) . '/core/access_control.php';
 
@@ -67,7 +71,6 @@ if (isset($_SESSION['usuario_perfil'])) {
     </style>
 </head>
 <body>
-<?php renderUserProfileWidget(); ?>
 <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
     <div class="vilcon-loader-spinner" role="status" aria-hidden="true">
         <span></span><span></span><span></span><span></span><span></span><span></span>
