@@ -1190,17 +1190,94 @@ if ($view === 'pedidos_reparacao') {
     }
 }
 
+// Carrega categorias/subcategorias do Budjet da Logistica (departamento Oficina)
+$budjet_oficina_categorias = [];
+$budjet_oficina_subcategorias = [];
+try {
+    $tblBud = $pdo->query("SHOW TABLES LIKE 'logistica_budjet_itens'");
+    $temBudjetItens = $tblBud && $tblBud->fetchColumn();
+    if ($temBudjetItens) {
+        $stBudOf = $pdo->prepare("
+            SELECT
+                COALESCE(NULLIF(TRIM(categoria), ''), 'SEM CATEGORIA') AS categoria,
+                COALESCE(NULLIF(TRIM(descricao), ''), '') AS subcategoria
+            FROM logistica_budjet_itens
+            WHERE LOWER(TRIM(departamento)) = 'oficina'
+            ORDER BY categoria ASC, ordem_item ASC, id ASC
+        ");
+        $stBudOf->execute();
+        $rowsBudOf = $stBudOf->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($rowsBudOf as $rb) {
+            $catBud = trim((string)($rb['categoria'] ?? ''));
+            $subBud = trim((string)($rb['subcategoria'] ?? ''));
+            if ($catBud === '') {
+                continue;
+            }
+            if (!in_array($catBud, $budjet_oficina_categorias, true)) {
+                $budjet_oficina_categorias[] = $catBud;
+            }
+            if (!isset($budjet_oficina_subcategorias[$catBud])) {
+                $budjet_oficina_subcategorias[$catBud] = [];
+            }
+            if ($subBud !== '' && !in_array($subBud, $budjet_oficina_subcategorias[$catBud], true)) {
+                $budjet_oficina_subcategorias[$catBud][] = $subBud;
+            }
+        }
+    }
+} catch (Throwable $e) {
+    // Sem bloqueio: formulario continua funcional mesmo sem tabela de budjet.
+}
+if (!$budjet_oficina_categorias) {
+    $budjet_oficina_categorias = ['Peca', 'Equipamento', 'Consumivel', 'Outro'];
+}
+
 if ($view === 'requisicoes') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_requisicao_oficina') {
         try {
-            $categoria_item = trim((string)($_POST['categoria_item'] ?? 'Peca'));
-            $item = trim((string)($_POST['item'] ?? ''));
-            $quantidade = (float)($_POST['quantidade'] ?? 0);
-            $unidade = trim((string)($_POST['unidade'] ?? 'un'));
-            $prioridade = trim((string)($_POST['prioridade'] ?? 'Normal'));
-            $data_requisicao = trim((string)($_POST['data_requisicao'] ?? date('Y-m-d')));
-            $responsavel = trim((string)($_POST['responsavel'] ?? (string)($_SESSION['usuario_nome'] ?? '')));
-            $observacoes = trim((string)($_POST['observacoes'] ?? ''));
+            $assunto = trim((string)($_POST['assunto_req'] ?? ''));
+            $categoriaOrdem = trim((string)($_POST['categoria_ordem_req'] ?? ''));
+            $subcategoriaOrdem = trim((string)($_POST['subcategoria_ordem_req'] ?? ''));
+            $prioridade = trim((string)($_POST['prioridade_req'] ?? 'Media'));
+            if ($prioridade === '') {
+                $prioridade = 'Media';
+            }
+            $data_requisicao = trim((string)($_POST['data_requisicao_req'] ?? date('Y-m-d')));
+            $responsavel = trim((string)($_POST['solicitante_req'] ?? (string)($_SESSION['usuario_nome'] ?? '')));
+            $observacaoLivre = trim((string)($_POST['observacao_req'] ?? ''));
+            $itensDescReq = isset($_POST['item_descricao_req']) && is_array($_POST['item_descricao_req']) ? $_POST['item_descricao_req'] : [];
+            $finsReq = isset($_POST['finalidade_req']) && is_array($_POST['finalidade_req']) ? $_POST['finalidade_req'] : [];
+            $qtdLinhasReq = isset($_POST['quantidade_req_linha']) && is_array($_POST['quantidade_req_linha']) ? $_POST['quantidade_req_linha'] : [];
+            $unLinhasReq = isset($_POST['unidade_req_linha']) && is_array($_POST['unidade_req_linha']) ? $_POST['unidade_req_linha'] : [];
+
+            $linhasResumo = [];
+            $quantidade = 0.0;
+            $item = '';
+            $unidade = 'L';
+            $maxLinReq = max(count($itensDescReq), count($finsReq), count($qtdLinhasReq), count($unLinhasReq));
+            for ($i = 0; $i < $maxLinReq; $i++) {
+                $itemLinha = trim((string)($itensDescReq[$i] ?? ''));
+                $fimLinha = trim((string)($finsReq[$i] ?? ''));
+                $qLinha = (float)str_replace(',', '.', (string)($qtdLinhasReq[$i] ?? 0));
+                $uLinha = trim((string)($unLinhasReq[$i] ?? 'L'));
+                if ($uLinha === '') {
+                    $uLinha = 'L';
+                }
+                if ($itemLinha === '' && $qLinha <= 0) {
+                    continue;
+                }
+                if ($itemLinha === '') {
+                    throw new RuntimeException('Preencha o item/descricao em todas as linhas com quantidade.');
+                }
+                if ($qLinha <= 0) {
+                    throw new RuntimeException('A quantidade deve ser maior que zero.');
+                }
+                if ($item === '') {
+                    $item = $itemLinha;
+                    $unidade = $uLinha;
+                }
+                $quantidade += $qLinha;
+                $linhasResumo[] = $itemLinha . ' | ' . number_format($qLinha, 2, ',', '.') . ' ' . $uLinha . ($fimLinha !== '' ? ' | Fim: ' . $fimLinha : '');
+            }
 
             if ($item === '' || $quantidade <= 0) {
                 throw new RuntimeException('Preencha os campos obrigatorios da requisicao.');
@@ -1208,6 +1285,29 @@ if ($view === 'requisicoes') {
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data_requisicao)) {
                 throw new RuntimeException('Data de requisicao invalida.');
             }
+            if ($assunto === '') {
+                $assunto = 'Requisicao - ' . $item;
+            }
+
+            $obsPartes = [];
+            $obsPartes[] = 'Assunto: ' . $assunto;
+            if ($categoriaOrdem !== '') {
+                $obsPartes[] = 'Categoria: ' . $categoriaOrdem;
+            }
+            if ($subcategoriaOrdem !== '') {
+                $obsPartes[] = 'Subcategoria: ' . $subcategoriaOrdem;
+            }
+            if ($linhasResumo) {
+                $obsPartes[] = 'Itens:';
+                foreach ($linhasResumo as $lin) {
+                    $obsPartes[] = '- ' . $lin;
+                }
+            }
+            if ($observacaoLivre !== '') {
+                $obsPartes[] = 'Observacao: ' . $observacaoLivre;
+            }
+            $observacoes = implode("\n", $obsPartes);
+            $categoria_item = $categoriaOrdem !== '' ? $categoriaOrdem : 'Peca';
 
             $stmt = $pdo->prepare("
                 INSERT INTO logistica_requisicoes
@@ -3506,68 +3606,222 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                         </div>
                     </form>
                 <?php elseif ($view == 'requisicoes'): ?>
-                    <h3>Requisicao de Pecas e Equipamentos</h3>
-                    <p style="font-size:12px; color:#6b7280;">A requisicao sera enviada para Logistica para aprovacao ou negacao.</p>
+                    <h3>Requisicoes</h3>
                     <?php if ($erro_requisicoes): ?>
                         <p style="color:#b91c1c; font-size:12px;"><?= htmlspecialchars($erro_requisicoes) ?></p>
                     <?php endif; ?>
                     <form class="form-grid" method="POST" action="?tab=<?= urlencode((string)$tab) ?>&view=requisicoes&mode=form">
                         <input type="hidden" name="acao" value="criar_requisicao_oficina">
+                        <?php
+                            $reqAssuntoOf = trim((string)($_POST['assunto_req'] ?? ''));
+                            $reqSolicitanteOf = trim((string)($_POST['solicitante_req'] ?? (string)($_SESSION['usuario_nome'] ?? '')));
+                            $reqPrioridadeOf = trim((string)($_POST['prioridade_req'] ?? 'Urgente'));
+                            if ($reqPrioridadeOf === '') $reqPrioridadeOf = 'Urgente';
+                            $reqDataOf = trim((string)($_POST['data_requisicao_req'] ?? date('Y-m-d')));
+                            $reqCategoriaOf = trim((string)($_POST['categoria_ordem_req'] ?? (string)($budjet_oficina_categorias[0] ?? '')));
+                            $reqSubcategoriaOf = trim((string)($_POST['subcategoria_ordem_req'] ?? ''));
+                            $reqObservacaoOf = trim((string)($_POST['observacao_req'] ?? ''));
+                            $postItensOf = isset($_POST['item_descricao_req']) && is_array($_POST['item_descricao_req']) ? $_POST['item_descricao_req'] : [''];
+                            $postFinsOf = isset($_POST['finalidade_req']) && is_array($_POST['finalidade_req']) ? $_POST['finalidade_req'] : [''];
+                            $postQtdsOf = isset($_POST['quantidade_req_linha']) && is_array($_POST['quantidade_req_linha']) ? $_POST['quantidade_req_linha'] : ['1'];
+                            $postUnsOf = isset($_POST['unidade_req_linha']) && is_array($_POST['unidade_req_linha']) ? $_POST['unidade_req_linha'] : ['L'];
+                            $itemLinhasOf = [];
+                            $maxLinOf = max(count($postItensOf), count($postFinsOf), count($postQtdsOf), count($postUnsOf));
+                            for ($i = 0; $i < $maxLinOf; $i++) {
+                                $itemLinhasOf[] = [
+                                    'item' => (string)($postItensOf[$i] ?? ''),
+                                    'fim' => (string)($postFinsOf[$i] ?? ''),
+                                    'qtd' => (string)($postQtdsOf[$i] ?? '1'),
+                                    'un' => (string)($postUnsOf[$i] ?? 'L'),
+                                ];
+                            }
+                            if (!$itemLinhasOf) {
+                                $itemLinhasOf = [['item' => '', 'fim' => '', 'qtd' => '1', 'un' => 'L']];
+                            }
+                            $qtdTotalOf = 0.0;
+                            foreach ($itemLinhasOf as $lo) {
+                                $qtdTotalOf += (float)str_replace(',', '.', (string)($lo['qtd'] ?? 0));
+                            }
+                            if ($qtdTotalOf <= 0) $qtdTotalOf = 1.0;
+                        ?>
 
                         <div class="form-group">
-                            <label>categoria_item</label>
-                            <select name="categoria_item">
-                                <option>Peca</option>
-                                <option>Equipamento</option>
-                                <option>Consumivel</option>
-                                <option>Outro</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group" style="grid-column:span 2;">
-                            <label>item</label>
-                            <input type="text" name="item" placeholder="Ex: Kit embraiagem, Oleo 15W40, Macaco hidraulico" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label>data_requisicao</label>
-                            <input type="date" name="data_requisicao" value="<?= date('Y-m-d') ?>" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label>quantidade</label>
-                            <input type="number" name="quantidade" min="0.01" step="0.01" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label>unidade</label>
-                            <input type="text" name="unidade" value="un">
-                        </div>
-
-                        <div class="form-group">
-                            <label>prioridade</label>
-                            <select name="prioridade">
-                                <option>Baixa</option>
-                                <option>Media</option>
-                                <option>Alta</option>
-                                <option>Critica</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label>responsavel</label>
-                            <input type="text" name="responsavel" value="<?= htmlspecialchars((string)($_SESSION['usuario_nome'] ?? '')) ?>">
+                            <label>Assunto</label>
+                            <input type="text" name="assunto_req" value="<?= htmlspecialchars($reqAssuntoOf) ?>" required>
                         </div>
 
                         <div class="form-group" style="grid-column:span 4;">
-                            <label>observacoes</label>
-                            <textarea name="observacoes" rows="4" placeholder="Detalhe a necessidade da oficina, urgencia e aplicacao no equipamento."></textarea>
+                            <label>Item / descricao da requisicao</label>
+                            <div id="oficina_requisicao_itens_wrap" data-default-unidade="L" style="display:flex; flex-direction:column; gap:8px;">
+                                <?php foreach ($itemLinhasOf as $liOf): ?>
+                                    <div class="requisicao-item-row-of" style="display:grid; grid-template-columns:2fr 2fr 120px 110px; gap:8px; align-items:center;">
+                                        <input type="text" name="item_descricao_req[]" value="<?= htmlspecialchars((string)($liOf['item'] ?? '')) ?>" placeholder="Item / descricao da requisicao" required>
+                                        <input type="text" name="finalidade_req[]" value="<?= htmlspecialchars((string)($liOf['fim'] ?? '')) ?>" placeholder="Pra que fim (finalidade)">
+                                        <input type="number" min="0.01" step="0.01" class="req-qtd-linha-of" name="quantidade_req_linha[]" value="<?= htmlspecialchars((string)($liOf['qtd'] ?? '1')) ?>">
+                                        <input type="hidden" name="unidade_req_linha[]" value="<?= htmlspecialchars((string)($liOf['un'] ?? 'L')) ?>">
+                                        <button type="button" class="btn_remove_item_req_of">- Menos</button>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button type="button" id="btn_add_item_req_of">+</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Numero</label>
+                            <input type="text" value="Numero automatico ao guardar" readonly>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Quantidade Total</label>
+                            <input type="text" id="quantidade_total_req_of_view" value="<?= number_format($qtdTotalOf, 2, ',', '.') ?> L" readonly>
+                            <input type="hidden" id="quantidade_total_req_of_hidden" name="quantidade_req_total_hidden" value="<?= number_format($qtdTotalOf, 2, '.', '') ?>">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Solicitante</label>
+                            <input type="text" name="solicitante_req" value="<?= htmlspecialchars($reqSolicitanteOf) ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Prioridade</label>
+                            <select name="prioridade_req" required>
+                                <option value="Baixa" <?= $reqPrioridadeOf === 'Baixa' ? 'selected' : '' ?>>Baixa</option>
+                                <option value="Media" <?= $reqPrioridadeOf === 'Media' ? 'selected' : '' ?>>Media</option>
+                                <option value="Alta" <?= $reqPrioridadeOf === 'Alta' ? 'selected' : '' ?>>Alta</option>
+                                <option value="Urgente" <?= $reqPrioridadeOf === 'Urgente' ? 'selected' : '' ?>>Urgente</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Data</label>
+                            <input type="date" name="data_requisicao_req" value="<?= htmlspecialchars($reqDataOf) ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Categoria</label>
+                            <select name="categoria_ordem_req" id="categoria_ordem_req_of" required>
+                                <option value="">Categoria</option>
+                                <?php foreach ($budjet_oficina_categorias as $catOf): ?>
+                                    <option value="<?= htmlspecialchars((string)$catOf) ?>" <?= $reqCategoriaOf === (string)$catOf ? 'selected' : '' ?>><?= htmlspecialchars((string)$catOf) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Subcategoria</label>
+                            <select name="subcategoria_ordem_req" id="subcategoria_ordem_req_of" required>
+                                <option value="">Seleccione a Subcategoria</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" style="grid-column:span 4;">
+                            <label>Observacao</label>
+                            <input type="text" name="observacao_req" value="<?= htmlspecialchars($reqObservacaoOf) ?>" placeholder="Observacao">
                         </div>
 
                         <div style="grid-column:span 4;">
-                            <button class="btn-save" style="background:#111827;width:100%;">Enviar para Logistica</button>
+                            <button class="btn-save" style="background:linear-gradient(135deg,#111827 0%,#1f2937 100%); width:100%; font-weight:700; letter-spacing:.2px; border:1px solid #0f172a; box-shadow:0 10px 20px rgba(17,24,39,.20);">
+                                <i class="fa-solid fa-paper-plane"></i> Mandar pra Logistica
+                            </button>
                         </div>
                     </form>
+                    <script>
+                        (function(){
+                            var mapa = <?= json_encode($budjet_oficina_subcategorias, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
+                            var cat = document.getElementById('categoria_ordem_req_of');
+                            var sub = document.getElementById('subcategoria_ordem_req_of');
+                            var subAtual = <?= json_encode($reqSubcategoriaOf, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+                            function preencherSub(){
+                                if(!cat || !sub) return;
+                                var atual = cat.value || '';
+                                var lista = mapa[atual] || [];
+                                sub.innerHTML = '<option value="">Seleccione a Subcategoria</option>';
+                                if(lista.length === 0 && atual){
+                                    var opcaoPadrao = document.createElement('option');
+                                    opcaoPadrao.value = atual;
+                                    opcaoPadrao.textContent = 'Sem subcategoria';
+                                    opcaoPadrao.selected = true;
+                                    sub.appendChild(opcaoPadrao);
+                                    return;
+                                }
+                                lista.forEach(function(v){
+                                    var op = document.createElement('option');
+                                    op.value = v;
+                                    op.textContent = v;
+                                    if(subAtual && subAtual === v) op.selected = true;
+                                    sub.appendChild(op);
+                                });
+                                if(!sub.value && subAtual && lista.indexOf(subAtual) >= 0) sub.value = subAtual;
+                            }
+                            if(cat && sub){
+                                preencherSub();
+                                cat.addEventListener('change', function(){ subAtual = ''; preencherSub(); });
+                            }
+
+                            var wrap = document.getElementById('oficina_requisicao_itens_wrap');
+                            var btnAdd = document.getElementById('btn_add_item_req_of');
+                            var qtdView = document.getElementById('quantidade_total_req_of_view');
+                            var qtdHidden = document.getElementById('quantidade_total_req_of_hidden');
+                            function atualizarResumoItens(){
+                                if(!wrap) return;
+                                var rows = Array.prototype.slice.call(wrap.querySelectorAll('.requisicao-item-row-of'));
+                                var total = 0;
+                                rows.forEach(function(r){
+                                    var qi = r.querySelector('.req-qtd-linha-of');
+                                    var q = Number((qi && qi.value ? qi.value : '0').toString().replace(',', '.')) || 0;
+                                    if(q > 0) total += q;
+                                });
+                                if(total <= 0) total = 1;
+                                if(qtdView) qtdView.value = total.toLocaleString('pt-PT', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' L';
+                                if(qtdHidden) qtdHidden.value = total.toFixed(2);
+                            }
+                            function atualizarEstadoRemover(){
+                                if(!wrap) return;
+                                var rows = wrap.querySelectorAll('.requisicao-item-row-of');
+                                var disable = rows.length <= 1;
+                                rows.forEach(function(r){
+                                    var b = r.querySelector('.btn_remove_item_req_of');
+                                    if(!b) return;
+                                    b.disabled = disable;
+                                    b.style.opacity = disable ? '0.5' : '1';
+                                });
+                            }
+                            if(btnAdd && wrap){
+                                btnAdd.addEventListener('click', function(){
+                                    var base = wrap.querySelector('.requisicao-item-row-of');
+                                    if(!base) return;
+                                    var novo = base.cloneNode(true);
+                                    Array.prototype.forEach.call(novo.querySelectorAll('input'), function(i){
+                                        if(i.name === 'quantidade_req_linha[]') i.value = '1';
+                                        else if(i.name === 'unidade_req_linha[]') i.value = 'L';
+                                        else i.value = '';
+                                    });
+                                    wrap.appendChild(novo);
+                                    atualizarEstadoRemover();
+                                    atualizarResumoItens();
+                                });
+                            }
+                            document.addEventListener('click', function(ev){
+                                var btn = ev.target.closest('.btn_remove_item_req_of');
+                                if(!btn || !wrap) return;
+                                var rows = wrap.querySelectorAll('.requisicao-item-row-of');
+                                if(rows.length <= 1) return;
+                                var row = btn.closest('.requisicao-item-row-of');
+                                if(row) row.remove();
+                                atualizarEstadoRemover();
+                                atualizarResumoItens();
+                            });
+                            document.addEventListener('input', function(ev){
+                                if(ev.target && (ev.target.classList.contains('req-qtd-linha-of') || ev.target.name === 'item_descricao_req[]')){
+                                    atualizarResumoItens();
+                                }
+                            });
+                            atualizarEstadoRemover();
+                            atualizarResumoItens();
+                        })();
+                    </script>
                 <?php elseif ($view == 'manutencao'): ?>
                     <h3>Registo de Manutencao</h3>
                     <p style="font-size:12px; color:#6b7280;">Ao guardar, o sistema cria automaticamente uma ordem de servico e regista no historico do veiculo.</p>

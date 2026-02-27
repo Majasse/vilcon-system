@@ -37,6 +37,12 @@ function projectoCanonico($s): string {
 function departamentoPorProjecto(string $projecto): string {
   return projectoCanonico($projecto) === 'Projecto Transporte' ? 'transporte' : 'oficina';
 }
+function budjetDepartamentoBloqueado(PDO $pdo, string $departamento): bool {
+  $dep = departamentoCanonico($departamento);
+  $st = $pdo->prepare("SELECT COALESCE(bloqueado,0) FROM logistica_budjet_departamentos WHERE departamento=:d LIMIT 1");
+  $st->execute(['d'=>$dep]);
+  return ((int)$st->fetchColumn()) === 1;
+}
 function categoriaRequisicaoCanonica($s): string {
   $c = norm($s);
   if(in_array($c, ['peca','pecas'], true)) return 'Pecas';
@@ -365,6 +371,9 @@ $garantirColuna($pdo, 'logistica_ordens_compra', 'destino', 'VARCHAR(150) NULL')
 $garantirColuna($pdo, 'logistica_ordens_compra', 'prioridade', 'VARCHAR(20) NULL');
 $garantirColuna($pdo, 'logistica_budjet_movimentos', 'secao_modulo', 'VARCHAR(60) NULL');
 $garantirColuna($pdo, 'logistica_budjet_movimentos', 'categoria_budjet', 'VARCHAR(180) NULL');
+$garantirColuna($pdo, 'logistica_budjet_departamentos', 'bloqueado', 'TINYINT(1) NOT NULL DEFAULT 0');
+$garantirColuna($pdo, 'logistica_budjet_departamentos', 'bloqueado_por', 'VARCHAR(150) NULL');
+$garantirColuna($pdo, 'logistica_budjet_departamentos', 'bloqueado_em', 'DATETIME NULL');
 
 $pdo->exec("INSERT INTO logistica_budjet_departamentos (departamento,orcamento_total,saldo_atual,atualizado_em) VALUES ('oficina',0,0,NOW()) ON DUPLICATE KEY UPDATE departamento=departamento");
 $pdo->exec("INSERT INTO logistica_budjet_departamentos (departamento,orcamento_total,saldo_atual,atualizado_em) VALUES ('transporte',0,0,NOW()) ON DUPLICATE KEY UPDATE departamento=departamento");
@@ -400,6 +409,7 @@ if($view==='requisicoes' && $compras_tab==='cotacoes') $mode='list';
 $perfil = norm($_SESSION['usuario_perfil'] ?? '');
 $pode_oper = in_array($perfil,['logistica','logistico','logisticaoperacional','supervisorlogistica','admin','administrador'],true);
 $pode_geral = in_array($perfil,['logisticageral','supervisorlogistica','admin','administrador'],true);
+$is_admin_logistica = in_array($perfil,['admin','administrador','superadmin','master','direccao','diretor'],true) || ((int)($_SESSION['usuario_id'] ?? 0) === 1);
 $operacional_sem_restricao = true;
 
 function secaoLogistica(string $view): string {
@@ -870,6 +880,9 @@ try {
     }
     if($acao==='budjet_creditar'){
       $dep = departamentoCanonico($_POST['departamento'] ?? 'oficina');
+      if(budjetDepartamentoBloqueado($pdo, $dep) && !$is_admin_logistica){
+        throw new RuntimeException('Budjet trancado. Somente administrador pode ajustar enquanto estiver trancado.');
+      }
       $valor = (float)($_POST['valor'] ?? 0);
       $descricao = trim((string)($_POST['descricao'] ?? 'Reforco de budjet'));
       if($valor <= 0) throw new RuntimeException('Informe um valor valido para reforco do budjet');
@@ -891,6 +904,81 @@ try {
         'Reforco'
       );
       $pdo->commit();
+      header('Location: ?view=budjet&departamento=' . urlencode($dep) . '&updated=1'); exit;
+    }
+    if($acao==='budjet_toggle_lock'){
+      $dep = departamentoCanonico($_POST['departamento'] ?? 'oficina');
+      if(!$is_admin_logistica){
+        throw new RuntimeException('Apenas administrador pode trancar ou destrancar o budjet.');
+      }
+      $bloquear = (int)($_POST['bloquear'] ?? 0) === 1 ? 1 : 0;
+      $pdo->prepare("
+        UPDATE logistica_budjet_departamentos
+        SET bloqueado=:b, bloqueado_por=:u, bloqueado_em=CASE WHEN :b=1 THEN NOW() ELSE NULL END, atualizado_em=NOW()
+        WHERE departamento=:d
+      ")->execute([
+        'b'=>$bloquear,
+        'u'=>(string)($_SESSION['usuario_nome'] ?? 'Administrador'),
+        'd'=>$dep
+      ]);
+      header('Location: ?view=budjet&departamento=' . urlencode($dep) . '&updated=1'); exit;
+    }
+    if($acao==='budjet_item_guardar'){
+      $dep = departamentoCanonico($_POST['departamento'] ?? 'oficina');
+      $itemId = (int)($_POST['item_id'] ?? 0);
+      $categoria = trim((string)($_POST['categoria'] ?? ''));
+      $descricao = trim((string)($_POST['descricao'] ?? ''));
+      $unidade = trim((string)($_POST['unidade'] ?? 'Un')) ?: 'Un';
+      $qtdPlaneada = (float)($_POST['qtd_planeada'] ?? 0);
+      $qtdActual = (float)($_POST['qtd_actual'] ?? 0);
+      $orcamento = (float)($_POST['orcamento_compra'] ?? 0);
+      $saldo = (float)($_POST['saldo_pendente'] ?? 0);
+      $ordemItem = (int)($_POST['ordem_item'] ?? 1);
+      $precoUnit = (float)($_POST['preco_unitario'] ?? 0);
+      if(budjetDepartamentoBloqueado($pdo, $dep) && !$is_admin_logistica){
+        throw new RuntimeException('Budjet trancado. Somente administrador pode alterar itens.');
+      }
+      if(!$operacional_sem_restricao && !$pode_oper && !$pode_geral && !$is_admin_logistica){
+        throw new RuntimeException('Sem permissao para editar itens do budjet.');
+      }
+      if($categoria==='' || $descricao===''){
+        throw new RuntimeException('Categoria e actividade/servico sao obrigatorios.');
+      }
+      if($ordemItem <= 0) $ordemItem = 1;
+      if($qtdPlaneada < 0 || $qtdActual < 0 || $orcamento < 0){
+        throw new RuntimeException('Valores numericos do budjet nao podem ser negativos.');
+      }
+      if($precoUnit <= 0 && $qtdPlaneada > 0){
+        $precoUnit = $orcamento / $qtdPlaneada;
+      }
+      if($itemId > 0){
+        $pdo->prepare("
+          UPDATE logistica_budjet_itens
+          SET categoria=:c, ordem_item=:o, descricao=:de, unidade=:u, qtd_planeada=:qp, qtd_actual=:qa, orcamento_compra=:oc, saldo_pendente=:sp, preco_unitario=:pu
+          WHERE id=:i AND departamento=:d
+        ")->execute([
+          'c'=>$categoria,'o'=>$ordemItem,'de'=>$descricao,'u'=>$unidade,'qp'=>$qtdPlaneada,'qa'=>$qtdActual,'oc'=>$orcamento,'sp'=>$saldo,'pu'=>$precoUnit,'i'=>$itemId,'d'=>$dep
+        ]);
+      } else {
+        $pdo->prepare("
+          INSERT INTO logistica_budjet_itens (departamento,categoria,ordem_item,descricao,unidade,qtd_planeada,qtd_actual,orcamento_compra,saldo_pendente,preco_unitario)
+          VALUES (:d,:c,:o,:de,:u,:qp,:qa,:oc,:sp,:pu)
+        ")->execute([
+          'd'=>$dep,'c'=>$categoria,'o'=>$ordemItem,'de'=>$descricao,'u'=>$unidade,'qp'=>$qtdPlaneada,'qa'=>$qtdActual,'oc'=>$orcamento,'sp'=>$saldo,'pu'=>$precoUnit
+        ]);
+      }
+      sincronizarBudjetDepartamentosPorTemplate($pdo);
+      header('Location: ?view=budjet&departamento=' . urlencode($dep) . '&updated=1'); exit;
+    }
+    if($acao==='budjet_item_excluir'){
+      $dep = departamentoCanonico($_POST['departamento'] ?? 'oficina');
+      $itemId = (int)($_POST['item_id'] ?? 0);
+      if($itemId <= 0) throw new RuntimeException('Item de budjet invalido.');
+      if(!$is_admin_logistica){
+        throw new RuntimeException('Apenas administrador pode excluir item do budjet.');
+      }
+      $pdo->prepare("DELETE FROM logistica_budjet_itens WHERE id=:i AND departamento=:d")->execute(['i'=>$itemId, 'd'=>$dep]);
+      sincronizarBudjetDepartamentosPorTemplate($pdo);
       header('Location: ?view=budjet&departamento=' . urlencode($dep) . '&updated=1'); exit;
     }
     if($acao==='criar_fornecedor'){
@@ -1329,7 +1417,7 @@ try {
   $budjetItensCompra=$pdo->query("SELECT id,departamento,categoria,descricao,preco_unitario,saldo_pendente FROM logistica_budjet_itens ORDER BY departamento,categoria,ordem_item,id")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $pecasAvariadas=$pdo->query("SELECT * FROM logistica_pecas_avariadas ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $custosOperacionais=$pdo->query("SELECT * FROM logistica_operacional_custos ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC)?:[];
-  $budRows = $pdo->query("SELECT departamento,orcamento_total,saldo_atual FROM logistica_budjet_departamentos WHERE departamento IN ('oficina','transporte')")->fetchAll(PDO::FETCH_ASSOC)?:[];
+  $budRows = $pdo->query("SELECT departamento,orcamento_total,saldo_atual,COALESCE(bloqueado,0) AS bloqueado,bloqueado_por,bloqueado_em FROM logistica_budjet_departamentos WHERE departamento IN ('oficina','transporte')")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $aggRows = $pdo->query("SELECT departamento, COALESCE(SUM(CASE WHEN tipo='Credito' THEN valor ELSE 0 END),0) AS total_creditos, COALESCE(SUM(CASE WHEN tipo='Debito' THEN valor ELSE 0 END),0) AS total_debitos FROM logistica_budjet_movimentos WHERE departamento IN ('oficina','transporte') GROUP BY departamento")->fetchAll(PDO::FETCH_ASSOC)?:[];
   $aggMap = [];
   foreach($aggRows as $ar){ $aggMap[(string)$ar['departamento']] = $ar; }
@@ -1345,7 +1433,10 @@ try {
       'orcamento_total' => $orcDept,
       'saldo_atual' => $saldoDept,
       'total_creditos' => (float)($aggMap[$dep]['total_creditos'] ?? 0),
-      'total_debitos' => max($gastoMov, $gastoPorSaldo)
+      'total_debitos' => max($gastoMov, $gastoPorSaldo),
+      'bloqueado' => (int)($br['bloqueado'] ?? 0),
+      'bloqueado_por' => (string)($br['bloqueado_por'] ?? ''),
+      'bloqueado_em' => (string)($br['bloqueado_em'] ?? '')
     ];
   }
   if($budjetDepartamentoSelecionado !== ''){
@@ -1735,10 +1826,18 @@ foreach($pedidosOficina as $p){
         .stock-toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center; }
         .stock-toolbar input, .stock-toolbar select { max-width:260px; }
         .budjet-grid { display:grid; grid-template-columns:repeat(2,minmax(280px,1fr)); gap:16px; }
-        .budjet-card { border:1px solid var(--logi-border); border-radius:14px; padding:18px; background:linear-gradient(180deg,#ffffff 0%,#fff8f2 100%); box-shadow:0 2px 10px rgba(230,126,34,.10); }
+        .budjet-card { border:1px solid #fed7aa; border-radius:16px; padding:18px; background:linear-gradient(155deg,#ffffff 0%,#fff7ed 50%,#ffedd5 100%); box-shadow:0 10px 22px rgba(249,115,22,.16); }
         .budjet-card h3 { margin:0 0 6px 0; font-size:22px; color:#0f172a; }
-        .budjet-card .budjet-icon { font-size:28px; color:var(--logi-primary); margin-bottom:8px; }
+        .budjet-card .budjet-icon { font-size:28px; color:var(--logi-primary); margin-bottom:8px; background:#fff; width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; border:1px solid #fed7aa; }
         .budjet-card .budjet-value { font-size:28px; font-weight:800; color:var(--logi-dark); margin:6px 0 10px; }
+        .budjet-card .budjet-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+        .budjet-progress { margin:10px 0 8px; }
+        .budjet-progress .lbl { display:flex; justify-content:space-between; font-size:11px; color:#64748b; margin-bottom:4px; }
+        .budjet-progress .bar { width:100%; height:8px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
+        .budjet-progress .fill { height:100%; background:linear-gradient(90deg,#f97316 0%,#fb923c 100%); }
+        .budjet-switch { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+        .budjet-switch a { display:inline-flex; align-items:center; gap:6px; border:1px solid #d1d5db; border-radius:999px; padding:7px 12px; text-decoration:none; color:#334155; background:#fff; font-size:12px; font-weight:700; }
+        .budjet-switch a.active { border-color:#fb923c; background:#fff7ed; color:#9a3412; box-shadow:0 4px 10px rgba(249,115,22,.18); }
         .budjet-meta { color:#475569; font-size:13px; margin-bottom:10px; }
         .budjet-detail-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:10px; flex-wrap:wrap; }
         .budjet-pill { display:inline-block; border:1px solid var(--logi-border); color:#7c2d12; background:var(--logi-soft); border-radius:999px; padding:5px 10px; font-size:12px; }
@@ -1748,6 +1847,29 @@ foreach($pedidosOficina as $p){
         .budjet-box .v { font-size:20px; font-weight:700; color:#0f172a; }
         .budjet-reforco { margin:10px 0 14px; padding:10px; border:1px dashed var(--logi-primary); border-radius:10px; background:var(--logi-soft); }
         .budjet-reforco .logi-inline-form { margin:0; }
+        .budjet-lock-banner { display:flex; justify-content:space-between; align-items:center; gap:12px; border-radius:10px; padding:10px 12px; margin-bottom:12px; border:1px solid #e2e8f0; background:#f8fafc; }
+        .budjet-lock-banner.locked { border-color:#fecaca; background:#fff1f2; }
+        .budjet-lock-banner.open { border-color:#bbf7d0; background:#f0fdf4; }
+        .budjet-alert-box { margin:10px 0 12px; border:1px solid #fecaca; background:#fff7ed; color:#9a3412; border-radius:10px; padding:10px 12px; font-size:13px; }
+        .budjet-alert-box.ok { border-color:#bbf7d0; background:#f0fdf4; color:#166534; }
+        .budjet-tools { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:8px 0 12px; flex-wrap:wrap; }
+        .budjet-tools input { min-width:260px; }
+        .budjet-action-bar { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0 12px; }
+        .budjet-action-bar .right { display:flex; gap:8px; flex-wrap:wrap; }
+        .budjet-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+        .budjet-form-card { border:1px solid #fed7aa; border-radius:12px; background:linear-gradient(180deg,#fff 0%,#fff7ed 100%); padding:12px; }
+        .budjet-form-card h4 { margin:0 0 10px 0; font-size:13px; text-transform:uppercase; color:#9a3412; letter-spacing:.04em; }
+        .budjet-form-card .logi-inline-form { display:grid; grid-template-columns:repeat(2,minmax(160px,1fr)); gap:8px; margin:0; }
+        .budjet-form-card .logi-inline-form input,
+        .budjet-form-card .logi-inline-form button,
+        .budjet-form-card .logi-inline-form a { width:100%; }
+        .btn-icon-only { width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; border-radius:10px; border:1px solid #d1d5db; background:#fff; color:#334155; cursor:pointer; }
+        .btn-icon-only.danger { border-color:#fecaca; color:#b91c1c; background:#fff1f2; }
+        .btn-icon-only:hover { transform:translateY(-1px); }
+        @media print {
+            .top-bar, .logi-tabs, .logi-subtabs, .budjet-action-bar, .budjet-switch, .budjet-reforco, .budjet-form-grid, .budjet-tools, .budjet-lock-banner form, .btn-icon-only { display:none !important; }
+            .dashboard-container { box-shadow:none !important; border:none !important; }
+        }
         .impacto-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin-bottom:12px; }
         .impacto-card { border:1px solid #e2e8f0; border-radius:12px; background:#fff; padding:10px; }
         .impacto-card .k { font-size:12px; color:#64748b; }
@@ -1755,7 +1877,7 @@ foreach($pedidosOficina as $p){
         .impacto-card.active { border-color:#fb923c; box-shadow:0 6px 14px rgba(249,115,22,.16); background:#fff7ed; }
         .logi-budget-note { width:100%; font-size:12px; color:#7c2d12; background:#fff8f2; border:1px dashed #f3c99f; border-radius:8px; padding:8px 10px; }
         @media (max-width: 900px) { .logi-kpis { grid-template-columns: repeat(2,minmax(120px,1fr)); } .stock-metrics { grid-template-columns:repeat(2,minmax(140px,1fr)); } }
-        @media (max-width: 900px) { .budjet-grid { grid-template-columns: 1fr; } .budjet-resumo { grid-template-columns: 1fr; } .impacto-grid{grid-template-columns:repeat(2,minmax(140px,1fr));} }
+        @media (max-width: 900px) { .budjet-grid { grid-template-columns: 1fr; } .budjet-resumo { grid-template-columns: 1fr; } .impacto-grid{grid-template-columns:repeat(2,minmax(140px,1fr));} .budjet-form-grid{grid-template-columns:1fr;} .budjet-form-card .logi-inline-form{grid-template-columns:1fr;} }
     </style>
 
     <div class="top-bar">
@@ -2443,22 +2565,59 @@ foreach($pedidosOficina as $p){
             <?php elseif($view==='budjet'): ?>
                 <?php if($budjetDepartamentoSelecionado === ''): ?>
                     <div class="budjet-grid">
-                        <?php foreach(['oficina'=>'fa-screwdriver-wrench','transporte'=>'fa-truck'] as $dep => $icon): $b = $budjetResumo[$dep] ?? ['saldo_atual'=>0,'orcamento_total'=>0,'total_debitos'=>0]; ?>
+                        <?php foreach(['oficina'=>'fa-screwdriver-wrench','transporte'=>'fa-truck'] as $dep => $icon): $b = $budjetResumo[$dep] ?? ['saldo_atual'=>0,'orcamento_total'=>0,'total_debitos'=>0,'bloqueado'=>0]; ?>
+                            <?php
+                                $orcDep = (float)($b['orcamento_total'] ?? 0);
+                                $gastoDep = (float)($b['total_debitos'] ?? 0);
+                                $pctUsoDep = $orcDep > 0 ? min(100, ($gastoDep / $orcDep) * 100) : 0;
+                            ?>
                             <div class="budjet-card">
-                                <div class="budjet-icon"><i class="fa-solid <?= htmlspecialchars($icon) ?>"></i></div>
-                                <h3><?= ucfirst($dep) ?></h3>
+                                <div class="budjet-top">
+                                    <div>
+                                        <div class="budjet-icon"><i class="fa-solid <?= htmlspecialchars($icon) ?>"></i></div>
+                                        <h3><?= ucfirst($dep) ?></h3>
+                                    </div>
+                                    <span class="logi-status <?= $pctUsoDep >= 90 ? 'danger' : ($pctUsoDep >= 70 ? 'warn' : 'ok') ?>"><i class="fa-solid fa-gauge-high"></i> <?= number_format($pctUsoDep, 1, ',', '.') ?>%</span>
+                                </div>
                                 <div class="budjet-meta">Budjet do departamento</div>
                                 <div class="budjet-value"><?= htmlspecialchars(money((float)($b['saldo_atual'] ?? 0))) ?></div>
+                                <div class="budjet-progress">
+                                    <div class="lbl"><span>Execucao do budjet</span><strong><?= number_format($pctUsoDep, 1, ',', '.') ?>%</strong></div>
+                                    <div class="bar"><div class="fill" style="width: <?= number_format($pctUsoDep, 2, '.', '') ?>%"></div></div>
+                                </div>
                                 <div class="budjet-meta">
                                     Orcamento total: <?= htmlspecialchars(money((float)($b['orcamento_total'] ?? 0))) ?><br>
-                                    Gasto acumulado: <?= htmlspecialchars(money((float)($b['total_debitos'] ?? 0))) ?>
+                                    Disponivel: <?= htmlspecialchars(money((float)($b['saldo_atual'] ?? 0))) ?>
                                 </div>
-                                <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=budjet&departamento=<?= urlencode($dep) ?>">Ver detalhes</a>
+                                <div class="budjet-meta" style="margin:6px 0 0 0;">
+                                    <?php if(((int)($b['bloqueado'] ?? 0)) === 1): ?>
+                                        <span class="logi-status warn"><i class="fa-solid fa-lock"></i> Trancado</span>
+                                    <?php else: ?>
+                                        <span class="logi-status ok"><i class="fa-solid fa-lock-open"></i> Aberto</span>
+                                    <?php endif; ?>
+                                </div>
+                                <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;" href="?view=budjet&departamento=<?= urlencode($dep) ?>"><i class="fa-solid fa-circle-right"></i> Ver detalhes</a>
                             </div>
                         <?php endforeach; ?>
                     </div>
                 <?php else: ?>
-                    <?php $b = $budjetResumo[$budjetDepartamentoSelecionado] ?? ['saldo_atual'=>0,'orcamento_total'=>0,'total_debitos'=>0,'total_creditos'=>0]; ?>
+                    <?php
+                        $b = $budjetResumo[$budjetDepartamentoSelecionado] ?? ['saldo_atual'=>0,'orcamento_total'=>0,'total_debitos'=>0,'total_creditos'=>0,'bloqueado'=>0,'bloqueado_por'=>'','bloqueado_em'=>''];
+                        $budjetBloqueado = ((int)($b['bloqueado'] ?? 0) === 1);
+                        $orcDetalhe = (float)($b['orcamento_total'] ?? 0);
+                        $gastoDetalhe = (float)($b['total_debitos'] ?? 0);
+                        $pctUsoDetalhe = $orcDetalhe > 0 ? min(100, ($gastoDetalhe / $orcDetalhe) * 100) : 0;
+                        $edicaoIdBudjet = (int)($_GET['budjet_item_edit'] ?? 0);
+                        $itemEdicaoBudjet = null;
+                        if($edicaoIdBudjet > 0){
+                            foreach($budjetItensTemplate as $it){
+                                if((int)($it['id'] ?? 0) === $edicaoIdBudjet){
+                                    $itemEdicaoBudjet = $it;
+                                    break;
+                                }
+                            }
+                        }
+                    ?>
                     <div class="budjet-detail-header">
                         <div>
                             <h3 style="margin:0; text-transform:capitalize;">Detalhes do Budjet - <?= htmlspecialchars($budjetDepartamentoSelecionado) ?></h3>
@@ -2466,21 +2625,83 @@ foreach($pedidosOficina as $p){
                         </div>
                         <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;" href="?view=budjet">Voltar aos departamentos</a>
                     </div>
-
-                    <div class="budjet-resumo">
-                        <div class="budjet-box"><div class="k">Saldo atual</div><div class="v"><?= htmlspecialchars(money((float)($b['saldo_atual'] ?? 0))) ?></div></div>
-                        <div class="budjet-box"><div class="k">Orcamento total</div><div class="v"><?= htmlspecialchars(money((float)($b['orcamento_total'] ?? 0))) ?></div></div>
-                        <div class="budjet-box"><div class="k">Gasto acumulado</div><div class="v"><?= htmlspecialchars(money((float)($b['total_debitos'] ?? 0))) ?></div></div>
+                    <div class="budjet-action-bar">
+                        <span class="logi-status info"><i class="fa-solid fa-wand-magic-sparkles"></i> Painel interativo do budjet</span>
+                        <div class="right">
+                            <button type="button" class="logi-action-btn" onclick="window.print()"><i class="fa-solid fa-print"></i> Imprimir</button>
+                            <button type="button" class="logi-action-btn" onclick="window.print()"><i class="fa-solid fa-file-pdf"></i> Baixar PDF</button>
+                        </div>
+                    </div>
+                    <div class="budjet-switch">
+                        <a href="?view=budjet&departamento=oficina" class="<?= $budjetDepartamentoSelecionado === 'oficina' ? 'active' : '' ?>"><i class="fa-solid fa-screwdriver-wrench"></i> Oficina</a>
+                        <a href="?view=budjet&departamento=transporte" class="<?= $budjetDepartamentoSelecionado === 'transporte' ? 'active' : '' ?>"><i class="fa-solid fa-truck"></i> Transporte</a>
                     </div>
 
-                    <div class="budjet-reforco">
-                        <form method="POST" class="logi-inline-form">
-                            <input type="hidden" name="acao" value="budjet_creditar">
-                            <input type="hidden" name="departamento" value="<?= htmlspecialchars($budjetDepartamentoSelecionado) ?>">
-                            <input type="number" name="valor" min="0.01" step="0.01" placeholder="Valor para reforco" required>
-                            <input type="text" name="descricao" placeholder="Descricao (opcional)">
-                            <button>Reforcar budjet</button>
-                        </form>
+                    <div class="budjet-resumo">
+                        <div class="budjet-box"><div class="k"><i class="fa-solid fa-wallet"></i> Saldo atual</div><div class="v"><?= htmlspecialchars(money((float)($b['saldo_atual'] ?? 0))) ?></div></div>
+                        <div class="budjet-box"><div class="k"><i class="fa-solid fa-sack-dollar"></i> Orcamento total</div><div class="v"><?= htmlspecialchars(money((float)($b['orcamento_total'] ?? 0))) ?></div></div>
+                        <div class="budjet-box"><div class="k"><i class="fa-solid fa-circle-check"></i> Estado</div><div class="v" style="font-size:16px;"><?= $budjetBloqueado ? 'Trancado' : 'Aberto' ?></div></div>
+                    </div>
+                    <div class="budjet-progress" style="margin-top:-4px;">
+                        <div class="lbl"><span>Execucao geral do departamento</span><strong><?= number_format($pctUsoDetalhe, 1, ',', '.') ?>%</strong></div>
+                        <div class="bar"><div class="fill" style="width: <?= number_format($pctUsoDetalhe, 2, '.', '') ?>%"></div></div>
+                    </div>
+
+                    <div class="budjet-lock-banner <?= $budjetBloqueado ? 'locked' : 'open' ?>">
+                        <div>
+                            <?php if($budjetBloqueado): ?>
+                                <strong><i class="fa-solid fa-lock"></i> Budjet trancado</strong>
+                                <div style="font-size:12px; color:#6b7280;">Bloqueado por <?= htmlspecialchars((string)($b['bloqueado_por'] ?: 'Administrador')) ?><?= !empty($b['bloqueado_em']) ? ' em '.htmlspecialchars((string)$b['bloqueado_em']) : '' ?></div>
+                            <?php else: ?>
+                                <strong><i class="fa-solid fa-lock-open"></i> Budjet aberto para ajustes</strong>
+                                <div style="font-size:12px; color:#6b7280;">Edicao de itens permitida para perfis autorizados.</div>
+                            <?php endif; ?>
+                        </div>
+                        <?php if($is_admin_logistica): ?>
+                            <form method="POST" class="logi-inline-form" style="margin:0;">
+                                <input type="hidden" name="acao" value="budjet_toggle_lock">
+                                <input type="hidden" name="departamento" value="<?= htmlspecialchars($budjetDepartamentoSelecionado) ?>">
+                                <input type="hidden" name="bloquear" value="<?= $budjetBloqueado ? '0' : '1' ?>">
+                                <button type="submit" class="logi-action-btn" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none;">
+                                    <i class="fa-solid <?= $budjetBloqueado ? 'fa-unlock' : 'fa-lock' ?>"></i>
+                                    <?= $budjetBloqueado ? 'Destrancar budjet' : 'Trancar budjet' ?>
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="budjet-form-grid">
+                        <div class="budjet-form-card">
+                            <h4><i class="fa-solid fa-coins"></i> Reforco de Budjet</h4>
+                            <form method="POST" class="logi-inline-form">
+                                <input type="hidden" name="acao" value="budjet_creditar">
+                                <input type="hidden" name="departamento" value="<?= htmlspecialchars($budjetDepartamentoSelecionado) ?>">
+                                <input type="number" name="valor" min="0.01" step="0.01" placeholder="Valor para reforco" required>
+                                <input type="text" name="descricao" placeholder="Descricao (opcional)">
+                                <button <?= $budjetBloqueado && !$is_admin_logistica ? 'disabled title="Budjet trancado para ajustes"' : '' ?>><i class="fa-solid fa-plus"></i> Reforcar budjet</button>
+                            </form>
+                        </div>
+                        <div class="budjet-form-card">
+                            <h4><i class="fa-solid fa-layer-group"></i> Categoria / Actividade</h4>
+                            <form method="POST" class="logi-inline-form">
+                                <input type="hidden" name="acao" value="budjet_item_guardar">
+                                <input type="hidden" name="departamento" value="<?= htmlspecialchars($budjetDepartamentoSelecionado) ?>">
+                                <input type="hidden" name="item_id" value="<?= (int)($itemEdicaoBudjet['id'] ?? 0) ?>">
+                                <input type="text" name="categoria" placeholder="Categoria" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['categoria'] ?? '')) ?>" required>
+                                <input type="text" name="descricao" placeholder="Actividade/Servico (subcategoria)" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['descricao'] ?? '')) ?>" required>
+                                <input type="text" name="unidade" placeholder="Un" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['unidade'] ?? 'Un')) ?>">
+                                <input type="number" name="ordem_item" min="1" step="1" placeholder="Ordem" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['ordem_item'] ?? 1)) ?>">
+                                <input type="number" name="qtd_planeada" min="0" step="0.01" placeholder="Qtd planeada" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['qtd_planeada'] ?? 0)) ?>">
+                                <input type="number" name="qtd_actual" min="0" step="0.01" placeholder="Qtd actual" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['qtd_actual'] ?? 0)) ?>">
+                                <input type="number" name="orcamento_compra" min="0" step="0.01" placeholder="Orcamento compra" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['orcamento_compra'] ?? 0)) ?>">
+                                <input type="number" name="saldo_pendente" step="0.01" placeholder="Saldo pendente" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['saldo_pendente'] ?? 0)) ?>">
+                                <input type="number" name="preco_unitario" min="0" step="0.01" placeholder="Preco unitario" value="<?= htmlspecialchars((string)($itemEdicaoBudjet['preco_unitario'] ?? 0)) ?>">
+                                <button type="submit" <?= $budjetBloqueado && !$is_admin_logistica ? 'disabled title="Budjet trancado para ajustes"' : '' ?>><i class="fa-solid fa-floppy-disk"></i> <?= $itemEdicaoBudjet ? 'Atualizar item' : 'Adicionar item' ?></button>
+                                <?php if($itemEdicaoBudjet): ?>
+                                    <a class="logi-action-btn" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;" href="?view=budjet&departamento=<?= urlencode($budjetDepartamentoSelecionado) ?>"><i class="fa-solid fa-rotate-left"></i> Cancelar</a>
+                                <?php endif; ?>
+                            </form>
+                        </div>
                     </div>
 
                     <?php if($budjetItensTemplate): ?>
@@ -2491,15 +2712,55 @@ foreach($pedidosOficina as $p){
                                 if(!isset($grupoCategorias[$cat])) $grupoCategorias[$cat] = [];
                                 $grupoCategorias[$cat][] = $it;
                             }
-                            $totOrc = 0.0; $totSaldo = 0.0;
+                            $totOrc = 0.0; $totSaldo = 0.0; $totExcedido = 0; $totQuase = 0;
                         ?>
+                        <?php
+                            foreach($budjetItensTemplate as $ix){
+                                $orcIt = (float)($ix['orcamento_compra'] ?? 0);
+                                $saldoIt = (float)($ix['saldo_pendente'] ?? 0);
+                                $consumoIt = max(0, $orcIt - $saldoIt);
+                                $pctIt = $orcIt > 0 ? (($consumoIt / $orcIt) * 100) : 0;
+                                if($saldoIt < 0) $totExcedido++;
+                                elseif($pctIt >= 90) $totQuase++;
+                            }
+                        ?>
+                        <?php if($totExcedido > 0 || $totQuase > 0): ?>
+                            <div class="budjet-alert-box">
+                                <strong><i class="fa-solid fa-triangle-exclamation"></i> Alerta de budjet por actividade/servico:</strong>
+                                <?= $totExcedido > 0 ? htmlspecialchars((string)$totExcedido) . ' item(ns) excedido(s)' : '0 excedidos' ?><?= $totQuase > 0 ? ' | ' . htmlspecialchars((string)$totQuase) . ' item(ns) perto do limite' : '' ?>.
+                            </div>
+                        <?php else: ?>
+                            <div class="budjet-alert-box ok"><i class="fa-solid fa-circle-check"></i> Sem excesso: todas as actividades/servicos estao dentro do budjet.</div>
+                        <?php endif; ?>
+                        <div class="budjet-tools">
+                            <div class="logi-status info"><i class="fa-solid fa-filter"></i> Filtro rapido por Actividade/Servico</div>
+                            <input type="text" id="budjetFiltroItens" placeholder="Pesquisar categoria, actividade ou estado...">
+                        </div>
                         <div class="logi-table-wrap">
-                            <table class="logi-table">
-                                <tr><th>#</th><th>Actividade/Servico</th><th>UND</th><th>Preco Unt</th><th>Qtd</th><th>Qtd Actual</th><th>Orcamento Compra</th><th>Saldo Pendente</th></tr>
+                            <table class="logi-table" id="tabelaBudjetItens">
+                                <tr><th>#</th><th>Actividade/Servico</th><th>UND</th><th>Preco Unt</th><th>Qtd</th><th>Qtd Actual</th><th>Orcamento Compra</th><th>Saldo Pendente</th><th>Alerta</th><th>Acoes</th></tr>
                                 <?php foreach($grupoCategorias as $categoria => $itensCat): ?>
-                                    <tr><td colspan="8" style="font-weight:800;background:#fff7ed;color:#7c2d12;"><?= htmlspecialchars($categoria) ?></td></tr>
+                                    <tr data-budjet-row="1" data-budjet-text="<?= htmlspecialchars(strtolower((string)$categoria), ENT_QUOTES, 'UTF-8') ?>"><td colspan="10" style="font-weight:800;background:#fff7ed;color:#7c2d12;"><i class="fa-solid fa-layer-group"></i> <?= htmlspecialchars($categoria) ?></td></tr>
                                     <?php foreach($itensCat as $idx=>$it): $totOrc += (float)($it['orcamento_compra'] ?? 0); $totSaldo += (float)($it['saldo_pendente'] ?? 0); ?>
-                                        <tr>
+                                        <?php
+                                            $orcIt = (float)($it['orcamento_compra'] ?? 0);
+                                            $saldoIt = (float)($it['saldo_pendente'] ?? 0);
+                                            $consumoIt = max(0, $orcIt - $saldoIt);
+                                            $pctIt = $orcIt > 0 ? (($consumoIt / $orcIt) * 100) : 0;
+                                            $alertaClasse = 'ok';
+                                            $alertaIcone = 'fa-circle-check';
+                                            $alertaTxt = 'Dentro do budjet';
+                                            if($saldoIt < 0){
+                                                $alertaClasse = 'danger';
+                                                $alertaIcone = 'fa-triangle-exclamation';
+                                                $alertaTxt = 'Excedido';
+                                            } elseif($pctIt >= 90){
+                                                $alertaClasse = 'warn';
+                                                $alertaIcone = 'fa-bell';
+                                                $alertaTxt = 'Perto do limite';
+                                            }
+                                        ?>
+                                        <tr data-budjet-row="1" data-budjet-text="<?= htmlspecialchars(strtolower((string)($categoria.' '.($it['descricao'] ?? '').' '.$alertaTxt)), ENT_QUOTES, 'UTF-8') ?>">
                                             <td><?= (int)($idx + 1) ?></td>
                                             <td><?= htmlspecialchars((string)($it['descricao'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars((string)($it['unidade'] ?? '-')) ?></td>
@@ -2508,6 +2769,18 @@ foreach($pedidosOficina as $p){
                                             <td><?= htmlspecialchars((string)number_format((float)($it['qtd_actual'] ?? 0), 2, ',', '.')) ?></td>
                                             <td><?= htmlspecialchars(money((float)($it['orcamento_compra'] ?? 0))) ?></td>
                                             <td><?= htmlspecialchars(money((float)($it['saldo_pendente'] ?? 0))) ?></td>
+                                            <td><span class="logi-status <?= $alertaClasse ?>"><i class="fa-solid <?= $alertaIcone ?>"></i> <?= htmlspecialchars($alertaTxt) ?></span></td>
+                                            <td style="white-space:nowrap;">
+                                                <a class="btn-icon-only" title="Editar item" href="?view=budjet&departamento=<?= urlencode($budjetDepartamentoSelecionado) ?>&budjet_item_edit=<?= (int)($it['id'] ?? 0) ?>"><i class="fa-solid fa-pen-to-square"></i></a>
+                                                <?php if($is_admin_logistica): ?>
+                                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Excluir este item do budjet?');">
+                                                        <input type="hidden" name="acao" value="budjet_item_excluir">
+                                                        <input type="hidden" name="departamento" value="<?= htmlspecialchars($budjetDepartamentoSelecionado) ?>">
+                                                        <input type="hidden" name="item_id" value="<?= (int)($it['id'] ?? 0) ?>">
+                                                        <button type="submit" class="btn-icon-only danger" title="Excluir item"><i class="fa-solid fa-trash"></i></button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php endforeach; ?>
@@ -2515,9 +2788,26 @@ foreach($pedidosOficina as $p){
                                     <td colspan="6" style="font-weight:800;">TOTAL ORCAMENTO DO PROJECTO</td>
                                     <td style="font-weight:800;"><?= htmlspecialchars(money($totOrc)) ?></td>
                                     <td style="font-weight:800;"><?= htmlspecialchars(money($totSaldo)) ?></td>
+                                    <td colspan="2"></td>
                                 </tr>
                             </table>
                         </div>
+                        <script>
+                            (function(){
+                                var input = document.getElementById('budjetFiltroItens');
+                                var tabela = document.getElementById('tabelaBudjetItens');
+                                if(!input || !tabela) return;
+                                function filtrar(){
+                                    var q = (input.value || '').toLowerCase().trim();
+                                    var rows = tabela.querySelectorAll('tr[data-budjet-row=\"1\"]');
+                                    rows.forEach(function(r){
+                                        var txt = (r.getAttribute('data-budjet-text') || '').toLowerCase();
+                                        r.style.display = (q === '' || txt.indexOf(q) >= 0) ? '' : 'none';
+                                    });
+                                }
+                                input.addEventListener('input', filtrar);
+                            })();
+                        </script>
                     <?php endif; ?>
 
                 <?php endif; ?>

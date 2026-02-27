@@ -365,6 +365,11 @@ $pdo->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 ensureColumnExists($pdo, 'transporte_presencas', 'pessoal_id', "int NULL AFTER `data_presenca`");
+ensureColumnExists($pdo, 'transporte_presencas', 'colaborador', "VARCHAR(180) NULL AFTER `pessoal_id`");
+ensureColumnExists($pdo, 'transporte_presencas', 'funcao', "VARCHAR(120) NULL AFTER `colaborador`");
+ensureColumnExists($pdo, 'transporte_presencas', 'hora_entrada', "TIME NULL AFTER `projeto`");
+ensureColumnExists($pdo, 'transporte_presencas', 'hora_saida', "TIME NULL AFTER `hora_entrada`");
+ensureColumnExists($pdo, 'transporte_presencas', 'estado', "VARCHAR(40) NOT NULL DEFAULT 'Presente' AFTER `hora_saida`");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_entrada', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `estado`");
 ensureColumnExists($pdo, 'transporte_presencas', 'assinou_saida', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `assinou_entrada`");
 ensureColumnExists($pdo, 'transporte_presencas', 'enviado_rh', "TINYINT(1) NOT NULL DEFAULT 0 AFTER `registado_por`");
@@ -598,6 +603,11 @@ ensureColumnExists($pdo, 'transporte_requisicoes', 'preco_unitario_estimado', "d
 ensureColumnExists($pdo, 'transporte_requisicoes', 'valor_total_estimado', "decimal(12,2) NOT NULL DEFAULT 0 AFTER `preco_unitario_estimado`");
 ensureColumnExists($pdo, 'transporte_requisicoes', 'moeda', "varchar(10) NOT NULL DEFAULT 'MZN' AFTER `valor_total_estimado`");
 ensureColumnExists($pdo, 'transporte_requisicoes', 'anexos', "text NULL AFTER `status`");
+ensureColumnExists($pdo, 'transporte_requisicoes', 'assunto', "varchar(180) NULL AFTER `codigo`");
+ensureColumnExists($pdo, 'transporte_requisicoes', 'categoria_ordem', "varchar(120) NULL AFTER `categoria`");
+ensureColumnExists($pdo, 'transporte_requisicoes', 'subcategoria_ordem', "varchar(120) NULL AFTER `categoria_ordem`");
+ensureColumnExists($pdo, 'transporte_requisicoes', 'observacao', "text NULL AFTER `justificativa`");
+ensureColumnExists($pdo, 'transporte_requisicoes', 'logistica_requisicao_id', "int NULL AFTER `status`");
 
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS transporte_fornecedores (
@@ -1480,7 +1490,128 @@ seedChecklistBasicoSeVazio($pdo);
 deduplicarChecklistTemplates($pdo);
 seedStockItensBasicos($pdo);
 
-$googleMapsApiKey = getenv('GOOGLE_MAPS_API_KEY') ?: ($_SERVER['GOOGLE_MAPS_API_KEY'] ?? '');
+$googleMapsApiKey = '';
+$googleMapsConfigFile = __DIR__ . '/app/config/google_maps.php';
+if (is_file($googleMapsConfigFile)) {
+    $googleMapsConfig = require $googleMapsConfigFile;
+    if (is_array($googleMapsConfig) && !empty($googleMapsConfig['api_key'])) {
+        $googleMapsApiKey = (string) $googleMapsConfig['api_key'];
+    } elseif (is_string($googleMapsConfig) && trim($googleMapsConfig) !== '') {
+        $googleMapsApiKey = (string) $googleMapsConfig;
+    }
+}
+
+function tableExists(PDO $pdo, string $table): bool {
+    $st = $pdo->prepare("SHOW TABLES LIKE :table");
+    $st->execute([':table' => $table]);
+    return (bool) $st->fetchColumn();
+}
+
+function tableColumns(PDO $pdo, string $table): array {
+    $cols = [];
+    $st = $pdo->query("SHOW COLUMNS FROM `$table`");
+    if (!$st) return $cols;
+    foreach (($st->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
+        $f = (string) ($row['Field'] ?? '');
+        if ($f !== '') $cols[$f] = true;
+    }
+    return $cols;
+}
+
+function sincronizarRequisicaoTransporteNaLogistica(PDO $pdo, array $dados, ?int $logisticaId = null): int {
+    if (!tableExists($pdo, 'logistica_requisicoes')) {
+        throw new RuntimeException('Tabela logistica_requisicoes nao encontrada. Abra o modulo Logistica para inicializar.');
+    }
+    $cols = tableColumns($pdo, 'logistica_requisicoes');
+    if (!$cols) {
+        throw new RuntimeException('Nao foi possivel ler colunas de logistica_requisicoes.');
+    }
+
+    $obsPartes = [];
+    if (trim((string) ($dados['assunto'] ?? '')) !== '') $obsPartes[] = 'Assunto: ' . trim((string) $dados['assunto']);
+    if (trim((string) ($dados['categoria_ordem'] ?? '')) !== '') $obsPartes[] = 'Categoria: ' . trim((string) $dados['categoria_ordem']);
+    if (trim((string) ($dados['subcategoria_ordem'] ?? '')) !== '') $obsPartes[] = 'Subcategoria: ' . trim((string) $dados['subcategoria_ordem']);
+    if (trim((string) ($dados['observacao'] ?? '')) !== '') $obsPartes[] = 'Observacao: ' . trim((string) $dados['observacao']);
+    if (trim((string) ($dados['justificativa'] ?? '')) !== '') $obsPartes[] = 'Justificativa: ' . trim((string) $dados['justificativa']);
+    $observacoes = implode(' | ', $obsPartes);
+    if ($observacoes === '') $observacoes = null;
+
+    $payload = [
+        'origem' => 'Transporte',
+        'destino' => 'Logistica',
+        'item' => (string) ($dados['item_nome'] ?? ''),
+        'quantidade' => (float) ($dados['quantidade'] ?? 0),
+        'unidade' => (string) ($dados['unidade'] ?? 'un'),
+        'prioridade' => (string) ($dados['prioridade'] ?? 'Media'),
+        'status' => 'Pendente',
+        'data_requisicao' => (string) ($dados['data_requisicao'] ?? date('Y-m-d')),
+        'responsavel' => (string) ($dados['solicitante'] ?? ''),
+        'observacoes' => $observacoes,
+        'finalidade' => trim((string) ($dados['assunto'] ?? '')) !== '' ? (string) $dados['assunto'] : null,
+        'origem_modulo' => 'transporte',
+        'categoria_item' => trim((string) ($dados['categoria_ordem'] ?? '')) !== '' ? (string) $dados['categoria_ordem'] : (string) ($dados['categoria_item'] ?? ''),
+        'escopo_logistica' => 'operacional',
+        'area_solicitante' => 'transporte',
+        'preco_unitario' => (float) ($dados['preco_unitario'] ?? 0),
+        'valor_total' => (float) ($dados['valor_total'] ?? 0),
+        'custo_total' => (float) ($dados['valor_total'] ?? 0),
+    ];
+
+    if (isset($cols['codigo'])) {
+        if ($logisticaId && $logisticaId > 0) {
+            $stCod = $pdo->prepare("SELECT codigo FROM logistica_requisicoes WHERE id = :id LIMIT 1");
+            $stCod->execute([':id' => $logisticaId]);
+            $codigoAtual = (string) ($stCod->fetchColumn() ?: '');
+            if ($codigoAtual !== '') $payload['codigo'] = $codigoAtual;
+        }
+        if (!isset($payload['codigo'])) {
+            $next = (int) ($pdo->query("SELECT COALESCE(MAX(id), 0) + 1 FROM logistica_requisicoes")->fetchColumn() ?: 1);
+            $payload['codigo'] = 'REQ-TR-' . date('Y') . '-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+        }
+    }
+
+    $usable = [];
+    foreach ($payload as $k => $v) {
+        if (isset($cols[$k])) $usable[$k] = $v;
+    }
+
+    if ($logisticaId && $logisticaId > 0) {
+        $stChk = $pdo->prepare("SELECT id FROM logistica_requisicoes WHERE id = :id LIMIT 1");
+        $stChk->execute([':id' => $logisticaId]);
+        if ($stChk->fetchColumn()) {
+            $set = [];
+            $params = [':id' => $logisticaId];
+            foreach ($usable as $k => $v) {
+                if ($k === 'codigo') continue;
+                $set[] = "`$k` = :$k";
+                $params[":$k"] = $v;
+            }
+            if ($set) {
+                $sql = "UPDATE logistica_requisicoes SET " . implode(', ', $set) . " WHERE id = :id LIMIT 1";
+                $stUp = $pdo->prepare($sql);
+                $stUp->execute($params);
+            }
+            return $logisticaId;
+        }
+    }
+
+    if (!isset($usable['origem'], $usable['destino'], $usable['item'], $usable['quantidade'], $usable['unidade'], $usable['prioridade'], $usable['status'], $usable['data_requisicao'])) {
+        throw new RuntimeException('Estrutura de logistica_requisicoes nao compativel para receber requisicao do Transporte.');
+    }
+
+    $fields = array_keys($usable);
+    $sql = "INSERT INTO logistica_requisicoes (" . implode(',', array_map(static fn($f) => "`$f`", $fields)) . ")
+            VALUES (" . implode(',', array_map(static fn($f) => ":$f", $fields)) . ")";
+    $params = [];
+    foreach ($usable as $k => $v) $params[":$k"] = $v;
+    $stIns = $pdo->prepare($sql);
+    $stIns->execute($params);
+    return (int) $pdo->lastInsertId();
+}
+if ($googleMapsApiKey === '') {
+    $googleMapsApiKey = (string) (getenv('GOOGLE_MAPS_API_KEY') ?: ($_SERVER['GOOGLE_MAPS_API_KEY'] ?? ''));
+}
+$googleMapsApiKey = trim($googleMapsApiKey);
 
 function consumoPadraoPorTipo(?string $tipo): ?float {
     $map = [
@@ -1659,16 +1790,38 @@ function geocodeNominatim(string $endereco, ?array $proximoDe = null, string $co
     return $candidatos[0];
 }
 
+function geocodeComVariantes(string $endereco, ?array $proximoDe = null, string $countryCode = ''): ?array {
+    $endereco = trim($endereco);
+    if ($endereco === '') return null;
+
+    $tentativas = [$endereco];
+    if (!preg_match('/,\s*(mozambique|mo[cç]ambique)$/i', $endereco)) {
+        $tentativas[] = $endereco . ', Mozambique';
+        $tentativas[] = $endereco . ', Mocambique';
+    }
+
+    foreach ($tentativas as $q) {
+        $p = geocodeNominatim($q, $proximoDe, $countryCode);
+        if ($p) return $p;
+    }
+    return null;
+}
+
 function distanceViaOsrm(string $origem, string $destino): array {
-    $p1 = geocodeNominatim($origem);
+    $p1 = geocodeComVariantes($origem);
     if (!$p1) return ['ok' => false, 'error' => 'Origem nao encontrada'];
 
     $countryCode = (string) ($p1['country_code'] ?? '');
-    $p2 = geocodeNominatim($destino, $p1, $countryCode);
+    $p2 = geocodeComVariantes($destino, $p1, $countryCode);
     if (!$p2) {
-        $p2 = geocodeNominatim($destino, $p1);
+        $p2 = geocodeComVariantes($destino, $p1);
     }
-    if (!$p1 || !$p2) return ['ok' => false, 'error' => 'Endereco nao encontrado'];
+    if (!$p1 || !$p2) {
+        return [
+            'ok' => false,
+            'error' => 'Endereco nao encontrado. Use localidade mais especifica (ex.: Gaza, Xai-Xai, Mozambique).'
+        ];
+    }
 
     $url = 'https://router.project-osrm.org/route/v1/driving/' . $p1['lon'] . ',' . $p1['lat'] . ';' . $p2['lon'] . ',' . $p2['lat'] . '?overview=false';
     $json = httpGetJson($url);
@@ -3471,10 +3624,15 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if(isset($_POST['salvar_requisicao_stock'])) {
+        $assuntoReq = trim((string) ($_POST['assunto_req'] ?? ''));
         $itemIdReq = isset($_POST['item_id_req']) && $_POST['item_id_req'] !== '' ? (int) $_POST['item_id_req'] : null;
         $itemCodigoReq = trim((string) ($_POST['item_codigo_req'] ?? ''));
         $itemNomeReq = trim((string) ($_POST['item_nome_req'] ?? ''));
         $categoriaReq = trim((string) ($_POST['categoria_req'] ?? ''));
+        $categoriaOrdemReq = trim((string) ($_POST['categoria_ordem_req'] ?? ''));
+        $subcategoriaOrdemReq = trim((string) ($_POST['subcategoria_ordem_req'] ?? ''));
+        $observacaoReq = trim((string) ($_POST['observacao_req'] ?? ''));
+        $dataRequisicaoReq = trim((string) ($_POST['data_requisicao_req'] ?? date('Y-m-d')));
         $unidadeReq = trim((string) ($_POST['unidade_req'] ?? 'L'));
         $stockAtualReq = isset($_POST['stock_atual_req']) && $_POST['stock_atual_req'] !== '' ? (float) $_POST['stock_atual_req'] : 0.0;
         $stockMinimoReq = isset($_POST['stock_minimo_req']) && $_POST['stock_minimo_req'] !== '' ? (float) $_POST['stock_minimo_req'] : 0.0;
@@ -3492,7 +3650,38 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $justificativaReq = trim((string) ($_POST['justificativa_req'] ?? ''));
         $solicitanteReq = trim((string) ($_POST['solicitante_req'] ?? ''));
         $statusReq = 'Pendente';
+        $itensDescReq = isset($_POST['item_descricao_req']) && is_array($_POST['item_descricao_req']) ? $_POST['item_descricao_req'] : [];
+        $finsReq = isset($_POST['finalidade_req']) && is_array($_POST['finalidade_req']) ? $_POST['finalidade_req'] : [];
+        $qtdLinhasReq = isset($_POST['quantidade_req_linha']) && is_array($_POST['quantidade_req_linha']) ? $_POST['quantidade_req_linha'] : [];
+        $unLinhasReq = isset($_POST['unidade_req_linha']) && is_array($_POST['unidade_req_linha']) ? $_POST['unidade_req_linha'] : [];
+        $linhasResumoReq = [];
+        $qtdTotalLinhasReq = 0.0;
+        $itemPrincipalReq = '';
+        $unidadePrincipalReq = $unidadeReq !== '' ? $unidadeReq : 'un';
+        $maxLinhasReq = max(count($itensDescReq), count($qtdLinhasReq), count($unLinhasReq), count($finsReq));
+        for($i = 0; $i < $maxLinhasReq; $i++) {
+            $descL = trim((string) ($itensDescReq[$i] ?? ''));
+            $fimL = trim((string) ($finsReq[$i] ?? ''));
+            $qtdL = (float) str_replace(',', '.', (string) ($qtdLinhasReq[$i] ?? '0'));
+            $unL = trim((string) ($unLinhasReq[$i] ?? ''));
+            if($descL === '' || $qtdL <= 0) continue;
+            if($itemPrincipalReq === '') $itemPrincipalReq = $descL;
+            if($unL !== '' && $unidadePrincipalReq === '') $unidadePrincipalReq = $unL;
+            $qtdTotalLinhasReq += $qtdL;
+            $txt = $descL . ' (' . number_format($qtdL, 2, ',', '.') . ' ' . ($unL !== '' ? $unL : 'un') . ')';
+            if($fimL !== '') $txt .= ' - Fim: ' . $fimL;
+            $linhasResumoReq[] = $txt;
+        }
+        if($itemPrincipalReq !== '') $itemNomeReq = $itemPrincipalReq;
+        if($qtdTotalLinhasReq > 0) $qtdSolicitadaReq = $qtdTotalLinhasReq;
+        if(!empty($linhasResumoReq)) {
+            $justExtra = 'Itens: ' . implode(' | ', $linhasResumoReq);
+            $justificativaReq = trim(($justificativaReq !== '' ? ($justificativaReq . ' | ') : '') . $justExtra);
+        }
 
+        if($assuntoReq === '') {
+            $erro_form = 'Informe o assunto da requisicao.';
+        }
         if($itemNomeReq === '') {
             $erro_form = 'Informe o item para requisitar.';
         }
@@ -3507,6 +3696,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if($moedaReq === '' || strlen($moedaReq) > 10) {
             $moedaReq = 'MZN';
+        }
+        if($dataRequisicaoReq === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataRequisicaoReq)) {
+            $dataRequisicaoReq = date('Y-m-d');
         }
         $valorTotalReq = $qtdSolicitadaReq * $precoUnitarioReq;
 
@@ -3547,51 +3739,88 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nextReqId = (int) $nextReqStmt->fetchColumn();
             $codigoReq = 'REQ-' . date('Y') . '-' . str_pad((string) $nextReqId, 4, '0', STR_PAD_LEFT);
             $anexosReqJson = !empty($anexosReq['files']) ? json_encode($anexosReq['files'], JSON_UNESCAPED_UNICODE) : null;
+            try {
+                if(!$pdo->inTransaction()) $pdo->beginTransaction();
+                $insReq = $pdo->prepare("
+                    INSERT INTO transporte_requisicoes
+                    (codigo, assunto, data_requisicao, item_id, item_codigo, item_nome, categoria, categoria_ordem, subcategoria_ordem, unidade, stock_atual, stock_minimo, saida_media_dia, dias_cobertura, quantidade_sugerida, quantidade_solicitada, preco_unitario_estimado, valor_total_estimado, moeda, fornecedor_sugerido, fornecedor_id, fornecedor_escolhido, prioridade, justificativa, observacao, solicitante, status, anexos)
+                    VALUES
+                    (:codigo, :assunto, :data_requisicao, :item_id, :item_codigo, :item_nome, :categoria, :categoria_ordem, :subcategoria_ordem, :unidade, :stock_atual, :stock_minimo, :saida_media_dia, :dias_cobertura, :quantidade_sugerida, :quantidade_solicitada, :preco_unitario_estimado, :valor_total_estimado, :moeda, :fornecedor_sugerido, :fornecedor_id, :fornecedor_escolhido, :prioridade, :justificativa, :observacao, :solicitante, :status, :anexos)
+                ");
+                $insReq->execute([
+                    ':codigo' => $codigoReq,
+                    ':assunto' => $assuntoReq,
+                    ':data_requisicao' => $dataRequisicaoReq,
+                    ':item_id' => $itemIdReq,
+                    ':item_codigo' => $itemCodigoReq !== '' ? $itemCodigoReq : null,
+                    ':item_nome' => $itemNomeReq,
+                    ':categoria' => $categoriaReq !== '' ? $categoriaReq : null,
+                    ':categoria_ordem' => $categoriaOrdemReq !== '' ? $categoriaOrdemReq : null,
+                    ':subcategoria_ordem' => $subcategoriaOrdemReq !== '' ? $subcategoriaOrdemReq : null,
+                    ':unidade' => $unidadeReq !== '' ? $unidadeReq : null,
+                    ':stock_atual' => $stockAtualReq,
+                    ':stock_minimo' => $stockMinimoReq,
+                    ':saida_media_dia' => $saidaMediaDiaReq,
+                    ':dias_cobertura' => $diasCoberturaReq,
+                    ':quantidade_sugerida' => $qtdSugeridaReq,
+                    ':quantidade_solicitada' => $qtdSolicitadaReq,
+                    ':preco_unitario_estimado' => $precoUnitarioReq,
+                    ':valor_total_estimado' => $valorTotalReq,
+                    ':moeda' => $moedaReq,
+                    ':fornecedor_sugerido' => $fornecedorSugReq !== '' ? $fornecedorSugReq : null,
+                    ':fornecedor_id' => $fornecedorIdReq,
+                    ':fornecedor_escolhido' => $fornecedorReq !== '' ? $fornecedorReq : null,
+                    ':prioridade' => $prioridadeReq,
+                    ':justificativa' => $justificativaReq !== '' ? $justificativaReq : null,
+                    ':observacao' => $observacaoReq !== '' ? $observacaoReq : null,
+                    ':solicitante' => $solicitanteReq !== '' ? $solicitanteReq : null,
+                    ':status' => $statusReq,
+                    ':anexos' => $anexosReqJson
+                ]);
+                $reqIdCriado = (int) $pdo->lastInsertId();
+                $logisticaReqId = sincronizarRequisicaoTransporteNaLogistica($pdo, [
+                    'assunto' => $assuntoReq,
+                    'categoria_ordem' => $categoriaOrdemReq,
+                    'subcategoria_ordem' => $subcategoriaOrdemReq,
+                    'observacao' => $observacaoReq,
+                    'justificativa' => $justificativaReq,
+                    'item_nome' => $itemNomeReq,
+                    'quantidade' => $qtdSolicitadaReq,
+                    'unidade' => $unidadeReq !== '' ? $unidadeReq : 'un',
+                    'prioridade' => $prioridadeReq,
+                    'data_requisicao' => $dataRequisicaoReq,
+                    'solicitante' => $solicitanteReq,
+                    'categoria_item' => $categoriaReq,
+                    'preco_unitario' => $precoUnitarioReq,
+                    'valor_total' => $valorTotalReq,
+                ], null);
+                $pdo->prepare("UPDATE transporte_requisicoes SET logistica_requisicao_id = :log_id WHERE id = :id LIMIT 1")
+                    ->execute([':log_id' => $logisticaReqId, ':id' => $reqIdCriado]);
+                if($pdo->inTransaction()) $pdo->commit();
+            } catch (Throwable $e) {
+                if($pdo->inTransaction()) $pdo->rollBack();
+                $erro_form = 'Nao foi possivel enviar requisicao para Logistica: ' . $e->getMessage();
+            }
+        }
 
-            $insReq = $pdo->prepare("
-                INSERT INTO transporte_requisicoes
-                (codigo, data_requisicao, item_id, item_codigo, item_nome, categoria, unidade, stock_atual, stock_minimo, saida_media_dia, dias_cobertura, quantidade_sugerida, quantidade_solicitada, preco_unitario_estimado, valor_total_estimado, moeda, fornecedor_sugerido, fornecedor_id, fornecedor_escolhido, prioridade, justificativa, solicitante, status, anexos)
-                VALUES
-                (:codigo, :data_requisicao, :item_id, :item_codigo, :item_nome, :categoria, :unidade, :stock_atual, :stock_minimo, :saida_media_dia, :dias_cobertura, :quantidade_sugerida, :quantidade_solicitada, :preco_unitario_estimado, :valor_total_estimado, :moeda, :fornecedor_sugerido, :fornecedor_id, :fornecedor_escolhido, :prioridade, :justificativa, :solicitante, :status, :anexos)
-            ");
-            $insReq->execute([
-                ':codigo' => $codigoReq,
-                ':data_requisicao' => date('Y-m-d'),
-                ':item_id' => $itemIdReq,
-                ':item_codigo' => $itemCodigoReq !== '' ? $itemCodigoReq : null,
-                ':item_nome' => $itemNomeReq,
-                ':categoria' => $categoriaReq !== '' ? $categoriaReq : null,
-                ':unidade' => $unidadeReq !== '' ? $unidadeReq : null,
-                ':stock_atual' => $stockAtualReq,
-                ':stock_minimo' => $stockMinimoReq,
-                ':saida_media_dia' => $saidaMediaDiaReq,
-                ':dias_cobertura' => $diasCoberturaReq,
-                ':quantidade_sugerida' => $qtdSugeridaReq,
-                ':quantidade_solicitada' => $qtdSolicitadaReq,
-                ':preco_unitario_estimado' => $precoUnitarioReq,
-                ':valor_total_estimado' => $valorTotalReq,
-                ':moeda' => $moedaReq,
-                ':fornecedor_sugerido' => $fornecedorSugReq !== '' ? $fornecedorSugReq : null,
-                ':fornecedor_id' => $fornecedorIdReq,
-                ':fornecedor_escolhido' => $fornecedorReq !== '' ? $fornecedorReq : null,
-                ':prioridade' => $prioridadeReq,
-                ':justificativa' => $justificativaReq !== '' ? $justificativaReq : null,
-                ':solicitante' => $solicitanteReq !== '' ? $solicitanteReq : null,
-                ':status' => $statusReq,
-                ':anexos' => $anexosReqJson
-            ]);
-
-            header("Location:?tab=gestao_frota&view=requisicoes&mode=list");
+        if($erro_form === '') {
+            $tabReq = in_array((string) $tab, ['transporte', 'gestao_frota'], true) ? (string) $tab : 'gestao_frota';
+            header("Location:?tab={$tabReq}&view=requisicoes&mode=list");
             exit();
         }
     }
 
     if(isset($_POST['atualizar_requisicao_stock'])) {
         $reqId = isset($_POST['req_id']) ? (int) $_POST['req_id'] : 0;
+        $assuntoReq = trim((string) ($_POST['assunto_req'] ?? ''));
         $itemIdReq = isset($_POST['item_id_req']) && $_POST['item_id_req'] !== '' ? (int) $_POST['item_id_req'] : null;
         $itemCodigoReq = trim((string) ($_POST['item_codigo_req'] ?? ''));
         $itemNomeReq = trim((string) ($_POST['item_nome_req'] ?? ''));
         $categoriaReq = trim((string) ($_POST['categoria_req'] ?? ''));
+        $categoriaOrdemReq = trim((string) ($_POST['categoria_ordem_req'] ?? ''));
+        $subcategoriaOrdemReq = trim((string) ($_POST['subcategoria_ordem_req'] ?? ''));
+        $observacaoReq = trim((string) ($_POST['observacao_req'] ?? ''));
+        $dataRequisicaoReq = trim((string) ($_POST['data_requisicao_req'] ?? date('Y-m-d')));
         $unidadeReq = trim((string) ($_POST['unidade_req'] ?? 'L'));
         $stockAtualReq = isset($_POST['stock_atual_req']) && $_POST['stock_atual_req'] !== '' ? (float) $_POST['stock_atual_req'] : 0.0;
         $stockMinimoReq = isset($_POST['stock_minimo_req']) && $_POST['stock_minimo_req'] !== '' ? (float) $_POST['stock_minimo_req'] : 0.0;
@@ -3609,9 +3838,40 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $justificativaReq = trim((string) ($_POST['justificativa_req'] ?? ''));
         $solicitanteReq = trim((string) ($_POST['solicitante_req'] ?? ''));
         $statusReq = trim((string) ($_POST['status_req'] ?? 'Pendente'));
+        $itensDescReq = isset($_POST['item_descricao_req']) && is_array($_POST['item_descricao_req']) ? $_POST['item_descricao_req'] : [];
+        $finsReq = isset($_POST['finalidade_req']) && is_array($_POST['finalidade_req']) ? $_POST['finalidade_req'] : [];
+        $qtdLinhasReq = isset($_POST['quantidade_req_linha']) && is_array($_POST['quantidade_req_linha']) ? $_POST['quantidade_req_linha'] : [];
+        $unLinhasReq = isset($_POST['unidade_req_linha']) && is_array($_POST['unidade_req_linha']) ? $_POST['unidade_req_linha'] : [];
+        $linhasResumoReq = [];
+        $qtdTotalLinhasReq = 0.0;
+        $itemPrincipalReq = '';
+        $unidadePrincipalReq = $unidadeReq !== '' ? $unidadeReq : 'un';
+        $maxLinhasReq = max(count($itensDescReq), count($qtdLinhasReq), count($unLinhasReq), count($finsReq));
+        for($i = 0; $i < $maxLinhasReq; $i++) {
+            $descL = trim((string) ($itensDescReq[$i] ?? ''));
+            $fimL = trim((string) ($finsReq[$i] ?? ''));
+            $qtdL = (float) str_replace(',', '.', (string) ($qtdLinhasReq[$i] ?? '0'));
+            $unL = trim((string) ($unLinhasReq[$i] ?? ''));
+            if($descL === '' || $qtdL <= 0) continue;
+            if($itemPrincipalReq === '') $itemPrincipalReq = $descL;
+            if($unL !== '' && $unidadePrincipalReq === '') $unidadePrincipalReq = $unL;
+            $qtdTotalLinhasReq += $qtdL;
+            $txt = $descL . ' (' . number_format($qtdL, 2, ',', '.') . ' ' . ($unL !== '' ? $unL : 'un') . ')';
+            if($fimL !== '') $txt .= ' - Fim: ' . $fimL;
+            $linhasResumoReq[] = $txt;
+        }
+        if($itemPrincipalReq !== '') $itemNomeReq = $itemPrincipalReq;
+        if($qtdTotalLinhasReq > 0) $qtdSolicitadaReq = $qtdTotalLinhasReq;
+        if(!empty($linhasResumoReq)) {
+            $justExtra = 'Itens: ' . implode(' | ', $linhasResumoReq);
+            $justificativaReq = trim(($justificativaReq !== '' ? ($justificativaReq . ' | ') : '') . $justExtra);
+        }
 
         if($reqId <= 0) {
             $erro_form = 'RequisiÃ§Ã£o invÃ¡lida para atualizaÃ§Ã£o.';
+        }
+        if($assuntoReq === '') {
+            $erro_form = 'Informe o assunto da requisicao.';
         }
         if($itemNomeReq === '') {
             $erro_form = 'Informe o item para requisitar.';
@@ -3630,6 +3890,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if($moedaReq === '' || strlen($moedaReq) > 10) {
             $moedaReq = 'MZN';
+        }
+        if($dataRequisicaoReq === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataRequisicaoReq)) {
+            $dataRequisicaoReq = date('Y-m-d');
         }
         $valorTotalReq = $qtdSolicitadaReq * $precoUnitarioReq;
 
@@ -3688,10 +3951,14 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $anexosReqJson = !empty($anexosFinaisReq) ? json_encode(array_values(array_unique($anexosFinaisReq)), JSON_UNESCAPED_UNICODE) : null;
             $updReq = $pdo->prepare("
                 UPDATE transporte_requisicoes
-                SET item_id = :item_id,
+                SET assunto = :assunto,
+                    data_requisicao = :data_requisicao,
+                    item_id = :item_id,
                     item_codigo = :item_codigo,
                     item_nome = :item_nome,
                     categoria = :categoria,
+                    categoria_ordem = :categoria_ordem,
+                    subcategoria_ordem = :subcategoria_ordem,
                     unidade = :unidade,
                     stock_atual = :stock_atual,
                     stock_minimo = :stock_minimo,
@@ -3707,6 +3974,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     fornecedor_escolhido = :fornecedor_escolhido,
                     prioridade = :prioridade,
                     justificativa = :justificativa,
+                    observacao = :observacao,
                     solicitante = :solicitante,
                     status = :status,
                     anexos = :anexos
@@ -3714,10 +3982,14 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 LIMIT 1
             ");
             $updReq->execute([
+                ':assunto' => $assuntoReq,
+                ':data_requisicao' => $dataRequisicaoReq,
                 ':item_id' => $itemIdReq,
                 ':item_codigo' => $itemCodigoReq !== '' ? $itemCodigoReq : null,
                 ':item_nome' => $itemNomeReq,
                 ':categoria' => $categoriaReq !== '' ? $categoriaReq : null,
+                ':categoria_ordem' => $categoriaOrdemReq !== '' ? $categoriaOrdemReq : null,
+                ':subcategoria_ordem' => $subcategoriaOrdemReq !== '' ? $subcategoriaOrdemReq : null,
                 ':unidade' => $unidadeReq !== '' ? $unidadeReq : null,
                 ':stock_atual' => $stockAtualReq,
                 ':stock_minimo' => $stockMinimoReq,
@@ -3733,27 +4005,108 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':fornecedor_escolhido' => $fornecedorReq !== '' ? $fornecedorReq : null,
                 ':prioridade' => $prioridadeReq,
                 ':justificativa' => $justificativaReq !== '' ? $justificativaReq : null,
+                ':observacao' => $observacaoReq !== '' ? $observacaoReq : null,
                 ':solicitante' => $solicitanteReq !== '' ? $solicitanteReq : null,
                 ':status' => $statusReq,
                 ':anexos' => $anexosReqJson,
                 ':id' => $reqId
             ]);
 
-            $stDepois = $pdo->prepare("SELECT * FROM transporte_requisicoes WHERE id = :id LIMIT 1");
-            $stDepois->execute([':id' => $reqId]);
-            $reqDepois = $stDepois->fetch(PDO::FETCH_ASSOC) ?: null;
-            registarAuditoriaAlteracao(
-                $pdo,
-                'transporte_requisicoes',
-                $reqId,
-                'UPDATE',
-                $reqAntes,
-                $reqDepois,
-                isset($_SESSION['usuario_id']) ? (int) $_SESSION['usuario_id'] : null
-            );
+            $logisticaReqIdAtual = isset($reqAntes['logistica_requisicao_id']) ? (int) $reqAntes['logistica_requisicao_id'] : 0;
+            if($logisticaReqIdAtual > 0 || tableExists($pdo, 'logistica_requisicoes')) {
+                try {
+                    $novoLogId = sincronizarRequisicaoTransporteNaLogistica($pdo, [
+                        'assunto' => $assuntoReq,
+                        'categoria_ordem' => $categoriaOrdemReq,
+                        'subcategoria_ordem' => $subcategoriaOrdemReq,
+                        'observacao' => $observacaoReq,
+                        'justificativa' => $justificativaReq,
+                        'item_nome' => $itemNomeReq,
+                        'quantidade' => $qtdSolicitadaReq,
+                        'unidade' => $unidadeReq !== '' ? $unidadeReq : 'un',
+                        'prioridade' => $prioridadeReq,
+                        'data_requisicao' => $dataRequisicaoReq,
+                        'solicitante' => $solicitanteReq,
+                        'categoria_item' => $categoriaReq,
+                        'preco_unitario' => $precoUnitarioReq,
+                        'valor_total' => $valorTotalReq,
+                    ], $logisticaReqIdAtual > 0 ? $logisticaReqIdAtual : null);
+                    $pdo->prepare("UPDATE transporte_requisicoes SET logistica_requisicao_id = :log_id WHERE id = :id LIMIT 1")
+                        ->execute([':log_id' => $novoLogId, ':id' => $reqId]);
+                } catch (Throwable $e) {
+                    $erro_form = 'Requisicao atualizada no Transporte, mas falhou sincronizacao com Logistica: ' . $e->getMessage();
+                }
+            }
 
-            header("Location:?tab=gestao_frota&view=requisicoes&mode=list");
-            exit();
+            if($erro_form !== '') {
+                $item_requisicao_form = [
+                    'id' => $itemIdReq,
+                    'codigo' => $itemCodigoReq,
+                    'nome' => $itemNomeReq,
+                    'categoria' => $categoriaReq,
+                    'assunto' => $assuntoReq,
+                    'categoria_ordem' => $categoriaOrdemReq,
+                    'subcategoria_ordem' => $subcategoriaOrdemReq,
+                    'observacao' => $observacaoReq,
+                    'unidade' => $unidadeReq,
+                    'preco_medio' => $precoUnitarioReq,
+                    'stock_atual' => $stockAtualReq,
+                    'stock_minimo' => $stockMinimoReq,
+                    'saida_media_dia' => $saidaMediaDiaReq,
+                    'dias_cobertura' => $diasCoberturaReq,
+                    'quantidade_sugerida' => $qtdSugeridaReq,
+                    'prioridade' => $prioridadeReq,
+                    'fornecedor_sugerido' => $fornecedorSugReq,
+                ];
+                $requisicao_edicao = array_merge($reqAntes ?: [], [
+                    'id' => $reqId,
+                    'assunto' => $assuntoReq,
+                    'data_requisicao' => $dataRequisicaoReq,
+                    'item_id' => $itemIdReq,
+                    'item_codigo' => $itemCodigoReq,
+                    'item_nome' => $itemNomeReq,
+                    'categoria' => $categoriaReq,
+                    'categoria_ordem' => $categoriaOrdemReq,
+                    'subcategoria_ordem' => $subcategoriaOrdemReq,
+                    'unidade' => $unidadeReq,
+                    'stock_atual' => $stockAtualReq,
+                    'stock_minimo' => $stockMinimoReq,
+                    'saida_media_dia' => $saidaMediaDiaReq,
+                    'dias_cobertura' => $diasCoberturaReq,
+                    'quantidade_sugerida' => $qtdSugeridaReq,
+                    'quantidade_solicitada' => $qtdSolicitadaReq,
+                    'preco_unitario_estimado' => $precoUnitarioReq,
+                    'valor_total_estimado' => $valorTotalReq,
+                    'moeda' => $moedaReq,
+                    'fornecedor_sugerido' => $fornecedorSugReq,
+                    'fornecedor_id' => $fornecedorIdReq,
+                    'fornecedor_escolhido' => $fornecedorReq,
+                    'prioridade' => $prioridadeReq,
+                    'justificativa' => $justificativaReq,
+                    'observacao' => $observacaoReq,
+                    'solicitante' => $solicitanteReq,
+                    'status' => $statusReq,
+                    'anexos' => $anexosReqJson,
+                ]);
+            } else {
+
+                $stDepois = $pdo->prepare("SELECT * FROM transporte_requisicoes WHERE id = :id LIMIT 1");
+                $stDepois->execute([':id' => $reqId]);
+                $reqDepois = $stDepois->fetch(PDO::FETCH_ASSOC) ?: null;
+                registarAuditoriaAlteracao(
+                    $pdo,
+                    'transporte_requisicoes',
+                    $reqId,
+                    'UPDATE',
+                    $reqAntes,
+                    $reqDepois,
+                    isset($_SESSION['usuario_id']) ? (int) $_SESSION['usuario_id'] : null
+                );
+
+                $tabReq = in_array((string) $tab, ['transporte', 'gestao_frota'], true) ? (string) $tab : 'gestao_frota';
+                header("Location:?tab={$tabReq}&view=requisicoes&mode=list");
+                exit();
+            }
         }
     }
 
@@ -4173,34 +4526,103 @@ if($tab === 'gestao_frota' && $view === 'recebidos' && $mode === 'form' && !empt
 
 $lista_os = [];
 if(($tab === 'transporte' && $view === 'entrada') || ($tab === 'gestao_frota' && $view === 'recebidos') || ($tab === 'frentista' && $view === 'tarefas')) {
-    $sqlLista = "
-        SELECT g.id, g.viatura_id, g.condutor, g.local_saida, g.destino, g.projeto, g.data_saida, g.km_saida, g.km_chegada, g.quantidade_inicial_l, g.distancia_km, g.autorizado_por, g.status,
-               g.abastecido_por, g.abastecido_em, g.finalizado_por, g.finalizado_em,
-               c.id AS combustivel_id, c.litros_abastecidos, c.km_momento, c.media_esperada, c.origem_mapa, c.destino_mapa, c.distancia_mapa_km, c.tempo_mapa_min, c.data_abastecimento
-        FROM transporte_guias g
-        LEFT JOIN (
-            SELECT tc1.*
-            FROM transporte_combustivel tc1
-            INNER JOIN (
-                SELECT guia_id, MAX(id) AS max_id
-                FROM transporte_combustivel
-                GROUP BY guia_id
-            ) tc2 ON tc1.id = tc2.max_id
-        ) c ON c.guia_id = g.id";
-
     if($tab === 'gestao_frota' && $view === 'recebidos') {
-        $sqlLista .= " WHERE g.status IN ('Em Rota', 'Aguardando Abastecimento', 'Concluida', 'Finalizada')";
-    } elseif($tab === 'frentista' && $view === 'tarefas') {
-        $sqlLista .= " WHERE c.id IS NOT NULL
-                       AND (
-                            g.abastecido_em IS NULL
-                            OR g.status IN ('Aguardando Abastecimento', 'Concluida', 'Finalizada')
-                       )";
-    }
+        $sqlLista = "
+            SELECT *
+            FROM (
+                SELECT
+                    g.id,
+                    CONVERT(g.viatura_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS viatura_id,
+                    CONVERT(g.condutor USING utf8mb4) COLLATE utf8mb4_unicode_ci AS condutor,
+                    CONVERT(g.local_saida USING utf8mb4) COLLATE utf8mb4_unicode_ci AS local_saida,
+                    CONVERT(g.destino USING utf8mb4) COLLATE utf8mb4_unicode_ci AS destino,
+                    CONVERT(g.projeto USING utf8mb4) COLLATE utf8mb4_unicode_ci AS projeto,
+                    g.data_saida, g.km_saida, g.km_chegada, g.quantidade_inicial_l, g.distancia_km,
+                    CONVERT(g.autorizado_por USING utf8mb4) COLLATE utf8mb4_unicode_ci AS autorizado_por,
+                    CONVERT(g.status USING utf8mb4) COLLATE utf8mb4_unicode_ci AS status,
+                    CONVERT(g.abastecido_por USING utf8mb4) COLLATE utf8mb4_unicode_ci AS abastecido_por,
+                    g.abastecido_em,
+                    CONVERT(g.finalizado_por USING utf8mb4) COLLATE utf8mb4_unicode_ci AS finalizado_por,
+                    g.finalizado_em,
+                    c.id AS combustivel_id, c.litros_abastecidos, c.km_momento, c.media_esperada,
+                    CONVERT(c.origem_mapa USING utf8mb4) COLLATE utf8mb4_unicode_ci AS origem_mapa,
+                    CONVERT(c.destino_mapa USING utf8mb4) COLLATE utf8mb4_unicode_ci AS destino_mapa,
+                    c.distancia_mapa_km, c.tempo_mapa_min, c.data_abastecimento,
+                    'transporte' COLLATE utf8mb4_unicode_ci AS origem_modulo,
+                    'Ordem de Servico' COLLATE utf8mb4_unicode_ci AS tipo_registo
+                FROM transporte_guias g
+                LEFT JOIN (
+                    SELECT tc1.*
+                    FROM transporte_combustivel tc1
+                    INNER JOIN (
+                        SELECT guia_id, MAX(id) AS max_id
+                        FROM transporte_combustivel
+                        GROUP BY guia_id
+                    ) tc2 ON tc1.id = tc2.max_id
+                ) c ON c.guia_id = g.id
+                WHERE g.status IN ('Em Rota', 'Aguardando Abastecimento', 'Concluida', 'Finalizada')
 
-    $sqlLista .= " ORDER BY g.id DESC";
-    $listaStmt = $pdo->query($sqlLista);
-    $lista_os = $listaStmt->fetchAll(PDO::FETCH_ASSOC);
+                UNION ALL
+
+                SELECT
+                    o.id,
+                    CONVERT(o.ativo_matricula USING utf8mb4) COLLATE utf8mb4_unicode_ci AS viatura_id,
+                    CAST(NULL AS CHAR(120) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS condutor,
+                    CONVERT(o.localizacao USING utf8mb4) COLLATE utf8mb4_unicode_ci AS local_saida,
+                    CONVERT(o.descricao_avaria USING utf8mb4) COLLATE utf8mb4_unicode_ci AS destino,
+                    CAST(NULL AS CHAR(120) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS projeto,
+                    o.created_at AS data_saida,
+                    NULL AS km_saida,
+                    NULL AS km_chegada,
+                    NULL AS quantidade_inicial_l,
+                    NULL AS distancia_km,
+                    CONVERT(o.solicitante USING utf8mb4) COLLATE utf8mb4_unicode_ci AS autorizado_por,
+                    CONVERT(o.status USING utf8mb4) COLLATE utf8mb4_unicode_ci AS status,
+                    CAST(NULL AS CHAR(120) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS abastecido_por,
+                    NULL AS abastecido_em,
+                    CAST(NULL AS CHAR(120) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS finalizado_por,
+                    NULL AS finalizado_em,
+                    NULL AS combustivel_id, NULL AS litros_abastecidos, NULL AS km_momento, NULL AS media_esperada,
+                    CAST(NULL AS CHAR(255) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS origem_mapa,
+                    CAST(NULL AS CHAR(255) CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS destino_mapa,
+                    NULL AS distancia_mapa_km, NULL AS tempo_mapa_min, NULL AS data_abastecimento,
+                    'oficina' COLLATE utf8mb4_unicode_ci AS origem_modulo,
+                    'Pedido de Reparacao' COLLATE utf8mb4_unicode_ci AS tipo_registo
+                FROM oficina_pedidos_reparacao o
+            ) x
+            ORDER BY x.data_saida DESC, x.id DESC
+        ";
+        $listaStmt = $pdo->query($sqlLista);
+        $lista_os = $listaStmt->fetchAll(PDO::FETCH_ASSOC);
+    } else {
+        $sqlLista = "
+            SELECT g.id, g.viatura_id, g.condutor, g.local_saida, g.destino, g.projeto, g.data_saida, g.km_saida, g.km_chegada, g.quantidade_inicial_l, g.distancia_km, g.autorizado_por, g.status,
+                   g.abastecido_por, g.abastecido_em, g.finalizado_por, g.finalizado_em,
+                   c.id AS combustivel_id, c.litros_abastecidos, c.km_momento, c.media_esperada, c.origem_mapa, c.destino_mapa, c.distancia_mapa_km, c.tempo_mapa_min, c.data_abastecimento,
+                   'transporte' AS origem_modulo, 'Ordem de Servico' AS tipo_registo
+            FROM transporte_guias g
+            LEFT JOIN (
+                SELECT tc1.*
+                FROM transporte_combustivel tc1
+                INNER JOIN (
+                    SELECT guia_id, MAX(id) AS max_id
+                    FROM transporte_combustivel
+                    GROUP BY guia_id
+                ) tc2 ON tc1.id = tc2.max_id
+            ) c ON c.guia_id = g.id";
+
+        if($tab === 'frentista' && $view === 'tarefas') {
+            $sqlLista .= " WHERE c.id IS NOT NULL
+                           AND (
+                                g.abastecido_em IS NULL
+                                OR g.status IN ('Aguardando Abastecimento', 'Concluida', 'Finalizada')
+                           )";
+        }
+
+        $sqlLista .= " ORDER BY g.id DESC";
+        $listaStmt = $pdo->query($sqlLista);
+        $lista_os = $listaStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
 $lista_abastecimentos_frentista = [];
@@ -6158,7 +6580,9 @@ $sugestoes_requisicoes = [];
 $item_requisicao_form = null;
 $fornecedores_requisicao = [];
 $requisicao_edicao = null;
-if($tab === 'gestao_frota' && $view === 'requisicoes') {
+$budjet_transporte_categorias = [];
+$budjet_transporte_subcategorias = [];
+if(in_array($tab, ['gestao_frota', 'transporte'], true) && $view === 'requisicoes') {
     if($mode === 'list') {
         $reqStmt = $pdo->query("
             SELECT id, codigo, data_requisicao, item_nome, categoria, quantidade_solicitada, unidade, preco_unitario_estimado, valor_total_estimado, moeda, fornecedor_escolhido, prioridade, status, anexos, solicitante, criado_em
@@ -6175,6 +6599,31 @@ if($tab === 'gestao_frota' && $view === 'requisicoes') {
         ORDER BY nome ASC
     ");
     $fornecedores_requisicao = $fornStmt ? ($fornStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+
+    if(tableExists($pdo, 'logistica_budjet_itens')) {
+        $stBudReq = $pdo->prepare("
+            SELECT categoria, descricao
+            FROM logistica_budjet_itens
+            WHERE LOWER(TRIM(COALESCE(departamento, ''))) = 'transporte'
+            ORDER BY categoria ASC, ordem_item ASC, id ASC
+        ");
+        $stBudReq->execute();
+        $rowsBudReq = $stBudReq->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach($rowsBudReq as $br) {
+            $catBud = trim((string) ($br['categoria'] ?? ''));
+            $subBud = trim((string) ($br['descricao'] ?? ''));
+            if($catBud === '') continue;
+            if(!in_array($catBud, $budjet_transporte_categorias, true)) {
+                $budjet_transporte_categorias[] = $catBud;
+            }
+            if(!isset($budjet_transporte_subcategorias[$catBud])) {
+                $budjet_transporte_subcategorias[$catBud] = [];
+            }
+            if($subBud !== '' && !in_array($subBud, $budjet_transporte_subcategorias[$catBud], true)) {
+                $budjet_transporte_subcategorias[$catBud][] = $subBud;
+            }
+        }
+    }
 
     $sugStmt = $pdo->query("
         SELECT
@@ -6250,6 +6699,10 @@ if($tab === 'gestao_frota' && $view === 'requisicoes') {
                     'codigo' => (string) ($requisicao_edicao['item_codigo'] ?? ''),
                     'nome' => (string) ($requisicao_edicao['item_nome'] ?? ''),
                     'categoria' => (string) ($requisicao_edicao['categoria'] ?? ''),
+                    'assunto' => (string) ($requisicao_edicao['assunto'] ?? ''),
+                    'categoria_ordem' => (string) ($requisicao_edicao['categoria_ordem'] ?? ''),
+                    'subcategoria_ordem' => (string) ($requisicao_edicao['subcategoria_ordem'] ?? ''),
+                    'observacao' => (string) ($requisicao_edicao['observacao'] ?? ''),
                     'unidade' => (string) (($requisicao_edicao['unidade'] ?? '') !== '' ? $requisicao_edicao['unidade'] : 'L'),
                     'preco_medio' => (float) ($requisicao_edicao['preco_unitario_estimado'] ?? 0),
                     'stock_atual' => (float) ($requisicao_edicao['stock_atual'] ?? 0),
@@ -7262,6 +7715,7 @@ if($tab === 'transporte' && $view === 'presencas') {
             <a href="?tab=transporte&view=reservas&mode=list" class="sub-tab-btn <?= $view == 'reservas' ? 'active' : '' ?>">Reservas</a>
             <a href="?tab=transporte&view=entrada&mode=list" class="sub-tab-btn <?= $view == 'entrada' ? 'active' : '' ?>">Ordem de ServiÃ§o</a>
             <a href="?tab=transporte&view=pedido_reparacao&mode=list" class="sub-tab-btn <?= $view == 'pedido_reparacao' ? 'active' : '' ?>">Pedido de ReparaÃ§Ã£o</a>
+            <a href="?tab=transporte&view=requisicoes&mode=list" class="sub-tab-btn <?= $view == 'requisicoes' ? 'active' : '' ?>">RequisiÃ§Ãµes</a>
             <a href="?tab=transporte&view=presencas&mode=list" class="sub-tab-btn <?= $view == 'presencas' ? 'active' : '' ?>">Controle de PresenÃ§as</a>
             <a href="?tab=transporte&view=checklist&mode=list" class="sub-tab-btn <?= $view == 'checklist' ? 'active' : '' ?>">Checklist</a>
             <a href="?tab=transporte&view=plano_manutencao&mode=list" class="sub-tab-btn <?= $view == 'plano_manutencao' ? 'active' : '' ?>">Plano ManutenÃ§Ã£o</a>
@@ -7298,7 +7752,7 @@ if($tab === 'transporte' && $view === 'presencas') {
     <?php
     // Mapa de views por tab
     $tab_map = [
-        'transporte' => ['reservas','entrada','pedido_reparacao','presencas','checklist','plano_manutencao','relatorio_atividades'],
+        'transporte' => ['reservas','entrada','pedido_reparacao','requisicoes','presencas','checklist','plano_manutencao','relatorio_atividades'],
         'hse' => ['checklist'],
         'gestao_frota' => ['recebidos','projectos','combustivel','stock','requisicoes','operacional','relatorio_consumo','todos','pendentes','aprovados','rejeitados'],
         'aluguer' => ['estacionamento','viaturas_maquinas','timesheets','pagamentos','clientes','modulo'],
@@ -7310,6 +7764,7 @@ if($tab === 'transporte' && $view === 'presencas') {
             'reservas' => 'Reservas',
             'entrada' => 'Ordem de ServiÃ§o',
             'pedido_reparacao' => 'Pedido de ReparaÃ§Ã£o',
+            'requisicoes' => 'RequisiÃ§Ãµes',
             'presencas' => 'Controle de PresenÃ§as',
             'checklist' => 'Checklist',
             'plano_manutencao' => 'Plano ManutenÃ§Ã£o',
@@ -7793,7 +8248,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div style="grid-column: span 4; font-size:11px; color:#4a6178;">Mapa de Diesel automÃ¡tico com base nas Ordens de ServiÃ§o abastecidas.</div>
                     </div>
                 <?php endif; ?>
-                <?php if($tab == 'gestao_frota' && $view == 'requisicoes' && !empty($sugestoes_requisicoes)): ?>
+                <?php if(false && in_array($tab, ['gestao_frota', 'transporte'], true) && $view == 'requisicoes' && $mode == 'list' && !empty($sugestoes_requisicoes)): ?>
                     <div style="background:#eefbf3; border:1px solid #bde8c9; color:#1f5130; padding:12px; border-radius:8px; margin-bottom:14px;">
                         <div style="font-weight:800; margin-bottom:8px; text-transform:uppercase;"><i class="fa-solid fa-wand-magic-sparkles"></i> SugestÃµes AutomÃ¡ticas de RequisiÃ§Ã£o por DÃ©ficit de Stock</div>
                         <table class="history-table" style="background:#fff;">
@@ -7813,7 +8268,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                         <td><?= number_format((float) ($sr['stock_atual'] ?? 0), 2, ',', '.') . ' / ' . number_format((float) ($sr['stock_minimo'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($sr['unidade'] ?? '')) ?></td>
                                         <td><?= isset($sr['dias_cobertura']) && $sr['dias_cobertura'] !== null ? number_format((float) $sr['dias_cobertura'], 1, ',', '.') . ' dias' : 'N/D' ?></td>
                                         <td><?= number_format((float) ($sr['quantidade_sugerida'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($sr['unidade'] ?? '')) ?> | <?= htmlspecialchars((string) ($sr['prioridade'] ?? 'Media')) ?></td>
-                                        <td><a href="?tab=gestao_frota&view=requisicoes&mode=form&item_id=<?= (int) ($sr['id'] ?? 0) ?>" class="btn-mode" style="font-size:10px;">Gerar</a></td>
+                                        <td><a href="?tab=<?= urlencode((string) $tab) ?>&view=requisicoes&mode=form&item_id=<?= (int) ($sr['id'] ?? 0) ?>" class="btn-mode" style="font-size:10px;">Gerar</a></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -8246,7 +8701,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                             </div>
                         <?php endforeach; ?>
                     </div>
-                <?php else: ?>
+                <?php elseif(!(in_array($tab, ['gestao_frota', 'transporte'], true) && $view == 'requisicoes')): ?>
                 <table class="history-table" id="list-table">
                     <thead>
                         <?php if($tab == 'gestao_frota' && $view == 'relatorio_consumo'): ?>
@@ -8379,7 +8834,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
-                        <?php elseif($tab == 'gestao_frota' && $view == 'requisicoes' && !empty($lista_requisicoes)): ?>
+                        <?php elseif(in_array($tab, ['gestao_frota', 'transporte'], true) && $view == 'requisicoes' && $mode == 'list' && !empty($lista_requisicoes)): ?>
                             <?php foreach($lista_requisicoes as $rq): ?>
                                 <tr>
                                     <td><?= htmlspecialchars((string) ($rq['codigo'] ?? ('REQ-' . (int) $rq['id']))) ?></td>
@@ -8399,7 +8854,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                                         <span style="margin-right:8px; font-weight:700; color:#555;"><?= htmlspecialchars((string) ($rq['status'] ?? 'Pendente')) ?></span>
                                         <a href="?doc=req&id=<?= (int) $rq['id'] ?>&fmt=download" title="Baixar" style="margin-right:8px; color:#2c3e50;"><i class="fas fa-download"></i></a>
                                         <a href="?doc=req&id=<?= (int) $rq['id'] ?>&fmt=print" target="_blank" title="Imprimir" style="margin-right:8px; color:#2c3e50;"><i class="fas fa-print"></i></a>
-                                        <a href="?tab=gestao_frota&view=requisicoes&mode=form&req_id=<?= (int) $rq['id'] ?>" title="Editar" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-pen-to-square"></i></a>
+                                        <a href="?tab=<?= urlencode((string) $tab) ?>&view=requisicoes&mode=form&req_id=<?= (int) $rq['id'] ?>" title="Editar" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-pen-to-square"></i></a>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -8712,11 +9167,24 @@ if($tab === 'transporte' && $view === 'presencas') {
                                             </div>
                                         </td>
                                     <?php else: ?>
-                                        <?php $fluxoOs = resumirFluxoOrdemServico($os); ?>
+                                        <?php
+                                            $origemModuloOs = (string) ($os['origem_modulo'] ?? 'transporte');
+                                            $isOficinaRecebido = ($tab == 'gestao_frota' && $view == 'recebidos' && $origemModuloOs === 'oficina');
+                                            $fluxoOs = $isOficinaRecebido
+                                                ? [
+                                                    'label' => (string) ($os['status'] ?? 'Recebido'),
+                                                    'bg' => '#eef2ff',
+                                                    'bd' => '#c7d2fe',
+                                                    'fg' => '#3730a3',
+                                                    'hint' => 'Pedido encaminhado pela Oficina',
+                                                    'key' => 'oficina'
+                                                ]
+                                                : resumirFluxoOrdemServico($os);
+                                        ?>
                                         <td>OS-<?= str_pad((string) $os['id'], 4, '0', STR_PAD_LEFT) ?></td>
-                                        <td>Ordem de ServiÃ§o</td>
+                                        <td><?= htmlspecialchars((string) ($os['tipo_registo'] ?? 'Ordem de ServiÃ§o')) ?></td>
                                         <td><?= !empty($os['data_saida']) ? date('d/m/Y H:i', strtotime((string) $os['data_saida'])) : '-' ?></td>
-                                        <td><?= htmlspecialchars((string) ($os['condutor'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars((string) (($os['condutor'] ?? '') !== '' ? $os['condutor'] : (($os['autorizado_por'] ?? '') !== '' ? $os['autorizado_por'] : '-'))) ?></td>
                                         <td>
                                             <span style="display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; border:1px solid <?= htmlspecialchars($fluxoOs['bd']) ?>; background:<?= htmlspecialchars($fluxoOs['bg']) ?>; color:<?= htmlspecialchars($fluxoOs['fg']) ?>; font-weight:700; font-size:11px;">
                                                 <?= htmlspecialchars($fluxoOs['label']) ?>
@@ -8737,14 +9205,20 @@ if($tab === 'transporte' && $view === 'presencas') {
                                                     </form>
                                                 <?php endif; ?>
                                             <?php elseif($tab == 'gestao_frota' && $view == 'recebidos'): ?>
-                                                <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Ver Abastecimento" style="margin-right:8px; color:#1f2937;"><i class="fas fa-eye"></i></a>
-                                                <?php if(empty($os['abastecido_em'])): ?>
-                                                    <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Preencher Abastecimento" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-gas-pump"></i></a>
+                                                <?php if($isOficinaRecebido): ?>
+                                                    <a href="?tab=transporte&view=pedido_reparacao&mode=detalhe&id=<?= (int) $os['id'] ?>" title="Ver Pedido da Oficina" style="margin-right:8px; color:#1f2937;"><i class="fas fa-eye"></i></a>
                                                 <?php else: ?>
-                                                    <span style="margin-right:8px; color:#6b7280; font-size:11px; font-weight:700;">Bloqueado</span>
+                                                    <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Ver Abastecimento" style="margin-right:8px; color:#1f2937;"><i class="fas fa-eye"></i></a>
+                                                    <?php if(empty($os['abastecido_em'])): ?>
+                                                        <a href="?tab=gestao_frota&view=recebidos&mode=form&id=<?= (int) $os['id'] ?>" title="Preencher Abastecimento" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-gas-pump"></i></a>
+                                                    <?php else: ?>
+                                                        <span style="margin-right:8px; color:#6b7280; font-size:11px; font-weight:700;">Bloqueado</span>
+                                                    <?php endif; ?>
                                                 <?php endif; ?>
                                             <?php endif; ?>
-                                            <a href="?doc=os&id=<?= (int) $os['id'] ?>&fmt=download" target="_blank" title="Baixar PDF" style="margin-right:8px; color:#2c3e50;"><i class="fas fa-file-pdf"></i></a>
+                                            <?php if(!$isOficinaRecebido): ?>
+                                                <a href="?doc=os&id=<?= (int) $os['id'] ?>&fmt=download" target="_blank" title="Baixar PDF" style="margin-right:8px; color:#2c3e50;"><i class="fas fa-file-pdf"></i></a>
+                                            <?php endif; ?>
                                         </td>
                                     <?php endif; ?>
                                 </tr>
@@ -9940,13 +10414,12 @@ if($tab === 'transporte' && $view === 'presencas') {
             </div>
         </div>
     <?php endif; ?>
-    <?php if($mode == 'form' && $tab == 'gestao_frota' && $view == 'requisicoes'): ?>
+    <?php if($mode == 'form' && in_array($tab, ['gestao_frota', 'transporte'], true) && $view == 'requisicoes'): ?>
         <div class="container">
             <div class="white-card">
-                <div class="inner-nav">
-                    <h3 style="text-transform: uppercase;">RequisiÃ§Ãµes Externas por DÃ©ficit de Stock</h3>
+                <div class="inner-nav" style="justify-content:flex-end;">
                     <div style="display:flex; gap:8px;">
-                        <a href="?tab=gestao_frota&view=requisicoes&mode=list" class="btn-mode">Voltar Ã  Lista</a>
+                        <a href="?tab=<?= urlencode((string) $tab) ?>&view=requisicoes&mode=list" class="btn-mode">Voltar Ã  Lista</a>
                         <button type="button" class="btn-mode btn-print" onclick="window.print()">Imprimir</button>
                     </div>
                 </div>
@@ -9974,7 +10447,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <?php endif; ?>
                         <input type="hidden" name="item_id_req" value="<?= (int) ($reqForm['id'] ?? 0) ?>">
                         <input type="hidden" name="item_codigo_req" value="<?= htmlspecialchars((string) ($reqForm['codigo'] ?? '')) ?>">
-                        <input type="hidden" name="item_nome_req" value="<?= htmlspecialchars((string) ($reqForm['nome'] ?? '')) ?>">
+                        <input type="hidden" id="item_nome_req_hidden" name="item_nome_req" value="<?= htmlspecialchars($isReqEdit ? (string) ($requisicao_edicao['item_nome'] ?? '') : '') ?>">
                         <input type="hidden" name="categoria_req" value="<?= htmlspecialchars((string) ($reqForm['categoria'] ?? '')) ?>">
                         <input type="hidden" name="unidade_req" value="<?= htmlspecialchars((string) ($reqForm['unidade'] ?? 'L')) ?>">
                         <input type="hidden" name="stock_atual_req" value="<?= number_format((float) ($reqForm['stock_atual'] ?? 0), 2, '.', '') ?>">
@@ -9984,121 +10457,253 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" name="quantidade_sugerida_req" value="<?= number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>">
                         <input type="hidden" name="fornecedor_sugerido_req" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? '')) ?>">
 
-                        <div class="section-title">AnÃ¡lise AutomÃ¡tica de DÃ©ficit</div>
-                        <div class="form-group">
-                            <label>Item</label>
-                            <input type="text" value="<?= htmlspecialchars((string) (($reqForm['codigo'] ?? '') . ' - ' . ($reqForm['nome'] ?? ''))) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Categoria</label>
-                            <input type="text" value="<?= htmlspecialchars((string) ($reqForm['categoria'] ?? '')) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Stock Atual</label>
-                            <input type="text" value="<?= number_format((float) ($reqForm['stock_atual'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Stock MÃ­nimo</label>
-                            <input type="text" value="<?= number_format((float) ($reqForm['stock_minimo'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>SaÃ­da MÃ©dia / Dia</label>
-                            <input type="text" value="<?= number_format((float) ($reqForm['saida_media_dia'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Cobertura Estimada</label>
-                            <input type="text" value="<?= isset($reqForm['dias_cobertura']) && $reqForm['dias_cobertura'] !== null ? number_format((float) $reqForm['dias_cobertura'], 1, ',', '.') . ' dias' : 'N/D' ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Quantidade Sugerida</label>
-                            <input type="text" value="<?= number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
-                        </div>
-                        <div class="form-group">
-                            <label>Prioridade Sugerida</label>
-                            <input type="text" value="<?= htmlspecialchars((string) ($reqForm['prioridade'] ?? 'Media')) ?>" readonly>
-                        </div>
+                        <?php
+                            $reqFornecedorFinal = $isReqEdit
+                                ? (string) (($requisicao_edicao['fornecedor_escolhido'] ?? '') !== '' ? $requisicao_edicao['fornecedor_escolhido'] : ($reqForm['fornecedor_sugerido'] ?? 'Fornecedor Geral'))
+                                : (string) ($reqForm['fornecedor_sugerido'] ?? 'Fornecedor Geral');
+                            $reqAssuntoFinal = $isReqEdit
+                                ? trim((string) ($requisicao_edicao['assunto'] ?? ''))
+                                : '';
+                            $reqQtdFinal = $isReqEdit
+                                ? (float) ($requisicao_edicao['quantidade_solicitada'] ?? 0)
+                                : (float) ($reqForm['quantidade_sugerida'] ?? 0);
+                            if($reqQtdFinal <= 0) $reqQtdFinal = (float) ($reqForm['quantidade_sugerida'] ?? 0.01);
+                            if($reqQtdFinal <= 0) $reqQtdFinal = 0.01;
+                            $reqPrecoFinal = $isReqEdit
+                                ? (float) ($requisicao_edicao['preco_unitario_estimado'] ?? 0)
+                                : (float) ($reqForm['preco_medio'] ?? 0);
+                            if($reqPrecoFinal < 0) $reqPrecoFinal = 0.0;
+                            $reqMoedaFinal = $isReqEdit ? (string) ($requisicao_edicao['moeda'] ?? 'MZN') : 'MZN';
+                            if($reqMoedaFinal === '') $reqMoedaFinal = 'MZN';
+                            $reqPrioridadeFinal = $isReqEdit ? (string) ($requisicao_edicao['prioridade'] ?? ($reqForm['prioridade'] ?? 'Media')) : (string) ($reqForm['prioridade'] ?? 'Media');
+                            if(!in_array($reqPrioridadeFinal, ['Baixa','Media','Alta','Urgente'], true)) $reqPrioridadeFinal = 'Media';
+                            $reqSolicitanteFinal = $isReqEdit
+                                ? trim((string) ($requisicao_edicao['solicitante'] ?? ''))
+                                : trim((string) ($_SESSION['usuario_nome'] ?? ''));
+                            $reqJustificativaFinal = $isReqEdit
+                                ? (string) ($requisicao_edicao['justificativa'] ?? '')
+                                : 'Déficit automático detectado no stock (saldo abaixo do mínimo e/ou cobertura baixa). Requisição gerada para evitar ruptura operacional.';
+                            $reqCategoriaOrdemFinal = $isReqEdit
+                                ? trim((string) ($requisicao_edicao['categoria_ordem'] ?? ''))
+                                : trim((string) ($budjet_transporte_categorias[0] ?? ''));
+                            $reqSubcategoriaOrdemFinal = $isReqEdit
+                                ? trim((string) ($requisicao_edicao['subcategoria_ordem'] ?? ''))
+                                : '';
+                            $reqObservacaoFinal = $isReqEdit
+                                ? (string) ($requisicao_edicao['observacao'] ?? '')
+                                : '';
+                            $reqDataFinal = $isReqEdit
+                                ? (string) ($requisicao_edicao['data_requisicao'] ?? date('Y-m-d'))
+                                : date('Y-m-d');
+                            $itemLinhasUI = [[
+                                'item' => $isReqEdit ? (string) ($requisicao_edicao['item_nome'] ?? '') : '',
+                                'fim' => '',
+                                'qtd' => $isReqEdit ? number_format($reqQtdFinal, 2, '.', '') : '1',
+                                'un' => (string) ($reqForm['unidade'] ?? 'un')
+                            ]];
+                            if($erro_form !== '' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+                                $reqAssuntoFinal = trim((string) ($_POST['assunto_req'] ?? $reqAssuntoFinal));
+                                $reqPrioridadeFinal = trim((string) ($_POST['prioridade_req'] ?? $reqPrioridadeFinal));
+                                if(!in_array($reqPrioridadeFinal, ['Baixa','Media','Alta','Urgente'], true)) $reqPrioridadeFinal = 'Media';
+                                $reqSolicitanteFinal = trim((string) ($_POST['solicitante_req'] ?? $reqSolicitanteFinal));
+                                $reqCategoriaOrdemFinal = trim((string) ($_POST['categoria_ordem_req'] ?? $reqCategoriaOrdemFinal));
+                                $reqSubcategoriaOrdemFinal = trim((string) ($_POST['subcategoria_ordem_req'] ?? $reqSubcategoriaOrdemFinal));
+                                $reqObservacaoFinal = (string) ($_POST['observacao_req'] ?? $reqObservacaoFinal);
+                                $reqDataFinal = trim((string) ($_POST['data_requisicao_req'] ?? $reqDataFinal));
+                                $postItens = isset($_POST['item_descricao_req']) && is_array($_POST['item_descricao_req']) ? $_POST['item_descricao_req'] : [];
+                                $postFins = isset($_POST['finalidade_req']) && is_array($_POST['finalidade_req']) ? $_POST['finalidade_req'] : [];
+                                $postQtds = isset($_POST['quantidade_req_linha']) && is_array($_POST['quantidade_req_linha']) ? $_POST['quantidade_req_linha'] : [];
+                                $postUns = isset($_POST['unidade_req_linha']) && is_array($_POST['unidade_req_linha']) ? $_POST['unidade_req_linha'] : [];
+                                $itemLinhasUI = [];
+                                $maxLinUI = max(count($postItens), count($postFins), count($postQtds), count($postUns));
+                                for($i=0; $i<$maxLinUI; $i++) {
+                                    $itemLinhasUI[] = [
+                                        'item' => (string) ($postItens[$i] ?? ''),
+                                        'fim' => (string) ($postFins[$i] ?? ''),
+                                        'qtd' => (string) ($postQtds[$i] ?? '1'),
+                                        'un' => (string) ($postUns[$i] ?? 'un'),
+                                    ];
+                                }
+                                if(empty($itemLinhasUI)) {
+                                    $itemLinhasUI = [[
+                                        'item' => $isReqEdit ? (string) ($requisicao_edicao['item_nome'] ?? '') : '',
+                                        'fim' => '',
+                                        'qtd' => $isReqEdit ? number_format($reqQtdFinal, 2, '.', '') : '1',
+                                        'un' => (string) ($reqForm['unidade'] ?? 'un')
+                                    ]];
+                                }
+                            }
+                        ?>
+                        <input type="hidden" name="fornecedor_id_req" value="<?= $isReqEdit ? (int) ($requisicao_edicao['fornecedor_id'] ?? 0) : '' ?>">
+                        <input type="hidden" name="fornecedor_escolhido_req" value="<?= htmlspecialchars($reqFornecedorFinal) ?>">
+                        <input type="hidden" id="quantidade_solicitada_req_hidden" name="quantidade_solicitada_req" value="<?= number_format($isReqEdit ? $reqQtdFinal : 1, 2, '.', '') ?>">
+                        <input type="hidden" name="preco_unitario_req" value="<?= number_format($reqPrecoFinal, 2, '.', '') ?>">
+                        <input type="hidden" name="moeda_req" value="<?= htmlspecialchars($reqMoedaFinal) ?>">
+                        <input type="hidden" name="justificativa_req" value="<?= htmlspecialchars($reqJustificativaFinal) ?>">
 
-                        <div class="section-title">Dados da RequisiÃ§Ã£o Externa</div>
                         <div class="form-group">
-                            <label>Fornecedor Sugerido</label>
-                            <input type="text" value="<?= htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? 'Fornecedor Geral')) ?>" readonly>
+                            <label>Assunto</label>
+                            <input type="text" name="assunto_req" value="<?= htmlspecialchars($reqAssuntoFinal) ?>" required>
                         </div>
-                        <div class="form-group">
-                            <label>Fornecedor (jÃ¡ cadastrado)</label>
-                            <select name="fornecedor_id_req" id="fornecedor_id_req" onchange="onFornecedorSelectReq(this)">
-                                <option value="">Selecionar fornecedor</option>
-                                <?php foreach($fornecedores_requisicao as $fornReq): ?>
-                                    <option
-                                        value="<?= (int) ($fornReq['id'] ?? 0) ?>"
-                                        data-nome="<?= htmlspecialchars((string) ($fornReq['nome'] ?? ''), ENT_QUOTES) ?>"
-                                        data-categoria="<?= htmlspecialchars((string) ($fornReq['categoria'] ?? ''), ENT_QUOTES) ?>"
-                                        <?= ($isReqEdit && (int) ($requisicao_edicao['fornecedor_id'] ?? 0) === (int) ($fornReq['id'] ?? 0)) ? 'selected' : '' ?>
-                                    >
-                                        <?= htmlspecialchars((string) (($fornReq['nome'] ?? '') . (!empty($fornReq['categoria']) ? ' - ' . $fornReq['categoria'] : ''))) ?>
-                                    </option>
+                        <div class="form-group" style="grid-column: span 4;">
+                            <label>Item / descricao da requisicao</label>
+                            <div id="requisicao_itens_wrap" data-default-unidade="<?= htmlspecialchars((string) ($reqForm['unidade'] ?? 'L')) ?>" style="display:flex; flex-direction:column; gap:8px;">
+                                <?php foreach($itemLinhasUI as $li): ?>
+                                    <div class="requisicao-item-row" style="display:grid; grid-template-columns:2fr 2fr 120px 110px; gap:8px; align-items:center;">
+                                        <input type="text" name="item_descricao_req[]" value="<?= htmlspecialchars((string) ($li['item'] ?? '')) ?>" placeholder="Item / descricao da requisicao" required>
+                                        <input type="text" name="finalidade_req[]" value="<?= htmlspecialchars((string) ($li['fim'] ?? '')) ?>" placeholder="Pra que fim (finalidade)">
+                                        <input type="number" min="0.01" step="0.01" class="req-qtd-linha" name="quantidade_req_linha[]" value="<?= htmlspecialchars((string) ($li['qtd'] ?? '1')) ?>">
+                                        <input type="hidden" name="unidade_req_linha[]" value="<?= htmlspecialchars((string) ($li['un'] ?? ($reqForm['unidade'] ?? 'L'))) ?>">
+                                        <button type="button" class="btn_remove_item_req">- Menos</button>
+                                    </div>
                                 <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group" style="justify-content:flex-end;">
-                            <label>&nbsp;</label>
-                            <button type="button" class="btn-mode" onclick="toggleNovoFornecedorReq()">+ Novo Fornecedor</button>
-                        </div>
-                        <div class="form-group" id="novo_fornecedor_req_wrap" style="display:none;">
-                            <label>Novo Fornecedor</label>
-                            <input type="text" name="novo_fornecedor_req" id="novo_fornecedor_req" placeholder="Ex: Petromoc / TotalEnergies" value="<?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['fornecedor_escolhido'] ?? '')) : '' ?>">
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button type="button" id="btn_add_item_req">+</button>
+                            </div>
                         </div>
                         <div class="form-group">
-                            <label>Fornecedor Escolhido (nome final)</label>
-                            <input type="text" id="fornecedor_escolhido_req" name="fornecedor_escolhido_req" value="<?= $isReqEdit ? htmlspecialchars((string) (($requisicao_edicao['fornecedor_escolhido'] ?? '') !== '' ? $requisicao_edicao['fornecedor_escolhido'] : ($reqForm['fornecedor_sugerido'] ?? ''))) : htmlspecialchars((string) ($reqForm['fornecedor_sugerido'] ?? '')) ?>" required>
+                            <label>Numero</label>
+                            <input type="text" value="Numero automatico ao guardar" readonly>
                         </div>
                         <div class="form-group">
-                            <label>Quantidade Solicitada</label>
-                            <input type="number" id="quantidade_solicitada_req" name="quantidade_solicitada_req" min="0.01" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['quantidade_solicitada'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['quantidade_sugerida'] ?? 0), 2, '.', '') ?>" required oninput="atualizarCustoRequisicao()">
+                            <label>Quantidade Total</label>
+                            <input type="text" id="quantidade_total_req_view" value="<?= number_format($isReqEdit ? $reqQtdFinal : 1, 2, ',', '.') . ' ' . htmlspecialchars((string) ($reqForm['unidade'] ?? '')) ?>" readonly>
                         </div>
                         <div class="form-group">
-                            <label>PreÃ§o UnitÃ¡rio Estimado</label>
-                            <input type="number" id="preco_unitario_req" name="preco_unitario_req" min="0" step="0.01" value="<?= $isReqEdit ? number_format((float) ($requisicao_edicao['preco_unitario_estimado'] ?? 0), 2, '.', '') : number_format((float) ($reqForm['preco_medio'] ?? 0), 2, '.', '') ?>" oninput="atualizarCustoRequisicao()" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Moeda</label>
-                            <select name="moeda_req" id="moeda_req">
-                                <option value="MZN" <?= (!$isReqEdit || (($requisicao_edicao['moeda'] ?? 'MZN') === 'MZN')) ? 'selected' : '' ?>>MZN</option>
-                                <option value="USD" <?= ($isReqEdit && (($requisicao_edicao['moeda'] ?? '') === 'USD')) ? 'selected' : '' ?>>USD</option>
-                                <option value="ZAR" <?= ($isReqEdit && (($requisicao_edicao['moeda'] ?? '') === 'ZAR')) ? 'selected' : '' ?>>ZAR</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Valor Total Estimado</label>
-                            <input type="number" id="valor_total_req" step="0.01" readonly>
+                            <label>Solicitante</label>
+                            <input type="text" name="solicitante_req" value="<?= htmlspecialchars($reqSolicitanteFinal) ?>" placeholder="Selecione o solicitante" required>
                         </div>
                         <div class="form-group">
                             <label>Prioridade</label>
                             <select name="prioridade_req" required>
-                                <?php foreach(['Baixa','Media','Alta','Urgente'] as $pReq): ?>
-                                    <option value="<?= $pReq ?>" <?= (($reqForm['prioridade'] ?? 'Media') === $pReq) ? 'selected' : '' ?>><?= $pReq ?></option>
+                                <option value="Baixa" <?= $reqPrioridadeFinal === 'Baixa' ? 'selected' : '' ?>>Baixa</option>
+                                <option value="Media" <?= $reqPrioridadeFinal === 'Media' ? 'selected' : '' ?>>Media</option>
+                                <option value="Alta" <?= $reqPrioridadeFinal === 'Alta' ? 'selected' : '' ?>>Alta</option>
+                                <option value="Urgente" <?= $reqPrioridadeFinal === 'Urgente' ? 'selected' : '' ?>>Urgente</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Data</label>
+                            <input type="date" name="data_requisicao_req" value="<?= htmlspecialchars($reqDataFinal) ?>" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Categoria</label>
+                            <select name="categoria_ordem_req" id="categoria_ordem_req" required>
+                                <option value="">Categoria</option>
+                                <?php foreach($budjet_transporte_categorias as $catReqUi): ?>
+                                    <option value="<?= htmlspecialchars($catReqUi) ?>" <?= $reqCategoriaOrdemFinal === $catReqUi ? 'selected' : '' ?>><?= htmlspecialchars($catReqUi) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Solicitante</label>
-                            <input type="text" name="solicitante_req" value="<?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['solicitante'] ?? '')) : '' ?>" required>
-                        </div>
-                        <div class="form-group" style="grid-column: span 3;">
-                            <label>Justificativa TÃ©cnica</label>
-                            <textarea name="justificativa_req" rows="3" required><?= $isReqEdit ? htmlspecialchars((string) ($requisicao_edicao['justificativa'] ?? '')) : 'DÃ©ficit automÃ¡tico detectado no stock (saldo abaixo do mÃ­nimo e/ou cobertura baixa). RequisiÃ§Ã£o gerada para evitar ruptura operacional.' ?></textarea>
+                            <label>Subcategoria</label>
+                            <select name="subcategoria_ordem_req" id="subcategoria_ordem_req" required>
+                                <option value="">Seleccione a Subcategoria</option>
+                            </select>
                         </div>
                         <div class="form-group" style="grid-column: span 4;">
-                            <label>Anexos (PDF/Fotos)</label>
-                            <input type="file" name="anexos_req[]" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.gif">
-                            <?php if(!empty($reqAnexosList)): ?>
-                                <div class="calc-note">Anexos atuais: <?= htmlspecialchars(implode(', ', array_map('basename', $reqAnexosList))) ?></div>
-                            <?php endif; ?>
-                            <div class="calc-note">Anexe cotaÃ§Ãµes, propostas de fornecedor, fotos e documentos de suporte.</div>
+                            <label>Observacao</label>
+                            <input type="text" name="observacao_req" value="<?= htmlspecialchars($reqObservacaoFinal) ?>" placeholder="Observacao">
                         </div>
                         <div style="grid-column: span 4; display:flex; justify-content:flex-end; margin-top:10px;">
-                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar RequisiÃ§Ã£o Externa' : 'Gerar RequisiÃ§Ã£o Externa' ?></button>
+                            <button type="submit" name="<?= $isReqEdit ? 'atualizar_requisicao_stock' : 'salvar_requisicao_stock' ?>" class="btn-save" style="background:var(--vilcon-orange);"><?= $isReqEdit ? 'Atualizar Pedido' : '<i class="fa-solid fa-paper-plane"></i> Mandar pra Logistica' ?></button>
                         </div>
                     </form>
+                    <script>
+                        (function(){
+                            var mapa = <?= json_encode($budjet_transporte_subcategorias, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
+                            var cat = document.getElementById('categoria_ordem_req');
+                            var sub = document.getElementById('subcategoria_ordem_req');
+                            if(!cat || !sub) return;
+                            var subAtual = <?= json_encode($reqSubcategoriaOrdemFinal, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+                            function preencher(){
+                                var atual = cat.value || '';
+                                var lista = mapa[atual] || [];
+                                sub.innerHTML = '<option value="">Seleccione a Subcategoria</option>';
+                                lista.forEach(function(v){
+                                    var op = document.createElement('option');
+                                    op.value = v;
+                                    op.textContent = v;
+                                    if(subAtual && subAtual === v) op.selected = true;
+                                    sub.appendChild(op);
+                                });
+                                if(!sub.value && subAtual && lista.indexOf(subAtual) >= 0) sub.value = subAtual;
+                            }
+                            preencher();
+                            cat.addEventListener('change', function(){ subAtual = ''; preencher(); });
+                            sub.addEventListener('change', function(){ preencher(); });
+
+                            var wrap = document.getElementById('requisicao_itens_wrap');
+                            var btnAdd = document.getElementById('btn_add_item_req');
+                            var qtdView = document.getElementById('quantidade_total_req_view');
+                            var qtdHidden = document.getElementById('quantidade_solicitada_req_hidden');
+                            var itemHidden = document.getElementById('item_nome_req_hidden');
+                            function atualizarResumoItens(){
+                                if(!wrap) return;
+                                var rows = Array.prototype.slice.call(wrap.querySelectorAll('.requisicao-item-row'));
+                                var total = 0;
+                                var primeiroItem = '';
+                                rows.forEach(function(r){
+                                    var qi = r.querySelector('.req-qtd-linha');
+                                    var ii = r.querySelector('input[name=\"item_descricao_req[]\"]');
+                                    var ui = r.querySelector('input[name=\"unidade_req_linha[]\"]');
+                                    var q = Number((qi && qi.value ? qi.value : '0').toString().replace(',', '.')) || 0;
+                                    if(q > 0) total += q;
+                                    if(!primeiroItem && ii && ii.value.trim() !== '') primeiroItem = ii.value.trim();
+                                    if(ui && ui.value.trim() === '') ui.value = 'un';
+                                });
+                                var unRef = rows[0] ? (rows[0].querySelector('input[name=\"unidade_req_linha[]\"]') || {value:'un'}).value : 'un';
+                                if(qtdView) qtdView.value = total.toLocaleString('pt-PT', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ' + (unRef || 'un');
+                                if(qtdHidden) qtdHidden.value = total > 0 ? total.toFixed(2) : '0.00';
+                                if(itemHidden) itemHidden.value = primeiroItem;
+                            }
+                            function atualizarEstadoRemover(){
+                                if(!wrap) return;
+                                var rows = wrap.querySelectorAll('.requisicao-item-row');
+                                var disable = rows.length <= 1;
+                                rows.forEach(function(r){
+                                    var b = r.querySelector('.btn_remove_item_req');
+                                    if(!b) return;
+                                    b.disabled = disable;
+                                    b.style.opacity = disable ? '0.5' : '1';
+                                });
+                            }
+                            if(btnAdd && wrap){
+                                btnAdd.addEventListener('click', function(){
+                                    var base = wrap.querySelector('.requisicao-item-row');
+                                    if(!base) return;
+                                    var novo = base.cloneNode(true);
+                                    var defaultUn = wrap.getAttribute('data-default-unidade') || 'L';
+                                    Array.prototype.forEach.call(novo.querySelectorAll('input'), function(i){
+                                        if(i.name === 'quantidade_req_linha[]') i.value = '1';
+                                        else if(i.name === 'unidade_req_linha[]') i.value = defaultUn;
+                                        else i.value = '';
+                                    });
+                                    wrap.appendChild(novo);
+                                    atualizarEstadoRemover();
+                                    atualizarResumoItens();
+                                });
+                            }
+                            document.addEventListener('click', function(ev){
+                                var btn = ev.target.closest('.btn_remove_item_req');
+                                if(!btn || !wrap) return;
+                                var rows = wrap.querySelectorAll('.requisicao-item-row');
+                                if(rows.length <= 1) return;
+                                var row = btn.closest('.requisicao-item-row');
+                                if(row) row.remove();
+                                atualizarEstadoRemover();
+                                atualizarResumoItens();
+                            });
+                            document.addEventListener('input', function(ev){
+                                if(ev.target && (ev.target.classList.contains('req-qtd-linha') || ev.target.name === 'item_descricao_req[]' || ev.target.name === 'unidade_req_linha[]')){
+                                    atualizarResumoItens();
+                                }
+                            });
+                            atualizarEstadoRemover();
+                            atualizarResumoItens();
+                        })();
+                    </script>
                 <?php endif; ?>
             </div>
         </div>
@@ -10468,16 +11073,9 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <input type="hidden" id="amostras_historico" value="<?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?>">
                         <input type="hidden" id="ultimo_litros_historico" value="<?= number_format((float) ($analise_consumo_os['ultimo_litros_historico'] ?? 0), 2, '.', '') ?>">
 
-                        <div style="grid-column: span 4; display:flex; justify-content:flex-start; margin-top:6px;">
-                            <button type="button" id="toggle_mapa_btn" class="btn-mode" onclick="toggleMapaSection()"><strong>+</strong> DistÃ¢ncia Inteligente (Mapa)</button>
-                        </div>
-                        <div id="mapa_section_body" style="grid-column: span 4; display:none; grid-template-columns: repeat(4, 1fr); gap:10px;">
+                        <div id="mapa_section_body" style="grid-column: span 4; display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
                             <div class="section-title">4. DistÃ¢ncia Inteligente (Mapa)</div>
                             <div class="calc-note" style="grid-column: span 4;"><?= !empty($googleMapsApiKey) ? 'Motor de rota: Google Maps (com fallback automÃ¡tico).' : 'Google API nÃ£o configurada; usando fallback OSRM.' ?></div>
-                            <div class="form-group" style="grid-column: span 4; flex-direction:row; align-items:center; gap:8px;">
-                                <input type="checkbox" id="modo_manual_mapa">
-                                <label for="modo_manual_mapa" style="margin:0;">Modo manual avanÃ§ado (ajuste de KM/tempo/consumo se o mapa divergir)</label>
-                            </div>
                             <div class="form-group" style="grid-column: span 2;">
                                 <label>Origem (Mapa)</label>
                                 <input type="text" id="origem_mapa" name="origem_mapa" value="<?= htmlspecialchars($os_form['local_saida'] ?? '') ?>" placeholder="Ex: Maputo">
@@ -10486,83 +11084,29 @@ if($tab === 'transporte' && $view === 'presencas') {
                                 <label>Destino (Mapa)</label>
                                 <input type="text" id="destino_mapa" name="destino_mapa" value="<?= htmlspecialchars($os_form['destino'] ?? '') ?>" placeholder="Ex: Gaza">
                             </div>
-                            <div class="form-group">
-                                <label>Leitura Final do Conta-KM</label>
-                                <input type="number" id="km_momento" name="km_momento" value="<?= htmlspecialchars((string) (($os_form['km_chegada'] ?? '') !== '' ? $os_form['km_chegada'] : ($os_form['km_saida'] ?? ''))) ?>" min="<?= (int) ($os_form['km_saida'] ?? 0) ?>" readonly required>
-                                <div class="calc-note">Valor do painel da viatura/mÃ¡quina no fim do percurso.</div>
-                            </div>
-                            <div class="form-group">
-                                <label>DistÃ¢ncia Percorrida pelo Conta-KM (KM)</label>
-                                <input type="number" id="distancia_km_calc" step="0.01" readonly>
-                                <div class="calc-note">Calculada automaticamente: leitura final menos leitura inicial.</div>
-                            </div>
-                            <div class="form-group">
-                                <label>DistÃ¢ncia mapa (KM)</label>
-                                <input type="number" id="distancia_mapa_km" name="distancia_mapa_km" step="0.001" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Tempo mapa (Min)</label>
-                                <input type="number" id="tempo_mapa_min" name="tempo_mapa_min" step="0.1" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>DuraÃ§Ã£o (texto)</label>
-                                <input type="text" id="tempo_mapa_humano" placeholder="Ex: 10 h 44 min" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Consumo Base (L/100 KM)</label>
-                                <input type="number" id="consumo_l_100km_view" min="0" step="0.01" value="<?= htmlspecialchars($consumoResumo !== '' ? $consumoResumo : '') ?>" placeholder="Ex: 28.00">
-                            </div>
-                            <div class="form-group">
-                                <label>Consumo HistÃ³rico Real (L/100 KM)</label>
-                                <input type="number" id="consumo_historico_real" value="<?= number_format((float) ($analise_consumo_os['consumo_historico_l100'] ?? 0), 2, '.', '') ?>" readonly>
-                                <div class="calc-note">
-                                    <?php if((int) ($analise_consumo_os['amostras_historico'] ?? 0) > 0): ?>
-                                        HistÃ³rico com <?= (int) ($analise_consumo_os['amostras_historico'] ?? 0) ?> registo(s)<?= !empty($analise_consumo_os['ultima_data_historico']) ? ' | Ãšltimo em ' . date('d/m/Y', strtotime((string) $analise_consumo_os['ultima_data_historico'])) : '' ?>
-                                    <?php else: ?>
-                                        Sem histÃ³rico desta viatura/mÃ¡quina ainda. O sistema usa o consumo base.
-                                    <?php endif; ?>
+                            <input type="hidden" id="km_momento" name="km_momento" value="<?= htmlspecialchars((string) (($os_form['km_chegada'] ?? '') !== '' ? $os_form['km_chegada'] : ($os_form['km_saida'] ?? ''))) ?>">
+                            <input type="hidden" id="distancia_mapa_km" name="distancia_mapa_km" value="">
+                            <input type="hidden" id="tempo_mapa_min" name="tempo_mapa_min" value="">
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label>Ajuste manual (opcional)</label>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <input type="checkbox" id="usar_ajuste_manual_mapa">
+                                    <span style="font-size:12px;">Editar com base no calculo automatico</span>
                                 </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Margem de SeguranÃ§a (%)</label>
-                                <input type="number" id="margem_operacional" min="0" step="0.1" value="8.0">
-                                <div class="calc-note">Reserva extra para trÃ¢nsito, carga, desvios e paragens.</div>
-                            </div>
-                            <div class="form-group">
-                                <label>DistÃ¢ncia Considerada no CÃ¡lculo (KM)</label>
-                                <input type="number" id="distancia_utilizada_preview" step="0.001" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Consumo Estimado Final (L/100 KM)</label>
-                                <input type="number" id="consumo_estimado_preview" step="0.01" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Rendimento Estimado (KM/L)</label>
-                                <input type="number" id="rendimento_km_l_preview" step="0.01" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Litros Totais da Rota (L)</label>
-                                <input type="number" id="litros_totais_rota" step="0.01" readonly>
-                            </div>
-                            <div class="form-group">
-                                <label>Litros Recomendados para Abastecer (L)</label>
-                                <input type="number" id="litros_recomendados" step="0.01" readonly>
-                            </div>
-                            <div class="form-group" style="justify-content:flex-end;">
-                                <label>&nbsp;</label>
-                                <button type="button" class="btn-save" style="background:#34495e;" onclick="calcularDistanciaMapa()">Calcular no Mapa</button>
-                            </div>
-                            <div class="form-group" style="justify-content:flex-end;">
-                                <label>&nbsp;</label>
-                                <button type="button" class="btn-mode" onclick="aplicarLitrosRecomendados()">Aplicar litros recomendados</button>
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                    <input type="number" id="distancia_mapa_manual" step="0.001" placeholder="Distancia em KM" readonly>
+                                    <input type="number" id="tempo_mapa_manual" step="0.1" placeholder="Tempo em Min" readonly>
+                                </div>
                             </div>
                             <div class="form-group" style="grid-column: span 2;">
                                 <label>Status do CÃ¡lculo</label>
-                                <input type="text" id="map_status" value="Aguardando cÃ¡lculo" readonly>
+                                <input type="text" id="map_status" value="Distancia estimada: -" readonly>
                             </div>
                             <div class="form-group" style="grid-column: span 2; justify-content:flex-end;">
                                 <label>&nbsp;</label>
-                                <button type="button" id="map_link" class="btn-mode" onclick="abrirGoogleMaps()">Abrir no Google Maps</button>
+                                <div style="display:flex; gap:8px; justify-content:flex-end;">
+                                    <button type="button" id="map_link" class="btn-mode" onclick="abrirGoogleMaps()">Abrir no Google Maps</button>
+                                </div>
                             </div>
                         </div>
 
@@ -11359,7 +11903,11 @@ if($tab === 'transporte' && $view === 'presencas') {
             btn.innerHTML = nextOpen ? '<strong>-</strong> DistÃ¢ncia Inteligente (Mapa)' : '<strong>+</strong> DistÃ¢ncia Inteligente (Mapa)';
         }
 
-        async function calcularDistanciaMapa(){
+        let mapaCalcTimer = null;
+        let mapaUltimaRota = '';
+
+        async function calcularDistanciaMapa(opcoes = {}){
+            const forcar = !!(opcoes && opcoes.forcar);
             const origemEl = document.getElementById('origem_mapa');
             const destinoEl = document.getElementById('destino_mapa');
             const distEl = document.getElementById('distancia_mapa_km');
@@ -11370,39 +11918,55 @@ if($tab === 'transporte' && $view === 'presencas') {
             const origem = origemEl.value.trim();
             const destino = destinoEl.value.trim();
             if(!origem || !destino){
-                statusEl.value = 'Informe origem e destino';
+                distEl.value = '';
+                if(tempoEl) tempoEl.value = '';
+                sincronizarTempoMinParaHumano();
+                statusEl.value = 'Distancia estimada: -';
+                mapaUltimaRota = '';
+                atualizarLitrosRecomendados();
+                return;
+            }
+
+            const rotaAtual = `${origem.toLowerCase()}|${destino.toLowerCase()}`;
+            if(!forcar && rotaAtual === mapaUltimaRota && distEl.value && tempoEl && tempoEl.value){
                 return;
             }
 
             try {
-                statusEl.value = 'Calculando rota...';
+                statusEl.value = 'Distancia estimada: a calcular...';
                 const params = new URLSearchParams({ ajax: 'distance', origem, destino });
                 const resp = await fetch(`?${params.toString()}`);
                 const data = await resp.json();
                 if(!data.ok) throw new Error(data.error || 'Falha no cÃ¡lculo');
 
-                distEl.value = Number(data.km).toFixed(3);
+                const kmNum = Number(data.km);
+                distEl.value = kmNum.toFixed(3);
+                const distManualEl = document.getElementById('distancia_mapa_manual');
+                if(distManualEl && (!distManualEl.value || distManualEl.readOnly)){
+                    distManualEl.value = kmNum.toFixed(3);
+                }
                 if(tempoEl){
                     const min = parseFloat(data.duration_min || '0');
                     const minFinal = (!Number.isNaN(min) && min > 0) ? min : estimarTempoMinPorDistancia(parseFloat(data.km || '0'));
                     tempoEl.value = (!Number.isNaN(minFinal) && minFinal > 0) ? minFinal.toFixed(1) : '';
+                    const tempoManualEl = document.getElementById('tempo_mapa_manual');
+                    if(tempoManualEl && (!tempoManualEl.value || tempoManualEl.readOnly)){
+                        tempoManualEl.value = tempoEl.value;
+                    }
                 }
                 sincronizarTempoMinParaHumano();
                 const motor = data.provider === 'google' ? 'Google Maps' : 'OSRM';
-                const extra = data.fallback ? ' (fallback automÃ¡tico)' : '';
-                const tempoTxt = tempoEl && tempoEl.value ? ` | ${formatarMinutosHumanizado(tempoEl.value)} (${tempoEl.value} min)` : '';
-                statusEl.value = `DistÃ¢ncia calculada com sucesso - ${motor}${extra}${tempoTxt}`;
-                if(data.provider === 'osrm' && data.origem_match && data.destino_match){
-                    statusEl.value += ` | ${data.origem_match} -> ${data.destino_match}`;
-                }
+                const tempoTxt = tempoEl && tempoEl.value ? `${tempoEl.value} min` : '-';
+                statusEl.value = `Distancia estimada: ${kmNum.toFixed(3)} km | Tempo estimado: ${tempoTxt} (${motor})`;
+                mapaUltimaRota = rotaAtual;
+                aplicarAjusteManualDistancia();
                 atualizarLinkGoogleMaps();
                 atualizarLitrosRecomendados();
-                setTimeout(() => toggleMapaSection(false), 300);
             } catch (e) {
-                statusEl.value = `Erro: ${e.message}. Abra no Google Maps e preencha manualmente KM/Min no modo manual.`;
+                statusEl.value = `Distancia estimada: indisponivel (${e.message})`;
                 if(tempoEl) tempoEl.value = '';
                 sincronizarTempoMinParaHumano();
-                toggleMapaSection(true);
+                mapaUltimaRota = '';
             }
         }
 
@@ -11431,31 +11995,61 @@ if($tab === 'transporte' && $view === 'presencas') {
             const url = gerarUrlGoogleMaps();
             if(!url){
                 const statusEl = document.getElementById('map_status');
-                if(statusEl) statusEl.value = 'Informe origem e destino para abrir no Google Maps';
+                if(statusEl) statusEl.value = 'Distancia estimada: informe origem e destino';
                 return;
             }
-            const win = window.open(url, '_blank', 'noopener,noreferrer');
+            try { sessionStorage.setItem('mapa_recalcular_ao_voltar', '1'); } catch (e) {}
+            const statusEl = document.getElementById('map_status');
+            if(statusEl) {
+                statusEl.value = 'Distancia estimada: abra o Google Maps, copie distancia/tempo e volte para sincronizar automaticamente';
+            }
+            const win = window.open(url, 'vilcon_gmaps_route', 'noopener,noreferrer');
             if(!win){
-                const statusEl = document.getElementById('map_status');
-                if(statusEl) statusEl.value = 'Popup bloqueado. Copie o link e abra manualmente no navegador.';
+                if(statusEl) statusEl.value = 'Distancia estimada: popup bloqueado. Abra manualmente.';
                 window.prompt('Copie o link do Google Maps:', url);
             }
         }
 
         function atualizarModoManualMapa(){
-            const manualEl = document.getElementById('modo_manual_mapa');
+            // Modo manual removido da interface.
+        }
+
+        function aplicarAjusteManualDistancia(){
+            const usarManualEl = document.getElementById('usar_ajuste_manual_mapa');
+            const distManualEl = document.getElementById('distancia_mapa_manual');
+            const tempoManualEl = document.getElementById('tempo_mapa_manual');
             const distEl = document.getElementById('distancia_mapa_km');
             const tempoEl = document.getElementById('tempo_mapa_min');
-            const tempoHumanoEl = document.getElementById('tempo_mapa_humano');
-            const kmMomentoEl = document.getElementById('km_momento');
-            if(!manualEl) return;
-            const manual = !!manualEl.checked;
-            if(distEl) distEl.readOnly = !manual;
-            if(tempoEl) tempoEl.readOnly = !manual;
-            if(tempoHumanoEl) tempoHumanoEl.readOnly = !manual;
-            if(kmMomentoEl) kmMomentoEl.readOnly = !manual;
+            const statusEl = document.getElementById('map_status');
+            if(!usarManualEl || !distManualEl || !tempoManualEl || !distEl) return;
+
+            distManualEl.readOnly = !usarManualEl.checked;
+            tempoManualEl.readOnly = !usarManualEl.checked;
+            if(!usarManualEl.checked){
+                if(distEl.value && (!distManualEl.value || parseFloat(distManualEl.value || '0') <= 0)){
+                    distManualEl.value = distEl.value;
+                }
+                if(tempoEl && tempoEl.value && (!tempoManualEl.value || parseFloat(tempoManualEl.value || '0') <= 0)){
+                    tempoManualEl.value = tempoEl.value;
+                }
+                return;
+            }
+
+            const distManual = parseFloat(String(distManualEl.value || '').replace(',', '.'));
+            const tempoManual = parseFloat(String(tempoManualEl.value || '').replace(',', '.'));
+            if(Number.isNaN(distManual) || distManual <= 0) return;
+            distEl.value = distManual.toFixed(3);
+            if(tempoEl && !Number.isNaN(tempoManual) && tempoManual > 0){
+                tempoEl.value = tempoManual.toFixed(1);
+            }
+            if(statusEl){
+                const tempoTxt = tempoEl && tempoEl.value ? `${tempoEl.value} min` : '-';
+                statusEl.value = `Distancia estimada: ${distEl.value} km | Tempo estimado: ${tempoTxt} (ajuste manual)`;
+            }
+            sincronizarTempoMinParaHumano();
+            atualizarLitrosRecomendados();
         }
-val
+
         async function reverseGeocode(lat, lon){
             const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
             const resp = await fetch(url);
@@ -11500,9 +12094,111 @@ val
             const origemEl = document.getElementById('origem_mapa');
             const destinoEl = document.getElementById('destino_mapa');
             const distEl = document.getElementById('distancia_mapa_km');
+            const tempoEl = document.getElementById('tempo_mapa_min');
+            const statusEl = document.getElementById('map_status');
             if(!origemEl || !destinoEl || !distEl) return;
-            if(origemEl.value.trim() && destinoEl.value.trim() && !distEl.value){
+
+            const origem = origemEl.value.trim();
+            const destino = destinoEl.value.trim();
+
+            if(mapaCalcTimer){
+                clearTimeout(mapaCalcTimer);
+                mapaCalcTimer = null;
+            }
+
+            if(!origem || !destino){
+                distEl.value = '';
+                if(tempoEl) tempoEl.value = '';
+                sincronizarTempoMinParaHumano();
+                if(statusEl) statusEl.value = 'Distancia estimada: -';
+                mapaUltimaRota = '';
+                atualizarLitrosRecomendados();
+                return;
+            }
+
+            if(destino.length < 4){
+                if(statusEl) statusEl.value = 'Distancia estimada: destino muito curto. Use um local mais especifico.';
+                return;
+            }
+
+            if(statusEl) statusEl.value = 'Distancia estimada: a calcular...';
+            mapaCalcTimer = setTimeout(() => {
                 calcularDistanciaMapa();
+            }, 550);
+        }
+
+        function parseKmFromText(texto){
+            const t = String(texto || '').toLowerCase();
+            const m = t.match(/(\d{1,4}(?:[.,]\d{1,3})?)\s*km\b/);
+            if(!m) return null;
+            const v = parseFloat(String(m[1]).replace(',', '.'));
+            return Number.isNaN(v) || v <= 0 ? null : v;
+        }
+
+        function parseMinFromText(texto){
+            const t = String(texto || '').toLowerCase();
+            const h = t.match(/(\d{1,2})\s*h/);
+            const m = t.match(/(\d{1,3})\s*min/);
+            if(h || m){
+                const hh = h ? parseInt(h[1], 10) : 0;
+                const mm = m ? parseInt(m[1], 10) : 0;
+                const total = (hh * 60) + mm;
+                return total > 0 ? total : null;
+            }
+            return null;
+        }
+
+        async function tentarAplicarClipboardGoogle(){
+            if(!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') return false;
+            try {
+                const texto = await navigator.clipboard.readText();
+                if(!texto || texto.trim() === '') return false;
+                const km = parseKmFromText(texto);
+                const min = parseMinFromText(texto);
+                if(km === null && min === null) return false;
+
+                const distEl = document.getElementById('distancia_mapa_km');
+                const tempoEl = document.getElementById('tempo_mapa_min');
+                const statusEl = document.getElementById('map_status');
+                if(distEl && km !== null) distEl.value = km.toFixed(3);
+                const distManualEl = document.getElementById('distancia_mapa_manual');
+                if(distManualEl && (!distManualEl.value || distManualEl.readOnly)){
+                    distManualEl.value = km !== null ? km.toFixed(3) : '';
+                }
+                if(tempoEl && min !== null) tempoEl.value = Number(min).toFixed(1);
+                const tempoManualEl = document.getElementById('tempo_mapa_manual');
+                if(tempoManualEl && (!tempoManualEl.value || tempoManualEl.readOnly)){
+                    tempoManualEl.value = (min !== null) ? Number(min).toFixed(1) : '';
+                }
+                sincronizarTempoMinParaHumano();
+                if(statusEl){
+                    const tempoTxt = (min !== null) ? `${Number(min).toFixed(1)} min` : '-';
+                    const kmTxt = (km !== null) ? `${km.toFixed(3)} km` : '-';
+                    statusEl.value = `Distancia estimada: ${kmTxt} | Tempo estimado: ${tempoTxt} (Google Maps sincronizado)`;
+                }
+                aplicarAjusteManualDistancia();
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function recalcularDistanciaAoVoltar(){
+            try {
+                if(sessionStorage.getItem('mapa_recalcular_ao_voltar') === '1'){
+                    calcularDistanciaMapa({ forcar: true }).then(async () => {
+                        const okClipboard = await tentarAplicarClipboardGoogle();
+                        if(!okClipboard){
+                            const statusEl = document.getElementById('map_status');
+                            if(statusEl && statusEl.value.includes('(OSRM)')){
+                                statusEl.value += ' | Para sincronizar com Google, copie a distancia/tempo no Maps e volte';
+                            }
+                        }
+                        sessionStorage.removeItem('mapa_recalcular_ao_voltar');
+                    });
+                }
+            } catch (e) {
+                // sem bloqueio
             }
         }
 
@@ -11548,8 +12244,10 @@ val
             tentarPreencherPartidaAtual();
             const origemEl = document.getElementById('origem_mapa');
             const destinoEl = document.getElementById('destino_mapa');
+            const usarAjusteManualEl = document.getElementById('usar_ajuste_manual_mapa');
+            const distanciaManualEl = document.getElementById('distancia_mapa_manual');
+            const tempoManualEl = document.getElementById('tempo_mapa_manual');
             const consumoViewEl = document.getElementById('consumo_l_100km_view');
-            const modoManualMapaEl = document.getElementById('modo_manual_mapa');
             const distMapaEl = document.getElementById('distancia_mapa_km');
             const tempoMapaEl = document.getElementById('tempo_mapa_min');
             const tempoHumanoEl = document.getElementById('tempo_mapa_humano');
@@ -11632,8 +12330,10 @@ val
             });
             if(localSaidaOsEl) localSaidaOsEl.addEventListener('input', guardarLocaisAutomaticamente);
             if(destinoOsEl) destinoOsEl.addEventListener('input', guardarLocaisAutomaticamente);
+            if(usarAjusteManualEl) usarAjusteManualEl.addEventListener('change', aplicarAjusteManualDistancia);
+            if(distanciaManualEl) distanciaManualEl.addEventListener('input', aplicarAjusteManualDistancia);
+            if(tempoManualEl) tempoManualEl.addEventListener('input', aplicarAjusteManualDistancia);
             if(consumoViewEl) consumoViewEl.addEventListener('input', sincronizarConsumoManual);
-            if(modoManualMapaEl) modoManualMapaEl.addEventListener('change', atualizarModoManualMapa);
             if(distMapaEl) distMapaEl.addEventListener('input', atualizarLitrosRecomendados);
             if(tempoMapaEl) tempoMapaEl.addEventListener('input', () => {
                 sincronizarTempoMinParaHumano();
@@ -11655,7 +12355,15 @@ val
             });
 
             window.addEventListener('beforeprint', atualizarFichaImpressaoRelatorio);
+            window.addEventListener('focus', recalcularDistanciaAoVoltar);
+            window.addEventListener('pageshow', recalcularDistanciaAoVoltar);
+            document.addEventListener('visibilitychange', () => {
+                if(document.visibilityState === 'visible') {
+                    recalcularDistanciaAoVoltar();
+                }
+            });
             atualizarModoManualMapa();
+            aplicarAjusteManualDistancia();
             sincronizarTempoMinParaHumano();
             atualizarCustoRequisicao();
             guardarLocaisAutomaticamente();
