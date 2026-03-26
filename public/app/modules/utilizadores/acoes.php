@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header('Location: /vilcon-systemon/public/login.php');
+    header('Location: /vilcon-system-github-main/public/login.php');
     exit;
 }
 
@@ -28,17 +28,17 @@ function tituloSimples($valor) {
 
 function mapearModuloPorRota($path) {
     $map = [
-        '/vilcon-systemon/app/modules/dashboard/index.php' => 'Dashboard',
-        '/vilcon-systemon/app/modules/oficina/index.php' => 'Oficina',
-        '/vilcon-systemon/app/modules/armazem/index.php' => 'Armazem',
-        '/vilcon-systemon/app/modules/transporte/index.php' => 'Transporte',
-        '/vilcon-systemon/app/modules/rh/index.php' => 'RH',
-        '/vilcon-systemon/app/modules/seguranca/index.php' => 'Seguranca',
-        '/vilcon-systemon/app/modules/documental/index.php' => 'Documental',
-        '/vilcon-systemon/app/modules/utilizadores/index.php' => 'Utilizadores',
-        '/vilcon-systemon/app/modules/relatorios/index.php' => 'Relatorios',
-        '/vilcon-systemon/app/modules/aprovacoes/index.php' => 'Aprovacoes',
-        '/vilcon-systemon/public/login.php' => 'Login',
+        '/vilcon-system-github-main/app/modules/dashboard/index.php' => 'Dashboard',
+        '/vilcon-system-github-main/app/modules/oficina/index.php' => 'Oficina',
+        '/vilcon-system-github-main/app/modules/armazem/index.php' => 'Armazem',
+        '/vilcon-system-github-main/app/modules/transporte/index.php' => 'Transporte',
+        '/vilcon-system-github-main/app/modules/rh/index.php' => 'RH',
+        '/vilcon-system-github-main/app/modules/seguranca/index.php' => 'Seguranca',
+        '/vilcon-system-github-main/app/modules/documental/index.php' => 'Documental',
+        '/vilcon-system-github-main/app/modules/utilizadores/index.php' => 'Utilizadores',
+        '/vilcon-system-github-main/app/modules/relatorios/index.php' => 'Relatorios',
+        '/vilcon-system-github-main/app/modules/aprovacoes/index.php' => 'Aprovacoes',
+        '/vilcon-system-github-main/public/login.php' => 'Login',
     ];
     if (isset($map[$path])) return $map[$path];
     return basename((string)$path);

@@ -1,7 +1,7 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
 require_once dirname(__DIR__, 2) . '/config/db.php';
-if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-systemon/public/login.php'); exit; }
+if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-system-github-main/public/login.php'); exit; }
 
 function norm($s){ return strtolower(trim((string)$s)); }
 function money($v){ return number_format((float)$v,2,',','.') . ' MZN'; }
@@ -72,7 +72,7 @@ function salvarUploadDocumento(string $campo, string $subpasta = 'financeiro'): 
   $file = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
   $destFs = $dirFs . '/' . $file;
   if(!@move_uploaded_file($tmp, $destFs)) throw new RuntimeException('Nao foi possivel guardar documento anexado.');
-  return '/vilcon-systemon/public/uploads/logistica/' . trim($subpasta, '/') . '/' . $file;
+  return '/vilcon-system-github-main/public/uploads/logistica/' . trim($subpasta, '/') . '/' . $file;
 }
 function salvarUploadDocumentoIndice(string $campo, int $idx, string $subpasta = 'financeiro'): ?string {
   if(!isset($_FILES[$campo])) return null;
@@ -94,7 +94,7 @@ function salvarUploadDocumentoIndice(string $campo, int $idx, string $subpasta =
   $file = 'cot_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
   $destFs = $dirFs . '/' . $file;
   if(!@move_uploaded_file($tmp, $destFs)) throw new RuntimeException('Nao foi possivel guardar anexo da cotacao.');
-  return '/vilcon-systemon/public/uploads/logistica/' . trim($subpasta, '/') . '/' . $file;
+  return '/vilcon-system-github-main/public/uploads/logistica/' . trim($subpasta, '/') . '/' . $file;
 }
 function seedBudjetOficinaTemplate(PDO $pdo): void {
   $existe = $pdo->prepare("SELECT COUNT(*) FROM logistica_budjet_itens WHERE departamento='oficina'");
@@ -1194,7 +1194,7 @@ try {
         $file = 'cotacao_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
         $destFs = $dirFs . '/' . $file;
         if(!@move_uploaded_file($tmp, $destFs)) throw new RuntimeException('Nao foi possivel guardar anexo da cotacao.');
-        return '/vilcon-systemon/public/uploads/logistica/cotacoes/' . $file;
+        return '/vilcon-system-github-main/public/uploads/logistica/cotacoes/' . $file;
       };
 
       $ins = $pdo->prepare('INSERT INTO logistica_cotacoes (fornecedor_id,item_nome,categoria_item,preco_unitario,quantidade,total_cotacao,anexo_cotacao,prazo_dias,validade,escopo_logistica,area_solicitante,observacoes) VALUES (:f,:i,:c,:p,:q,:t,:an,:d,:v,:e,:a,:o)');

@@ -204,7 +204,7 @@ if (!defined('VILCON_USER_PROFILE_WIDGET_LOADED')) {
         if (strpos($f, '/') === 0) {
             return $f;
         }
-        return '/vilcon-systemon/public/uploads/usuarios/' . rawurlencode($f);
+        return '/vilcon-system-github-main/public/uploads/usuarios/' . rawurlencode($f);
     }
 
     function vilconLoadUserProfileData(): array {

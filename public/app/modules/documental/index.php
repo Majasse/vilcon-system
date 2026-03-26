@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header('Location: /vilcon-systemon/public/login.php');
+    header('Location: /vilcon-system-github-main/public/login.php');
     exit;
 }
 
@@ -478,8 +478,8 @@ $nivel_usuario = $_SESSION['usuario_nivel'] ?? 'comum';
         function exportarPdf(tabela, titulo) {
             var janela = window.open('', '_blank');
             if (!janela) return;
-            var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
-            var certUrl = window.location.origin + '/vilcon-systemon/public/assets/img/innocertificate.png';
+            var logoUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/logo-vilcon.png';
+            var certUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/innocertificate.png';
             var dataAtual = new Date().toLocaleString('pt-PT');
             var tabelaHtml = tabelaPdfSemAcoes(tabela);
             var html = `

@@ -108,7 +108,7 @@
                                 <td><?= (int) ($ld['total_ausentes'] ?? 0) ?></td>
                                 <td>
                                     <?php if($possuiAnexo && $anexoPathLista !== ''): ?>
-                                        <a href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-mode" style="font-size:10px;">Ver anexo</a>
+                                        <a href="<?= htmlspecialchars('/vilcon-system-github-main/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-mode" style="font-size:10px;">Ver anexo</a>
                                     <?php else: ?>
                                         <span style="font-size:11px; color:#b91c1c; font-weight:700;">Nao anexada</span>
                                     <?php endif; ?>

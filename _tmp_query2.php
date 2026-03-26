@@ -1,5 +1,5 @@
 <?php
-require 'c:/wamp64/www/vilcon-systemon/public/app/config/db.php';
+require 'c:/wamp64/www/vilcon-system-github-main/public/app/config/db.php';
 $stmt = $pdo->query("SHOW TABLES LIKE '%requisicoes%'");
 print_r($stmt->fetchAll(PDO::FETCH_COLUMN));
 $stmt2 = $pdo->query("SHOW TABLES LIKE 'transporte_%'");

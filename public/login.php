@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 require_once(__DIR__ . '/../app/config/db.php');
 
@@ -152,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .login-screen {
             background:
                 linear-gradient(rgba(0,0,0,0.32), rgba(0,0,0,0.32)),
-                url('/vilcon-systemon/public/assets/img/vilcon-truck.jpg');
+                url('/vilcon-system-github-main/public/assets/img/vilcon-truck.jpg');
             background-size: cover;
             background-position: center;
             height: 100vh;
@@ -317,7 +317,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     <div class="login-box">
         <div class="logo-container">
-            <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon Logo">
+            <img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon Logo">
         </div>
 
         <h2>ACEDER</h2>

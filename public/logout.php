@@ -16,6 +16,6 @@ session_destroy();
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Pragma: no-cache");
 
-header("Location: /vilcon-systemon/public/login.php");
+header("Location: /vilcon-system-github-main/public/login.php");
 exit;
 

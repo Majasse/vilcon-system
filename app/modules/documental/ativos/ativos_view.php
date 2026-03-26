@@ -37,7 +37,7 @@ function ativoFotoUrl(array $ativo): ?string {
             }
             $path = $baseRoot . $dir . '/' . $file;
             if (is_file($path)) {
-                return '/vilcon-systemon/public/uploads/' . $dir . '/' . $file;
+                return '/vilcon-system-github-main/public/uploads/' . $dir . '/' . $file;
             }
         }
     }

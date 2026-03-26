@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header("Location: /vilcon-systemon/public/login.php");
+    header("Location: /vilcon-system-github-main/public/login.php");
     exit;
 }
 

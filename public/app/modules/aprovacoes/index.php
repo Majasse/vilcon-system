@@ -1,7 +1,7 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
 require_once dirname(__DIR__, 2) . '/config/db.php';
-if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-systemon/public/login.php'); exit; }
+if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-system-github-main/public/login.php'); exit; }
 $page_title = 'Aprovações | Vilcon System';
 
 function h($v){ return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
@@ -25,7 +25,7 @@ function cotRows($raw){
 }
 
 $disk = dirname(__DIR__, 3) . '/uploads/aprovacoes';
-$web = '/vilcon-systemon/public/uploads/aprovacoes';
+$web = '/vilcon-system-github-main/public/uploads/aprovacoes';
 
 require_once __DIR__ . '/schema.php';
 require_once __DIR__ . '/actions.php';

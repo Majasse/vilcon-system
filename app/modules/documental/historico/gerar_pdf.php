@@ -1,10 +1,10 @@
-﻿<?php
+<?php
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
 if (!isset($_SESSION['usuario_id'])) {
-    header('Location: /vilcon-systemon/public/login.php');
+    header('Location: /vilcon-system-github-main/public/login.php');
     exit;
 }
 
@@ -67,7 +67,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
         tbody td { border: 1px solid #d1d5db; padding: 8px; font-size: 11px; color: #111111; }
         tbody tr:nth-child(even) td { background: #fff8e1; }
     </style>
-    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
+    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
 </head>
 
 <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
@@ -81,7 +81,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
             <div class="pdf-strip"></div>
             <div class="pdf-head-content">
                 <div class="pdf-brand">
-                    <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon">
+                    <img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon">
                     <h1>VILCON</h1>
                 </div>
                 <div style="display:flex; align-items:center;">
@@ -89,7 +89,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
                         <strong><?= htmlspecialchars($titulo) ?></strong>
                         <span>Emitido em: <?= htmlspecialchars(date('d/m/Y H:i')) ?></span>
                     </div>
-                    <div class="pdf-cert"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                    <div class="pdf-cert"><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
                 </div>
             </div>
         </div>
@@ -127,7 +127,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
             window.print();
         });
     </script>
-    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
+    <script src="/vilcon-system-github-main/public/assets/js/global-loader.js"></script>
 </body>
 </html>
 

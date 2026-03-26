@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once dirname(__DIR__, 3) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header('Location: /vilcon-systemon/public/login.php');
+    header('Location: /vilcon-system-github-main/public/login.php');
     exit;
 }
 
@@ -132,7 +132,7 @@ try {
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
                 <h3 style="margin:0;">Ordens de Serviço</h3>
-                <a href="/vilcon-systemon/app/modules/oficina/index.php?view=ordens_servico&mode=list" style="font-size:12px; text-decoration:none; color:#111827;">Abrir módulo completo</a>
+                <a href="/vilcon-system-github-main/app/modules/oficina/index.php?view=ordens_servico&mode=list" style="font-size:12px; text-decoration:none; color:#111827;">Abrir módulo completo</a>
             </div>
 
             <?php if ($erro): ?>

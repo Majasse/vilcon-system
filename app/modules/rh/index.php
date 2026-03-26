@@ -6,7 +6,7 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header("Location: /vilcon-systemon/public/login.php");
+    header("Location: /vilcon-system-github-main/public/login.php");
     exit;
 }
 
@@ -70,7 +70,7 @@ function obterFotoFuncionarioUrl(array $funcionario): ?string {
     if ($id <= 0) return null;
 
     $baseDir = dirname(__DIR__, 3) . '/public/uploads/pessoal/';
-    $baseUrl = '/vilcon-systemon/public/uploads/pessoal/';
+    $baseUrl = '/vilcon-system-github-main/public/uploads/pessoal/';
     $candidatos = [
         $id . '.jpg',
         $id . '.jpeg',
@@ -808,7 +808,7 @@ if ($view === 'avaliacao' && $erro === null) {
                                                 <td><?= (int)($ld['total_ausentes'] ?? 0) ?></td>
                                                 <td>
                                                     <?php if ($possuiAnexo && $anexoPathLista !== ''): ?>
-                                                        <a href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-export" style="font-size:10px;background:#0f766e;color:#fff;border-color:#0f766e;">Ver anexo</a>
+                                                        <a href="<?= htmlspecialchars('/vilcon-system-github-main/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-export" style="font-size:10px;background:#0f766e;color:#fff;border-color:#0f766e;">Ver anexo</a>
                                                     <?php else: ?>
                                                         <span style="font-size:11px; color:#b91c1c; font-weight:700;">Nao anexada</span>
                                                     <?php endif; ?>
@@ -937,8 +937,8 @@ function exportarWordRh(tabela, base) {
 function exportarPdfRh(tabela, titulo) {
     var janela = window.open('', '_blank');
     if (!janela) return;
-    var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
-    var certUrl = window.location.origin + '/vilcon-systemon/public/assets/img/innocertificate.png';
+    var logoUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/logo-vilcon.png';
+    var certUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/innocertificate.png';
     var dataAtual = new Date().toLocaleString('pt-PT');
     var html = `
         <html>

@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const BASE = "/vilcon-systemon/public/api";
+  const BASE = "/vilcon-system-github-main/public/api";
   const FORM_ACTIONS = new Set(["criar_os_manual", "criar_pedido", "criar_manutencao", "criar_avaria"]);
   const PRIORITY_NAMES = ["prioridade", "prioridade_rep", "prioridade_pm"];
 

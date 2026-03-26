@@ -7,7 +7,7 @@ require_once dirname(__DIR__, 3) . '/config/db.php';
 require_once dirname(__DIR__) . '/domain/services/TransporteSchemaService.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header('Location: /vilcon-systemon/public/login.php');
+    header('Location: /vilcon-system-github-main/public/login.php');
     exit;
 }
 

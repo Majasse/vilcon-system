@@ -3,7 +3,7 @@ session_start();
 require_once dirname(__DIR__, 2) . '/config/db.php';
 
 if (!isset($_SESSION['usuario_id'])) {
-    header("Location: /vilcon-systemon/public/login.php");
+    header("Location: /vilcon-system-github-main/public/login.php");
     exit;
 }
 
@@ -1880,7 +1880,7 @@ if ($view === 'presencas') {
                 th,td{border:1px solid #cbd5e1;padding:7px;text-align:left;font-size:12px}
                 th{background:#111;color:#f4b400}
             </style></head><body>';
-            echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Checklist HSE - Oficina</div></div><div class="head-right"><div>ID: ' . (int)$chkDoc['id'] . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
+            echo '<div class="head"><div class="head-left"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Checklist HSE - Oficina</div></div><div class="head-right"><div>ID: ' . (int)$chkDoc['id'] . '</div><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
             echo '<div class="meta">';
             echo '<div><strong>Codigo</strong><br>' . htmlspecialchars((string)($chkDoc['codigo'] ?? '-')) . '</div>';
             echo '<div><strong>Template</strong><br>' . htmlspecialchars((string)($chkDoc['template_nome'] ?? '-')) . '</div>';
@@ -1946,7 +1946,7 @@ if ($view === 'presencas') {
             th{background:#111;color:#f4b400}
             tr:nth-child(even) td{background:#fff8e1}
         </style></head><body>';
-        echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Oficina</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
+        echo '<div class="head"><div class="head-left"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Oficina</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
         echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
         if (empty($rowsDoc)) {
             echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
@@ -4733,7 +4733,7 @@ function statusAssiduidadePorAssinatura(int $assinouEntrada, int $assinouSaida):
                                                     <td><?= (int)($ld['total_ausentes'] ?? 0) ?></td>
                                                     <td>
                                                         <?php if ($possuiAnexo && $anexoPathLista !== ''): ?>
-                                                            <a href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-save" style="font-size:10px;background:#0f766e;">Ver anexo</a>
+                                                            <a href="<?= htmlspecialchars('/vilcon-system-github-main/' . ltrim($anexoPathLista, '/')) ?>" target="_blank" class="btn-save" style="font-size:10px;background:#0f766e;">Ver anexo</a>
                                                         <?php else: ?>
                                                             <span style="font-size:11px; color:#b91c1c; font-weight:700;">Nao anexada</span>
                                                         <?php endif; ?>
@@ -5755,8 +5755,8 @@ function tabelaPdfSemAcoesOficina(tabela) {
 function exportarPdfOficina(tabela, titulo) {
     var janela = window.open('', '_blank');
     if (!janela) return;
-    var logoUrl = window.location.origin + '/vilcon-systemon/public/assets/img/logo-vilcon.png';
-    var certUrl = window.location.origin + '/vilcon-systemon/public/assets/img/innocertificate.png';
+    var logoUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/logo-vilcon.png';
+    var certUrl = window.location.origin + '/vilcon-system-github-main/public/assets/img/innocertificate.png';
     var dataAtual = new Date().toLocaleString('pt-PT');
     var tabelaHtml = tabelaPdfSemAcoesOficina(tabela);
     var html = `

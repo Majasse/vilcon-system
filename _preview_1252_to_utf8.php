@@ -30,7 +30,7 @@ if (!function_exists('usuarioEhAdmin')) {
 if (!function_exists('garantirPermissao')) {
     function garantirPermissao(PDO $pdo, string $modulo, string $acao = 'ver'): void {
         if (!isset($_SESSION['usuario_id'])) {
-            header('Location: /vilcon-systemon/public/login.php');
+            header('Location: /vilcon-system-github-main/public/login.php');
             exit();
         }
         if (usuarioEhAdmin()) {
@@ -84,7 +84,7 @@ if (!function_exists('auditarPostBasico')) {
     }
 }
 
-if (!isset($_SESSION['usuario_id'])) { header("Location: /vilcon-systemon/public/login.php"); exit(); }
+if (!isset($_SESSION['usuario_id'])) { header("Location: /vilcon-system-github-main/public/login.php"); exit(); }
 garantirPermissao($pdo, 'transporte', 'ver');
 auditarPostBasico($pdo, 'transporte');
 
@@ -4085,7 +4085,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                                     <td><?= !empty($rep['criado_em']) ? date('d/m/Y H:i', strtotime($rep['criado_em'])) : '-' ?></td>
                                     <td><?= htmlspecialchars($rep['solicitante'] ?? '-') ?></td>
                                     <td>
-                                        <a href="/vilcon-systemon/public/app/modules/oficina/index.php" title="Ir para Oficina" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-screwdriver-wrench"></i></a>
+                                        <a href="/vilcon-system-github-main/public/app/modules/oficina/index.php" title="Ir para Oficina" style="margin-right:8px; color:var(--vilcon-orange);"><i class="fas fa-screwdriver-wrench"></i></a>
                                         <a href="imprimir_pedido.php?id=<?= (int) $rep['id'] ?>" title="Imprimir" style="margin-right:8px; color:inherit;"><i class="fas fa-print"></i></a>
                                     </td>
                                 </tr>
@@ -4153,7 +4153,7 @@ if($tab === 'transporte' && $view === 'relatorio_atividades') {
                     Agora o Gestor analisa a urg�ncia e decide a viatura/m�quina, convertendo automaticamente em Ordem de Servi�o.
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <a href="/vilcon-systemon/public/app/modules/dashboard/index.php" class="btn-mode">Terminar</a>
+                    <a href="/vilcon-system-github-main/public/app/modules/dashboard/index.php" class="btn-mode">Terminar</a>
                     <a href="?tab=transporte&view=reservas&mode=form" class="btn-mode">Nova Reserva</a>
                 </div>
             </div>

@@ -1,4 +1,4 @@
-﻿<?php 
+<?php 
 session_start();
 if (!headers_sent()) {
     header('Content-Type: text/html; charset=UTF-8');
@@ -198,7 +198,7 @@ function enviarOrdemGuaritaAbastecimento(PDO $pdo, int $guiaId, string $estado, 
         $users = $stUsers ? ($stUsers->fetchAll(PDO::FETCH_COLUMN) ?: []) : [];
         if (empty($users)) return;
 
-        $link = '/vilcon-systemon/public/app/modules/transporte/index.php?tab=frentista&view=tarefas&mode=list';
+        $link = '/vilcon-system-github-main/public/app/modules/transporte/index.php?tab=frentista&view=tarefas&mode=list';
         $ins = $pdo->prepare("
             INSERT INTO usuarios_notificacoes (usuario_id, titulo, mensagem, tipo, link, created_at)
             VALUES (:uid, :titulo, :mensagem, :tipo, :link, NOW())
@@ -1917,7 +1917,7 @@ if(isset($_GET['doc']) && in_array((string) ($_GET['doc'] ?? ''), ['presenca_pdf
       th{background:#111;color:#f4b400}
       tr:nth-child(even) td{background:#fff8e1}
     </style></head><body>';
-    echo '<div class="head"><div class="head-left"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Transporte</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
+    echo '<div class="head"><div class="head-left"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"><div class="title">Lista de Presencas - Transporte</div></div><div class="head-right"><div>Data: ' . htmlspecialchars(date('d/m/Y', strtotime($dataDoc))) . '</div><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div></div>';
     echo '<table><thead><tr><th>Funcionario</th><th>Cargo</th><th>Entrada</th><th>Saida</th><th>Estado</th></tr></thead><tbody>';
     if(empty($rowsDoc)) {
         echo '<tr><td colspan="5">Sem registos para esta data.</td></tr>';
@@ -2076,7 +2076,7 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                         tbody tr:nth-child(even) td { background: #fff8e1; }
                         .obs { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; margin-top: 12px; font-size: 12px; background: #fff; }
                     </style>
-                    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
+                    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
                 </head>
                 <body>
                 <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
@@ -2090,7 +2090,7 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                         <div class="pdf-strip"></div>
                         <div class="pdf-head-content">
                             <div class="pdf-brand">
-                                <img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon">
+                                <img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon">
                                 <h1>VILCON</h1>
                             </div>
                             <div style="display:flex; align-items:center;">
@@ -2098,7 +2098,7 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                                     <strong>ORDEM DE SERVI&Ccedil;O - TRANSPORTE</strong>
                                     <span>Emitido em: <?= htmlspecialchars(date('d/m/Y H:i')) ?></span>
                                 </div>
-                                <div class="pdf-cert"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                                <div class="pdf-cert"><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
                             </div>
                         </div>
                     </div>
@@ -2171,7 +2171,7 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                 <script>
                     window.addEventListener('load', function() { window.print(); });
                 </script>
-                <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
+                <script src="/vilcon-system-github-main/public/assets/js/global-loader.js"></script>
                 </body>
                 </html>
                 <?php
@@ -2216,7 +2216,7 @@ if(isset($_GET['doc']) && isset($_GET['id'])) {
                 exit();
             }
             header('Content-Type: text/html; charset=utf-8');
-            echo '<!doctype html><html><head><meta charset="utf-8"><title>Documento</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}.head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}.brand{display:flex;align-items:center;gap:10px}.brand img{height:34px}.cert img{height:36px}pre{white-space:pre-wrap;background:#fff;border:1px solid #d1d5db;padding:12px;border-radius:8px}</style></head><body><div class=\"head\"><div class=\"brand\"><img src=\"/vilcon-systemon/public/assets/img/logo-vilcon.png\" alt=\"Vilcon\"><strong>Documento</strong></div><div class=\"cert\"><img src=\"/vilcon-systemon/public/assets/img/innocertificate.png\" alt=\"INNO Certificate\"></div></div><pre>' . htmlspecialchars($texto) . '</pre><script>window.print();</script></body></html>';
+            echo '<!doctype html><html><head><meta charset="utf-8"><title>Documento</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#111}.head{display:flex;justify-content:space-between;align-items:center;border:2px solid #111;padding:10px;border-radius:8px;margin-bottom:12px}.brand{display:flex;align-items:center;gap:10px}.brand img{height:34px}.cert img{height:36px}pre{white-space:pre-wrap;background:#fff;border:1px solid #d1d5db;padding:12px;border-radius:8px}</style></head><body><div class=\"head\"><div class=\"brand\"><img src=\"/vilcon-system-github-main/public/assets/img/logo-vilcon.png\" alt=\"Vilcon\"><strong>Documento</strong></div><div class=\"cert\"><img src=\"/vilcon-system-github-main/public/assets/img/innocertificate.png\" alt=\"INNO Certificate\"></div></div><pre>' . htmlspecialchars($texto) . '</pre><script>window.print();</script></body></html>';
             exit();
         }
     }
@@ -5882,9 +5882,9 @@ if($tab === 'transporte' && $view === 'relatorio_atividades' && $mode === 'list'
         <body>
         <div class="sheet">
             <div class="header-main">
-                <div class="logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                <div class="logo"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
                 <div class="title">RELATORIO <?= htmlspecialchars($periodoLabelExport) ?> DE TRANSPORTE</div>
-                <div class="stamp"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                <div class="stamp"><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
             </div>
             <div class="meta-row">
                 <div class="meta-lbl">Comissao de elaboracao</div>
@@ -7252,9 +7252,9 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
             <body>
             <div class="sheet">
                 <div class="top">
-                    <div class="top-cell logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                    <div class="top-cell logo"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
                     <div class="top-cell title">MAPA DE CONTROLE DIARIO DE DIESEL</div>
-                    <div class="top-cell stamp"><img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
+                    <div class="top-cell stamp"><img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate"></div>
                 </div>
                 <div class="proj-bar">
                     <div class="lbl-yellow">Projecto</div>
@@ -7374,10 +7374,10 @@ if($tab === 'gestao_frota' && $view === 'relatorio_consumo' && $mode === 'list')
         <body>
         <div class="sheet">
             <div class="top">
-                <div class="top-cell logo"><img src="/vilcon-systemon/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
+                <div class="top-cell logo"><img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon"></div>
                 <div class="top-cell title">RESUMO DE DIESEL</div>
                 <div class="top-cell stamp">
-                    <img src="/vilcon-systemon/public/assets/img/innocertificate.png" alt="INNO Certificate">
+                    <img src="/vilcon-system-github-main/public/assets/img/innocertificate.png" alt="INNO Certificate">
                 </div>
             </div>
             <div class="meta">
@@ -9307,7 +9307,7 @@ if($tab === 'transporte' && $view === 'presencas') {
                         <div class="form-group" style="grid-column: span 4;">
                             <label>Anexo</label>
                             <?php if($anexoDet !== ''): ?>
-                                <a class="btn-mode" target="_blank" href="<?= htmlspecialchars('/vilcon-systemon/' . ltrim($anexoDet, '/')) ?>">Ver anexo</a>
+                                <a class="btn-mode" target="_blank" href="<?= htmlspecialchars('/vilcon-system-github-main/' . ltrim($anexoDet, '/')) ?>">Ver anexo</a>
                             <?php else: ?>
                                 <input type="text" value="Sem anexo" readonly>
                             <?php endif; ?>
@@ -12374,7 +12374,7 @@ if($tab === 'transporte' && $view === 'presencas') {
         function rejeitarPedido(id){ const justificativa = prompt('Justificativa para rejeitar:'); if(justificativa) window.location.href = `rejeitar_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
         function pendentePedido(id){ const justificativa = prompt('Justificativa para pendente:'); if(justificativa) window.location.href = `pendente_pedido.php?id=${id}&justificativa=${encodeURIComponent(justificativa)}`; }
     </script>
-    <script src="/vilcon-systemon/public/assets/js/dynamic-fields.js"></script>
+    <script src="/vilcon-system-github-main/public/assets/js/dynamic-fields.js"></script>
 
 </body>
 </html>

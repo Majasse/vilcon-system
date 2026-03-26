@@ -2,7 +2,7 @@
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 require_once dirname(__DIR__, 2) . '/config/db.php';
 require_once dirname(__DIR__, 2) . '/core/access_control.php';
-if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-systemon/public/login.php'); exit; }
+if (!isset($_SESSION['usuario_id'])) { header('Location: /vilcon-system-github-main/public/login.php'); exit; }
 
 $page_title = 'Utilizadores | Vilcon System';
 $erro = null; $msg = null; $utilizadores = [];

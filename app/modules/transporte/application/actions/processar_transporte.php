@@ -1,4 +1,4 @@
-﻿<?php 
+<?php 
 session_start();
 
 require_once __DIR__ . '/../app/config/db.php';
@@ -17,7 +17,7 @@ $mode = $_GET['mode'] ?? 'list';
 $proximo_id_os = "OS-" . date('Y') . "-0042";
 
 /* Base URL */
-define('BASE_URL', '/vilcon-systemon/public');
+define('BASE_URL', '/vilcon-system-github-main/public');
 ?>
 <!DOCTYPE html>
 <html lang="pt">
@@ -26,7 +26,7 @@ define('BASE_URL', '/vilcon-systemon/public');
     <title>SIOV | Vilcon Operations</title>
 
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-	<link rel="stylesheet" href="/vilcon-systemon/public/assets/css/vilcon-bias-theme.css">
+	<link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/vilcon-bias-theme.css">
 
     <style>
         :root {
@@ -162,7 +162,7 @@ define('BASE_URL', '/vilcon-systemon/public');
             color: #fff;
         }
     </style>
-    <link rel="stylesheet" href="/vilcon-systemon/public/assets/css/global-loader.css">
+    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
 </head>
 
 
@@ -237,7 +237,7 @@ define('BASE_URL', '/vilcon-systemon/public');
 
 </div>
 
-    <script src="/vilcon-systemon/public/assets/js/global-loader.js"></script>
+    <script src="/vilcon-system-github-main/public/assets/js/global-loader.js"></script>
 </body>
 </html>
 
