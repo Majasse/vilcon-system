@@ -2,6 +2,8 @@
 session_start();
 
 require_once __DIR__ . '/../app/config/db.php';
+require_once dirname(__DIR__, 4) . '/includes/cache_helpers.php';
+vilcon_send_no_cache_headers();
 
 /* Proteção de sessão */
 if (!isset($_SESSION['usuario_id'])) {
@@ -26,7 +28,7 @@ define('BASE_URL', '/vilcon-system-github-main/public');
     <title>SIOV | Vilcon Operations</title>
 
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-	<link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/vilcon-bias-theme.css">
+	<link rel="stylesheet" href="<?= htmlspecialchars(vilcon_asset_url('/vilcon-system-github-main/public/assets/css/vilcon-bias-theme.css'), ENT_QUOTES, 'UTF-8') ?>">
 
     <style>
         :root {
@@ -162,7 +164,7 @@ define('BASE_URL', '/vilcon-system-github-main/public');
             color: #fff;
         }
     </style>
-    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars(vilcon_asset_url('/vilcon-system-github-main/public/assets/css/global-loader.css'), ENT_QUOTES, 'UTF-8') ?>">
 </head>
 
 
@@ -237,7 +239,7 @@ define('BASE_URL', '/vilcon-system-github-main/public');
 
 </div>
 
-    <script src="/vilcon-system-github-main/public/assets/js/global-loader.js"></script>
+    <script src="<?= htmlspecialchars(vilcon_asset_url('/vilcon-system-github-main/public/assets/js/global-loader.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </body>
 </html>
 

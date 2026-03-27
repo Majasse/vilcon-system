@@ -2,6 +2,8 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+require_once dirname(__DIR__, 3) . '/includes/cache_helpers.php';
+vilcon_send_no_cache_headers();
 
 if (!isset($_SESSION['usuario_id'])) {
     header('Location: /vilcon-system-github-main/public/login.php');
@@ -67,7 +69,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
         tbody td { border: 1px solid #d1d5db; padding: 8px; font-size: 11px; color: #111111; }
         tbody tr:nth-child(even) td { background: #fff8e1; }
     </style>
-    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars(vilcon_asset_url('/vilcon-system-github-main/public/assets/css/global-loader.css'), ENT_QUOTES, 'UTF-8') ?>">
 </head>
 
 <div id="vilcon-global-loader" class="vilcon-loader-overlay" aria-live="polite" aria-busy="true" aria-label="A processar">
@@ -127,7 +129,7 @@ $titulo = 'DOCUMENTAL HISTORICO';
             window.print();
         });
     </script>
-    <script src="/vilcon-system-github-main/public/assets/js/global-loader.js"></script>
+    <script src="<?= htmlspecialchars(vilcon_asset_url('/vilcon-system-github-main/public/assets/js/global-loader.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
 </body>
 </html>
 

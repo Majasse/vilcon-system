@@ -2,10 +2,15 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+require_once __DIR__ . '/cache_helpers.php';
+vilcon_send_no_cache_headers();
 require_once __DIR__ . '/mojibake_fix.php';
 vilcon_bootstrap_mojibake_fix();
 require_once __DIR__ . '/user_profile_widget.php';
 require_once dirname(__DIR__) . '/core/access_control.php';
+
+$themeCssUrl = vilcon_asset_url('/vilcon-system-github-main/public/assets/css/vilcon-bias-theme.css');
+$loaderCssUrl = vilcon_asset_url('/vilcon-system-github-main/public/assets/css/global-loader.css');
 
 if (isset($_SESSION['usuario_perfil'])) {
     garantirAcessoModuloAtual((string)($_SERVER['SCRIPT_NAME'] ?? ''), (string)$_SESSION['usuario_perfil']);
@@ -20,8 +25,8 @@ if (isset($_SESSION['usuario_perfil'])) {
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/vilcon-bias-theme.css">
-    <link rel="stylesheet" href="/vilcon-system-github-main/public/assets/css/global-loader.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($themeCssUrl, ENT_QUOTES, 'UTF-8') ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($loaderCssUrl, ENT_QUOTES, 'UTF-8') ?>">
 
     <style>
         :root {

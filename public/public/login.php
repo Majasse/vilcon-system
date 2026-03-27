@@ -1,6 +1,11 @@
 <?php
 session_start();
 require_once(__DIR__ . '/../app/config/db.php');
+require_once dirname(__DIR__) . '/app/includes/cache_helpers.php';
+vilcon_send_no_cache_headers();
+
+$loginBackgroundUrl = vilcon_asset_url('/vilcon-system-github-main/public/assets/img/vilcon-truck.jpg');
+$loginLogoUrl = vilcon_asset_url('/vilcon-system-github-main/public/assets/img/logo-vilcon.png');
 
 function garantirColunaUltimoLogin($pdo) {
     static $verificado = false;
@@ -152,7 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .login-screen {
             background:
                 linear-gradient(rgba(0,0,0,0.32), rgba(0,0,0,0.32)),
-                url('/vilcon-system-github-main/public/assets/img/vilcon-truck.jpg');
+                url('<?= htmlspecialchars($loginBackgroundUrl, ENT_QUOTES, 'UTF-8') ?>');
             background-size: cover;
             background-position: center;
             height: 100vh;
@@ -317,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     <div class="login-box">
         <div class="logo-container">
-            <img src="/vilcon-system-github-main/public/assets/img/logo-vilcon.png" alt="Vilcon Logo">
+            <img src="<?= htmlspecialchars($loginLogoUrl, ENT_QUOTES, 'UTF-8') ?>" alt="Vilcon Logo">
         </div>
 
         <h2>ACEDER</h2>
